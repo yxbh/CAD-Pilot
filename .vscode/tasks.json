@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CAD-Pilot: Test",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--project", "${workspaceFolder}", "pytest", "${workspaceFolder}/tests", "-q"],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}
