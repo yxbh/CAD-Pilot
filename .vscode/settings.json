@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "search.exclude": {
+    "**/.local": true,
+    "**/node_modules": true,
+    "**/outputs": true
+  }
+}

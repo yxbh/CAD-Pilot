@@ -1,0 +1,13 @@
+# Design Project
+
+- Do not hard-wrap prose to a fixed column width in our own READMEs or instruction files. Let the editor wrap visually; preserve code blocks and upstream formatting.
+- Use relative paths in reusable documentation; derive the workbench location instead of embedding machine-specific paths.
+- Read the project's requirements first; this template uses brief.md. Follow an existing project's own requirements documents instead of requiring that filename.
+- Locate the workbench using .cad-pilot.local.json when present, or an explicitly supplied path. Explicitly load the shared .agents/skills/cad/SKILL.md and .agents/skills/visual-review/SKILL.md when needed. An external path is not automatic skill registration. Request access if needed.
+- Use the workbench's local Python environment to invoke the imported scripts/step and scripts/inspect launchers from this project's root. Its uv.lock is machine-local; follow the workbench's normal uv setup with the configured feeds. Choose the artifact location with -o; use the same project-relative forward-slash STEP path for generation and inspection. Mesh sidecar paths are relative to the STEP directory. See the workbench README.md for commands and explicit Explorer roots; never generate outputs in the toolkit or skill folders.
+- The template layout (source/, outputs/, reviews/) is a proposed convention, not a mandatory structure. Use it for new projects unless another layout is preferred. Respect existing project layouts and instructions; do not reorganize them merely to match the template. Do not treat the sample plate as the user's intended design.
+- Explain shapes in plain language. Confirm the target of an ambiguous edit visually and preserve the dimensions the user wants unchanged.
+- Printer, material, nozzle, loads, and fit allowances are unknown until agreed. Check actual geometry, and report printability and physical testing separately.
+- For FDM/FFF design and print review, load the workbench's .agents/skills/fdm-design/SKILL.md. Use confirmed equipment and material notes, and record useful measurements when prints happen; do not require a formal profile or treat provisional clearances as measured calibration.
+- Record imported customization provenance in the parent collection's README.md, not in upstream READMEs. Preserve upstream documentation and notices. See README.md for the origin of these instructions.
+- Do not print, publish, commit, or push without approval.

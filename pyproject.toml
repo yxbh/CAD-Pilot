@@ -1,0 +1,25 @@
+[project]
+name = "cad-pilot"
+version = "0.1.0"
+description = "Personal agentic CAD workbench with visual review and geometric checks"
+requires-python = ">=3.12"
+dependencies = [
+    "build123d",
+    "ezdxf",
+    "lxml",
+    "networkx",
+    "numpy",
+    "pillow",
+    "playwright",
+    "trimesh",
+    "vtk",
+]
+
+[dependency-groups]
+dev = ["pytest", "pyyaml"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
