@@ -47,7 +47,7 @@ Inspect uses a grid and readable outlines. Studio uses local reflection and area
 
 ## Face references and chat
 
-In Faces mode, selecting a surface highlights its whole CAD face. Parts mode and the parts list select an occurrence. Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Clicking and copying never insert a draft attachment automatically and never send a message.
+In Faces mode, moving over a surface previews its whole CAD face and selecting it keeps the stronger face highlight. Parts mode previews and selects an occurrence instead. The parts list also selects an occurrence. Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
 
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face. A middle dot separates part and face in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
@@ -81,12 +81,10 @@ The runtime directory is local and Git-ignored. It is not a backup of a design p
 
 From the workbench root:
 
-```powershell
-Push-Location explorer
-npm test
-npm run build
-Pop-Location
-.\.venv\Scripts\python.exe -m pytest explorer\tests\test_converter.py -q
+```text
+npm --prefix explorer test
+npm --prefix explorer run build
+uv run pytest explorer/tests/test_converter.py -q
 ```
 
 Browser checks run against an isolated standalone/test view using the workbench's Python interpreter. `browser_smoke.py` checks the actual reference clipboard and picking workflow; `v2_browser.py` checks drawing/image parity and recovery; `studio_views.py` checks projection, appearance and capture; `draw_transition.py` measures fixed-layout transitions and genuine context-loss reporting; `explode_camera.py` exercises camera-preserving explosion from an orbited, panned and zoomed view. Run context-loss tests only on disposable test views.

@@ -1,8 +1,8 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, EdgesGeometry, Matrix4, Vector3 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { center, diagonal, faceAtTriangle, facePositions, mergeBounds, placeParts, type Model, type Placement, type ViewState } from "./model.ts";
+import { center, diagonal, faceAtTriangle, facePositions, hoverTarget, mergeBounds, placeParts, type CadFace, type HoverTarget, type Model, type Part, type Placement, type ViewState } from "./model.ts";
 import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
 import { GeometryResources, type PartResources } from "./resources.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
@@ -24,37 +24,56 @@ type Props = {
   onView: (preset: ViewPreset) => void;
 };
 
-function PartMesh({ placement, resources, origin, selected, faceId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect }: {
+function FaceOverlay({ part, face, selected }: { part: Part; face: CadFace; selected: boolean }) {
+  const geometry = useMemo(() => {
+    const result = new BufferGeometry();
+    result.setAttribute("position", new BufferAttribute(facePositions(part, face), 3));
+    return result;
+  }, [part, face]);
+  const edges = useMemo(() => new EdgesGeometry(geometry, 180), [geometry]);
+  useEffect(() => () => { geometry.dispose(); edges.dispose(); }, [geometry, edges]);
+  return (
+    <>
+      <mesh geometry={geometry} raycast={() => undefined} renderOrder={selected ? 3 : 1}>
+        <meshBasicMaterial color={selected ? "#13d9f0" : "#8ecbd4"} transparent opacity={selected ? 0.7 : 0.3} side={DoubleSide}
+          depthWrite={false} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+      </mesh>
+      <lineSegments geometry={edges} raycast={() => undefined} renderOrder={selected ? 4 : 2}>
+        <lineBasicMaterial color={selected ? "#d8ffff" : "#c9edf2"} transparent opacity={selected ? 1 : 0.8} depthWrite={false} />
+      </lineSegments>
+    </>
+  );
+}
+
+function PartMesh({ placement, resources, origin, selected, faceId, hovered, hoverFaceId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
   placement: Placement;
   resources: PartResources;
   origin: number[];
   selected: boolean;
   faceId: string | null;
+  hovered: boolean;
+  hoverFaceId: string | null;
   selectionMode: ViewState["selectionMode"];
   pickingEnabled: boolean;
   studio: boolean;
   finish: MaterialFinish;
   showEdges: boolean;
   onSelect: Props["onSelect"];
+  onHover: (target: HoverTarget | null) => void;
+  onHoverEnd: (nodeId: string) => void;
 }) {
   const { part, node } = placement;
   const { geometry, edges } = resources;
-  const face = part.faces.find((item) => item.id === faceId);
-  const highlight = useMemo(() => {
-    if (!face) return null;
-    const result = new BufferGeometry();
-    result.setAttribute("position", new BufferAttribute(facePositions(part, face), 3));
-    return result;
-  }, [part, face]);
-  const faceEdges = useMemo(() => highlight ? new EdgesGeometry(highlight, 180) : null, [highlight]);
+  const selectedFace = part.faces.find((item) => item.id === faceId) ?? null;
+  const hoveredFace = part.faces.find((item) => item.id === hoverFaceId && item.id !== faceId) ?? null;
   const matrix = useMemo(() => {
     const result = new Matrix4().fromArray(placement.matrix);
     for (let axis = 0; axis < 3; axis++) result.elements[12 + axis] -= origin[axis];
     return result;
   }, [placement, origin]);
-  useEffect(() => () => { highlight?.dispose(); faceEdges?.dispose(); }, [highlight, faceEdges]);
   const color = new Color(...node.color);
-  const wholePartSelected = selected && !face;
+  const wholePartSelected = selected && !selectedFace;
+  const wholePartHovered = hovered && !wholePartSelected;
   return (
     <group matrix={matrix} matrixAutoUpdate={false}>
       <mesh castShadow={studio} receiveShadow={studio} onClick={(event) => {
@@ -64,23 +83,28 @@ function PartMesh({ placement, resources, origin, selected, faceId, selectionMod
           const hitFace = faceAtTriangle(part, event.faceIndex ?? -1);
           if (hitFace) onSelect(node.id, hitFace.id);
         } else onSelect(node.id);
+      }} onPointerMove={(event) => {
+        if (!pickingEnabled) return;
+        event.stopPropagation();
+        onHover(hoverTarget(part, node.id, selectionMode, event.faceIndex ?? -1));
+      }} onPointerOut={(event) => {
+        if (!pickingEnabled) return;
+        event.stopPropagation();
+        onHoverEnd(node.id);
       }}>
         <primitive object={geometry} attach="geometry" />
-        <meshPhysicalMaterial color={wholePartSelected ? "#7ee7da" : color}
+        <meshPhysicalMaterial color={wholePartSelected ? "#7ee7da" : wholePartHovered ? "#79aeb9" : color}
           {...(studio ? appearanceFor(finish) : { roughness: 0.45, metalness: 0.15, clearcoat: 0, clearcoatRoughness: 0, envMapIntensity: 0 })}
-          emissive={wholePartSelected ? "#167b75" : "#000000"} emissiveIntensity={0.3} />
+          emissive={wholePartSelected ? "#167b75" : wholePartHovered ? "#134d59" : "#000000"}
+          emissiveIntensity={wholePartSelected ? 0.3 : wholePartHovered ? 0.18 : 0} />
       </mesh>
-      <lineSegments visible={showEdges || wholePartSelected} raycast={() => undefined}>
+      <lineSegments visible={showEdges || wholePartSelected || wholePartHovered} raycast={() => undefined}>
         <primitive object={edges} attach="geometry" />
-        <lineBasicMaterial color={wholePartSelected ? "#c5fff5" : "#0e2533"} transparent opacity={wholePartSelected ? 0.9 : 0.45} />
+        <lineBasicMaterial color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : "#0e2533"} transparent
+          opacity={wholePartSelected ? 0.9 : wholePartHovered ? 0.75 : 0.45} />
       </lineSegments>
-      {highlight && <mesh geometry={highlight} raycast={() => undefined} renderOrder={2}>
-        <meshBasicMaterial color="#13d9f0" transparent opacity={0.7} side={DoubleSide}
-          depthWrite={false} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-      </mesh>}
-      {faceEdges && <lineSegments geometry={faceEdges} raycast={() => undefined} renderOrder={3}>
-        <lineBasicMaterial color="#d8ffff" depthWrite={false} />
-      </lineSegments>}
+      {hoveredFace && <FaceOverlay part={part} face={hoveredFace} selected={false} />}
+      {selectedFace && <FaceOverlay part={part} face={selectedFace} selected />}
     </group>
   );
 }
@@ -243,10 +267,17 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
 
 export default function Scene(props: Props) {
   const { model, state, amount } = props;
+  const [hovered, setHovered] = useState<HoverTarget | null>(null);
   const placements = useMemo(() => placeParts(model, amount, state.direction, state.fixedId), [model, amount, state.direction, state.fixedId]);
   const origin = useMemo(() => center(model.bounds), [model]);
   const resources = useMemo(() => new GeometryResources(model), [model]);
   const axes = useMemo(createAxisStore, []);
+  const pickingEnabled = props.active && amount === state.explode && !state.loading;
+  const onHover = useCallback((next: HoverTarget | null) => setHovered((current) =>
+    current?.nodeId === next?.nodeId && current?.faceId === next?.faceId ? current : next
+  ), []);
+  const onHoverEnd = useCallback((nodeId: string) => setHovered((current) => current?.nodeId === nodeId ? null : current), []);
+  useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, pickingEnabled]);
   useEffect(() => () => resources.dispose(), [resources]);
   const displayedBounds = mergeBounds(placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((part) => part.bounds)) || model.bounds;
   const gridSize = Math.max(diagonal(model.bounds) * 2, 100);
@@ -277,9 +308,11 @@ export default function Scene(props: Props) {
         <PartMesh key={placement.node.id} placement={placement} resources={resources.get(placement.part)} origin={origin}
           selected={state.selectedIds.includes(placement.node.id)}
           faceId={state.selectedFace?.nodeId === placement.node.id ? state.selectedFace.faceId : null}
-          selectionMode={state.selectionMode} pickingEnabled={props.active && amount === state.explode && !state.loading}
+          hovered={state.selectionMode === "part" && hovered?.nodeId === placement.node.id}
+          hoverFaceId={state.selectionMode === "face" && hovered?.nodeId === placement.node.id ? hovered.faceId : null}
+          selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}
           studio={studio} finish={state.materialFinish} showEdges={state.showEdges}
-          onSelect={props.onSelect} />
+          onSelect={props.onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />
       ))}
       <Rig {...props} placements={placements} resources={resources} axes={axes} />
     </Canvas>

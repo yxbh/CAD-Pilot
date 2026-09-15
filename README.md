@@ -6,12 +6,12 @@ Personal workbench for conversational CAD design and 3D-print preparation with G
 
 The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
 
-Prerequisites: Windows, Git, PowerShell 7, uv, and Node.js 22.12+ or 24. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
+Prerequisites: Windows or macOS, Git, uv, and Node.js 22.12+ or 24. PowerShell 7 is needed for the PowerShell examples. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
 
-```powershell
+```text
 uv sync
 npm --prefix .agents/skills/cad/explorer ci
-./.venv/Scripts/python.exe -m playwright install chromium
+uv run python -m playwright install chromium
 uv run pytest -q
 ```
 
@@ -114,7 +114,7 @@ Keep workbench content evergreen: document supported workflows, current limitati
 uv run pytest -q
 npm --prefix .agents/skills/cad/explorer test
 npm --prefix .agents/skills/cad/explorer run build
-./.venv/Scripts/python.exe tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/mounting_plate.step' --output .local/viewer-check
+uv run python tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/mounting_plate.step' --output .local/viewer-check
 ```
 
 The browser check requires the sample plate to be generated and served; use the URL printed by `ensure-dev.mjs`. It captures desktop/mobile screenshots and checks canvas pixels, camera changes, face-reference copying, and entry into draw mode.

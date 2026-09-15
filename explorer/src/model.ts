@@ -65,6 +65,7 @@ export type ViewState = {
   camera: CameraState | null;
 };
 export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds };
+export type HoverTarget = { nodeId: string; faceId: string | null };
 
 export function faceAtTriangle(part: Part, triangle: number): CadFace | null {
   if (!Number.isInteger(triangle) || triangle < 0) return null;
@@ -78,6 +79,12 @@ export function faceAtTriangle(part: Part, triangle: number): CadFace | null {
     else return face;
   }
   return null;
+}
+
+export function hoverTarget(part: Part, nodeId: string, mode: ViewState["selectionMode"], triangle: number): HoverTarget | null {
+  if (mode === "part") return { nodeId, faceId: null };
+  const face = faceAtTriangle(part, triangle);
+  return face ? { nodeId, faceId: face.id } : null;
 }
 
 export function facePositions(part: Part, face: CadFace): Float32Array {

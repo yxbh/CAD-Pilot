@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import test from "node:test";
@@ -137,6 +138,21 @@ test("filesystem canonicalization and an OS-owned lease prevent duplicate durabl
   const reopened = await createExplorerServer({ projectRoot: root, viewId });
   await reopened.close();
   await reopened.close();
+});
+
+test("view ownership tolerates temporary directories longer than Unix socket limits", { skip: process.platform === "win32" }, async () => {
+  const deepTemporaryRoot = path.join(runtimeRoot, "temporary-directory-segment".repeat(6));
+  await mkdir(deepTemporaryRoot, { recursive: true });
+  const viewKey = `long-temp-${randomUUID()}`;
+  const moduleUrl = pathToFileURL(path.join(explorerRoot, "server", "view-owner.mjs")).href;
+  const child = spawn(process.execPath, ["--input-type=module", "-e",
+    `import {acquireViewOwner} from ${JSON.stringify(moduleUrl)}; const release = await acquireViewOwner(${JSON.stringify(runtimeRoot)}, ${JSON.stringify(viewKey)}); await release(); process.stdout.write("released");`,
+  ], { env: { ...process.env, TMPDIR: deepTemporaryRoot }, stdio: ["ignore", "pipe", "pipe"] });
+  const output = [];
+  child.stdout.on("data", (chunk) => output.push(chunk));
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0);
+  assert.equal(Buffer.concat(output).toString(), "released");
 });
 
 test("Windows releases view ownership after the owning process is terminated", { skip: process.platform !== "win32" }, async () => {

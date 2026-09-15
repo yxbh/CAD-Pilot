@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createExplorerServer, explorerRoot, runtimeRoot, workbenchRoot } from "../server/server.mjs";
+import { workbenchPython } from "../server/paths.mjs";
 
 const execute = promisify(execFile);
 
@@ -18,7 +19,7 @@ async function checkBrowser(script) {
   try {
     await service.initialize();
     assert.equal(service.getState().error, "");
-    const result = await execute(path.join(workbenchRoot, ".venv", "Scripts", "python.exe"), [
+    const result = await execute(workbenchPython, [
       "-B", path.join(explorerRoot, "tests", script),
       "--url", service.url, "--output", output,
     ], { cwd: explorerRoot, encoding: "utf8", timeout: 210_000, maxBuffer: 2 * 1024 * 1024 });
@@ -34,3 +35,4 @@ async function checkBrowser(script) {
 test("maintained drawing UI recovers conflicts, unconfirmed writes, local exports, and queued switching", { timeout: 240_000 }, () => checkBrowser("review-recovery-browser.py"));
 test("all drawing tools, PNG clipboard equivalence, fixed viewport, resize, and reload remain usable", { timeout: 240_000 }, () => checkBrowser("v2_browser.py"));
 test("reopening after reload suspends live rendering throughout pending review reads and commands", { timeout: 240_000 }, () => checkBrowser("review-reopen-browser.py"));
+test("face and part modes preview hovered geometry without selecting it", { timeout: 240_000 }, () => checkBrowser("hover-browser.py"));

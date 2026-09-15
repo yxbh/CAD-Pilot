@@ -10,7 +10,7 @@ import { importWarnings } from "../shared/diagnostics.mjs";
 import { ReviewStore, validateCamera } from "./reviews.mjs";
 import { atomicJson } from "./storage.mjs";
 import { createInspectionService } from "./inspection.mjs";
-import { explorerRoot, workbenchRoot, runtimeRoot, canonicalProjectRoot } from "./paths.mjs";
+import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot, canonicalProjectRoot } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
 
 export { explorerRoot, workbenchRoot, runtimeRoot } from "./paths.mjs";
@@ -125,12 +125,11 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
   });
 
   async function python(script, args) {
-    const executable = path.join(workbenchRoot, ".venv", "Scripts", "python.exe");
-    await stat(executable);
+    await stat(workbenchPython);
     return new Promise((resolve, reject) => {
       let stderr = "";
       let expired = false;
-      const child = spawn(executable, [path.join(explorerRoot, "python", script), ...args], {
+      const child = spawn(workbenchPython, [path.join(explorerRoot, "python", script), ...args], {
         cwd: project, shell: false, windowsHide: true, env: { ...process.env, PYTHONIOENCODING: "utf-8" },
         stdio: ["ignore", "ignore", "pipe"],
       });
