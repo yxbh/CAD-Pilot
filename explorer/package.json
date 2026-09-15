@@ -1,0 +1,27 @@
+{
+  "name": "cad-pilot-explorer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test tests/*.test.mjs tests/*.test.ts",
+    "serve": "node server/standalone.mjs"
+  },
+  "dependencies": {
+    "@react-three/fiber": "9.7.0",
+    "lucide-react": "1.42.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/three": "0.185.4",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.2"
+  }
+}
