@@ -63,6 +63,23 @@ def test_skills_have_metadata_and_provenance():
     assert "MIT License" in (imported / "LICENSE").read_text(encoding="utf-8")
 
 
+def test_viewer_guidance_covers_workbench_skill_and_project_template():
+    guidance = [
+        ROOT / "AGENTS.md",
+        ROOT / ".agents/skills/visual-review/SKILL.md",
+        ROOT / "templates/project/AGENTS.md",
+    ]
+    for document in guidance:
+        text = document.read_text(encoding="utf-8")
+        for required in ("cad-explorer", "available", "projectRoot", "file", "imported", "cadproto:v2", "@cad["):
+            assert required in text, f"{document}: missing viewer-routing contract {required}"
+        assert "cad_explorer_inspect" in text
+    skill = guidance[1].read_text(encoding="utf-8")
+    assert "do not insert or send chat messages" in skill
+    assert "separate VS Code extension" in skill
+    assert (guidance[1].parent / "../../../explorer/README.md").resolve().is_file()
+
+
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])
 def test_cli_exports_reopen(tmp_path, output_directory):
     project = tmp_path / "existing design"

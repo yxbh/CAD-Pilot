@@ -30,6 +30,8 @@ Pop-Location
 
 Reload project extensions and open **CAD Explorer**. See its [workflow and retained-data guidance](explorer/README.md) before moving or removing old prototype data: existing pasted references and drawings still use `.github\extensions\cad-explorer-prototype\.runtime`.
 
+`AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
+
 ## Start a Design
 
 The project template is a proposed convention, not a mandatory structure. Use it for new projects unless another layout is preferred. For existing projects, respect their layout and instructions; do not reorganize them merely to match the template.
