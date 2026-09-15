@@ -5,6 +5,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { createExplorerServer, explorerRoot, workbenchRoot, runtimeRoot } from "../server/server.mjs";
+import { workbenchPython } from "../server/paths.mjs";
 import { initialState } from "../server/protocol.mjs";
 
 test("saved part-only snapshots regenerate with face maps and clear stale selection", async () => {
@@ -16,7 +17,7 @@ test("saved part-only snapshots regenerate with face maps and clear stale select
   const legacyFile = path.join(runtime, "models", `${legacyKey}.json`);
   const source = path.join(runtime, `${viewId}.step`);
   for (const folder of ["views", "models", "inputs"]) await mkdir(path.join(runtime, folder), { recursive: true });
-  const generated = spawnSync(path.join(workbenchRoot, ".venv", "Scripts", "python.exe"), [
+  const generated = spawnSync(workbenchPython, [
     "-B", path.join(explorerRoot, "python", "create_demo.py"), "--output", source,
   ], { timeout: 30_000, encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);

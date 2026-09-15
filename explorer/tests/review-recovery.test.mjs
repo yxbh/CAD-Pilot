@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createExplorerServer, explorerRoot, runtimeRoot, workbenchRoot } from "../server/server.mjs";
+import { workbenchPython } from "../server/paths.mjs";
 
 const execute = promisify(execFile);
 
@@ -18,7 +19,7 @@ async function checkBrowser(script) {
   try {
     await service.initialize();
     assert.equal(service.getState().error, "");
-    const result = await execute(path.join(workbenchRoot, ".venv", "Scripts", "python.exe"), [
+    const result = await execute(workbenchPython, [
       "-B", path.join(explorerRoot, "tests", script),
       "--url", service.url, "--output", output,
     ], { cwd: explorerRoot, encoding: "utf8", timeout: 210_000, maxBuffer: 2 * 1024 * 1024 });

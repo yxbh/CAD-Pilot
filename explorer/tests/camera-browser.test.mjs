@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { createExplorerServer, explorerRoot, runtimeRoot, workbenchRoot } from "../server/server.mjs";
+import { workbenchPython } from "../server/paths.mjs";
 
 // Build first, then run with EXPLORER_BROWSER_TESTS=1 to exercise the real R3F root.
 test("live camera survives panel, viewport and DPR resizing, capture and reload", {
@@ -16,7 +17,7 @@ test("live camera survives panel, viewport and DPR resizing, capture and reload"
   const service = await createExplorerServer({ projectRoot: workbenchRoot, viewId });
   try {
     await service.initialize();
-    const { stdout } = await promisify(execFile)(path.join(workbenchRoot, ".venv", "Scripts", "python.exe"), [
+    const { stdout } = await promisify(execFile)(workbenchPython, [
       path.join(explorerRoot, "tests", "camera_resize.py"), "--url", service.url,
       "--output", path.join(explorerRoot, ".runtime", "camera-resize", viewId),
     ], { cwd: workbenchRoot, timeout: 165_000, maxBuffer: 2 * 1024 * 1024 });

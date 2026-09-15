@@ -81,12 +81,10 @@ The runtime directory is local and Git-ignored. It is not a backup of a design p
 
 From the workbench root:
 
-```powershell
-Push-Location explorer
-npm test
-npm run build
-Pop-Location
-.\.venv\Scripts\python.exe -m pytest explorer\tests\test_converter.py -q
+```text
+npm --prefix explorer test
+npm --prefix explorer run build
+uv run pytest explorer/tests/test_converter.py -q
 ```
 
 Browser checks run against an isolated standalone/test view using the workbench's Python interpreter. `browser_smoke.py` checks the actual reference clipboard and picking workflow; `v2_browser.py` checks drawing/image parity and recovery; `studio_views.py` checks projection, appearance and capture; `draw_transition.py` measures fixed-layout transitions and genuine context-loss reporting; `explode_camera.py` exercises camera-preserving explosion from an orbited, panned and zoomed view. Run context-loss tests only on disposable test views.
