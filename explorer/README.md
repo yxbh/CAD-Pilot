@@ -9,12 +9,14 @@ Use the workbench's Python environment and this package's local Node dependencie
 ```powershell
 uv sync
 Push-Location explorer
-npm ci
+npm install
 npm run build
 Pop-Location
 ```
 
 Reload project extensions, then open **CAD Explorer**. Build output and dependencies are Git-ignored; a source checkout needs the build step. Rebuild and reload after changing the application or extension. Missing assets produce the build command rather than opening an empty success state.
+
+`package.json` is version-controlled; `package-lock.json` is local and Git-ignored because npm records resolved registry URLs in it. Use normal `npm install` with the machine's configured feed, without forcing a public registry or bypassing required feeds. The local lock can be reused on that machine, but versions permitted by the manifest can differ across machines. Imported dependency locks elsewhere in the workbench remain version-controlled; the provenance registry records their separate metadata-only patches.
 
 The canvas accepts an explicit authorized `projectRoot`, a STEP `file` inside it, and an optional `viewId` for its remembered setup. Without a file it restores that setup, or creates the synthetic demo when none exists. The default project is the workbench checkout. Use Open STEP to import another local snapshot; the source file is not modified and its Python generator is never executed.
 

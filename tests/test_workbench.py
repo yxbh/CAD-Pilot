@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import trimesh
@@ -78,6 +79,33 @@ def test_viewer_guidance_covers_workbench_skill_and_project_template():
     assert "do not insert or send chat messages" in skill
     assert "separate VS Code extension" in skill
     assert (guidance[1].parent / "../../../explorer/README.md").resolve().is_file()
+
+
+def test_first_party_npm_lock_is_machine_local():
+    explorer = ROOT / "explorer"
+    assert "/package-lock.json" in (explorer / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert (explorer / "package.json").is_file()
+    for document in (ROOT / "README.md", explorer / "README.md"):
+        text = document.read_text(encoding="utf-8")
+        commands = "\n".join(re.findall(r"```powershell\n(.*?)```", text, re.DOTALL))
+        assert "npm install" in commands
+        assert not re.search(r"^\s*npm ci\s*$", commands, re.MULTILINE)
+        assert "package-lock.json" in text and "Git-ignored" in text
+    assert (ROOT / ".agents/skills/cad/explorer/package-lock.json").is_file()
+
+
+def test_imported_lock_preserves_pins_without_private_feed_urls():
+    explorer = ROOT / ".agents/skills/cad/explorer"
+    assert "omit-lockfile-registry-resolved=true" in (explorer / ".npmrc").read_text(encoding="utf-8").splitlines()
+    lock = json.loads((explorer / "package-lock.json").read_text(encoding="utf-8"))
+    for name, package in lock["packages"].items():
+        resolved = package.get("resolved", "")
+        host = urlsplit(resolved).hostname or ""
+        private_feed = host == "pkgs.dev.azure.com" or host.endswith(".pkgs.visualstudio.com")
+        assert not private_feed, f"{name} has a feed-specific resolved URL"
+        if name.startswith("node_modules/") and not package.get("link"):
+            assert package.get("version"), name
+            assert package.get("integrity"), name
 
 
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])
