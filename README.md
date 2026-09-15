@@ -17,16 +17,20 @@ uv run pytest -q
 
 Run setup from the workbench root. Playwright Chromium is needed for browser checks and the imported render commands, not for STEP generation. A VS Code task is available for tests. Installing/running third-party tools executes code; this is not a sandbox.
 
-Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled.
+Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled with dependency versions and integrity hashes preserved; a documented local patch omits private registry URLs and prevents registry-resolved URLs from being written back.
 
 For the first-party Copilot desktop canvas, build its separate package:
 
 ```powershell
 Push-Location explorer
-npm ci
+npm install
 npm run build
 Pop-Location
 ```
+
+Commit `explorer/package.json`, but keep its `package-lock.json` local and Git-ignored, like `uv.lock`. Normal `npm install` creates or reuses that machine's lock using its configured registry; do not commit private-feed URLs or override required feeds to make a shared lock. Versions permitted by the manifest can resolve differently across machines. The imported viewer retains its version-controlled lock and uses package-local registry-metadata omission instead.
+
+Prepare source releases from tracked files, such as a Git archive, rather than zipping the working directory. Local locks, runtime data and caches are not release content.
 
 Reload project extensions and open **CAD Explorer**. See its [workflow and retained-data guidance](explorer/README.md) before moving or removing old prototype data: existing pasted references and drawings still use `.github\extensions\cad-explorer-prototype\.runtime`.
 
