@@ -4,7 +4,7 @@ Personal workbench for conversational CAD design and 3D-print preparation with G
 
 ## Stack and Setup
 
-The starter uses build123d, the pinned text-to-cad skill and CAD Explorer, and original visual-review and FDM-design skills. It is CLI-first; no MCP server or global skill installation is needed. Dependencies live in a local Python environment managed by uv.
+The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
 
 Prerequisites: Windows, Git, PowerShell 7, uv, and Node.js 22.12+ or 24. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
 
@@ -18,6 +18,17 @@ uv run pytest -q
 Run setup from the workbench root. Playwright Chromium is needed for browser checks and the imported render commands, not for STEP generation. A VS Code task is available for tests. Installing/running third-party tools executes code; this is not a sandbox.
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled.
+
+For the first-party Copilot desktop canvas, build its separate package:
+
+```powershell
+Push-Location explorer
+npm ci
+npm run build
+Pop-Location
+```
+
+Reload project extensions and open **CAD Explorer**. See its [workflow and retained-data guidance](explorer/README.md) before moving or removing old prototype data: existing pasted references and drawings still use `.github\extensions\cad-explorer-prototype\.runtime`.
 
 ## Start a Design
 
@@ -61,6 +72,8 @@ Open the design folder and explicitly provide the workbench path, or add both fo
 For Copilot CLI, start in the design folder, allow access to the workbench when prompted (or use `/add-dir`), and ask it to read the project instructions. Local workspace and path files are ignored. The dependency declaration and skills registry describe the workbench's dependencies; the local Python lock records that machine's resolution. Record the relevant workbench revision and actual dependency versions with a project only when reproduction requires them.
 
 ## Visual Review
+
+The first-party desktop canvas opens ordinary STEP snapshots, supports exploded views, exact face references, Studio appearance and saved drawing reviews. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
 
 The imported `ensure-dev.mjs` command prints a loopback URL scoped to the selected project. It reuses a matching viewer or chooses a free port in 4178-4198; open the printed URL in your browser. Keep it open while regenerating. No global viewer configuration is changed.
 
