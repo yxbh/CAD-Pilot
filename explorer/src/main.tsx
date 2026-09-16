@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { axisViews, type ViewPreset } from "./camera.ts";
 import { IconButton } from "./ui/IconButton";
+import { ImportWarnings } from "./ui/ImportWarnings.tsx";
 import "./style.css";
 
 class ViewerBoundary extends React.Component<{ children: React.ReactNode }, { error: string }> {
@@ -31,6 +32,7 @@ export function App({ host }: { host: ViewerHost }) {
   const [connected, setConnected] = useState(false);
   const [treeOpen, setTreeOpen] = useState(() => window.innerWidth >= 760);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [warningsTarget, setWarningsTarget] = useState<HTMLDivElement | null>(null);
   const [changingMode, setChangingMode] = useState(false);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
@@ -222,6 +224,8 @@ export function App({ host }: { host: ViewerHost }) {
           <option value="">Live model</option>
           {reviews.items.map((review) => <option key={review.id} value={review.id}>{review.title} ({review.strokeCount} marks)</option>)}
         </select>
+        {!drawingActive && !busy && model && model.warnings.length > 0 && <ImportWarnings
+          key={`${model.topologyRevision}:${model.source.name}`} warnings={model.warnings} sourceName={model.source.name} target={warningsTarget} />}
         <IconButton label="Open STEP" icon={FolderOpen} onClick={() => fileInput.current?.click()} disabled={loading || drawingActive} />
         <IconButton label="Toggle parts panel" icon={PanelRight} aria-pressed={treeOpen} onClick={() => setTreeOpen(!treeOpen)} />
         <input ref={fileInput} hidden type="file" accept=".step,.stp" onChange={(event) => {
@@ -277,6 +281,7 @@ export function App({ host }: { host: ViewerHost }) {
         <p>Visual finish only. STEP colors and geometry are unchanged.</p>
       </div>}
       <section className={`workspace${treeOpen ? "" : " panel-closed"}`}>
+        <div className="import-warnings-layer" ref={setWarningsTarget} />
         <div className="viewport">
           <div className="live-scene" aria-hidden={drawingActive} inert={drawingActive}>
           {ready ? (
@@ -386,7 +391,6 @@ export function App({ host }: { host: ViewerHost }) {
         {(reviewError || error || state?.error) && <div className="message error" role="alert">{reviewError || error || state?.error}<button onClick={() => { setReviewError(""); setError(""); }} aria-label="Dismiss message">x</button></div>}
         {notice && <div className="message" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notice">x</button></div>}
       </div>
-      {!!model?.warnings.length && <details className="warnings"><summary>Import warnings ({model.warnings.length})</summary>{model.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</details>}
     </main>
   );
 }
