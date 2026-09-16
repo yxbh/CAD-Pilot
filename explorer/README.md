@@ -37,6 +37,8 @@ The process prints a loopback URL and stays attached to the launching terminal. 
 
 The viewer loads ordinary STEP/STP parts and assemblies through the workbench's local OCP converter. It preserves repeated occurrences, placements, names and supported part colors. Different surfaces within one part, transparency and source visibility flags are not fully represented; detected limitations appear as import warnings. Missing colors use blue-grey. The demo deliberately has a blue base, green cover and gold spacers.
 
+When the live model has import warnings, a warning button with a count appears in the document header. Open it to read the full list in a scrollable panel; close it with its X button, Escape or the header button. The list stays above the bottom controls, so it never covers the explosion slider. Closing the list does not erase the warnings: reopen it from the same button. Details start closed for each newly loaded model and are not shown over captured drawing reviews.
+
 Orbit, pan, zoom, fit and six exact axis views are available. Right is +X, left -X, back +Y, front -Y, top +Z and bottom -Z. Z is the source model's up direction, not a manufacturing instruction. The labelled corner indicator follows the camera and its endpoints choose a view. Toolbar buttons have mouse-hover and keyboard-focus tooltips.
 
 Perspective and orthographic (parallel) projection share the same camera direction and target-plane scale when switched. The camera controller owns projection sizing so a window resize or parts-panel toggle does not replace the orthographic scale with pixel dimensions. Resizing may crop a narrower viewport; it must not silently change zoom.
@@ -90,6 +92,8 @@ uv run pytest explorer/tests/test_converter.py -q
 Browser checks run against an isolated standalone/test view using the workbench's Python interpreter. `browser_smoke.py` checks the actual reference clipboard and picking workflow; `v2_browser.py` checks drawing/image parity and recovery; `studio_views.py` checks projection, appearance and capture; `draw_transition.py` measures fixed-layout transitions and genuine context-loss reporting; `explode_camera.py` exercises camera-preserving explosion from an orbited, panned and zoomed view. Run context-loss tests only on disposable test views.
 
 `npm test` includes the review-recovery browser checks and requires the workbench's Playwright Chromium setup. The extended live camera check is opt-in: from `explorer`, set `$env:EXPLORER_BROWSER_TESTS='1'` and run `node --test tests\camera-browser.test.mjs`. It checks R3F camera matrices and scale across panel, viewport and device-pixel-ratio changes, not just toolbar layout.
+
+`node --test tests\import-warnings.test.mjs` checks warning-panel dismissal/reopening, scrollable long warnings, live-model versus drawing-review context, and actual pointer/keyboard access to the explosion slider on desktop, narrow and short windows. The fixture injects warnings into its isolated browser response rather than modifying cached CAD data.
 
 The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
 

@@ -79,7 +79,8 @@ def run(url, output):
             expect(page.locator("footer")).to_have_count(0)
             expect(page.get_by_role("button", name="Add reference", exact=True)).to_have_count(0)
             expect(page.get_by_text("Click a face, then paste into chat", exact=True)).to_have_count(0)
-            expect(page.locator(".warnings")).to_have_count(0)
+            expect(page.get_by_role("button", name="Import warnings", exact=False)).to_have_count(0)
+            expect(page.get_by_role("dialog", name="Import warnings", exact=False)).to_have_count(0)
             assert original["rendered"]["inFrame"]
             viewport = page.locator(".viewport")
             image = Image.open(io.BytesIO(viewport.screenshot())).convert("RGB")
