@@ -118,10 +118,10 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
     parts: model?.nodes.filter((node) => node.partId).map(({ id, label, partId }) => ({ id, label, partId })) || [],
     selectedReferences: model ? state.selectedIds.map((id) => ({
       id,
-      reference: createReference(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null),
-      text: formatSelection(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null),
+      reference: createReference(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
+      text: formatSelection(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
     })) : [],
-    limitations: ["No edge selection", "Snapshot loading; no file watcher", "Visual spacing, not a disassembly simulation"],
+    limitations: ["Snapshot loading; no file watcher", "Visual spacing, not a disassembly simulation"],
   });
 
   async function python(script, args) {
@@ -409,6 +409,7 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
         const result = {
           path: imagePath, revision: state.revision, documentRevision: state.documentRevision, topologyRevision: state.topologyRevision,
           exploded: state.explode, selectedIds: state.selectedIds, selectedFace: state.selectedFace,
+          selectedEdge: state.selectedEdge,
           camera: payload.camera ?? state.camera, appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
         };
         await writeFile(imagePath, bytes);
@@ -445,12 +446,16 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
       if (file) await execute("load_file", { file });
       else if (saved?.modelCache && /^[a-f0-9]{64}\.json$/.test(saved.modelCache)) {
         const cached = JSON.parse(await readFile(path.join(modelDir, saved.modelCache), "utf8"));
-        if (cached.schemaVersion === 1) {
+        if (cached.schemaVersion !== 1) {
+          validateModel(cached);
+          if (`${cached.topologyRevision}.json` !== saved.modelCache) throw new PrototypeError("cache_mismatch", "Saved geometry identity does not match its cache filename", 422);
+        }
+        if (cached.schemaVersion === 1 || cached.parts.some((part) => part.edges === undefined)) {
           if (!/^[a-f0-9]{64}$/.test(cached.source?.sha256 || "")) throw new PrototypeError("invalid_snapshot", "Saved STEP snapshot identity is invalid", 422);
-          log("Rebuilding the saved prototype snapshot for CAD face selection. Old selections are cleared.");
-          await loadFile(path.join(uploadDir, `${cached.source.sha256}.step`), cached.source.name, true);
+          log("Rebuilding the saved prototype snapshot for exact CAD face and edge selection. Old selections are cleared; previous reference snapshots are retained.");
+          await loadFile(path.join(uploadDir, `${cached.source.sha256}.step`), saved.inputName || state.modelName || cached.source.name, true);
         } else {
-          model = validateModel(cached);
+          model = cached;
           model.warnings = importWarnings(model.warnings);
           modelCache = saved.modelCache;
           inputFile = saved.inputFile;

@@ -2,12 +2,14 @@ function escapeAttribute(value) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-export function nativeReferenceTitle(partLabel, faceId = null) {
+export function nativeReferenceTitle(partLabel, faceId = null, edgeId = null) {
   if (typeof partLabel !== "string" || !partLabel.trim()) throw new Error("Native reference needs a part name");
   if (faceId !== null && !/^f[1-9][0-9]*$/.test(faceId)) throw new Error("Invalid face label");
+  if (edgeId !== null && !/^e[1-9][0-9]*$/.test(edgeId)) throw new Error("Invalid edge label");
+  if (faceId !== null && edgeId !== null) throw new Error("Select a face or an edge, not both");
   // File-reference chips display only the last path component of slash-separated labels.
   const part = partLabel.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/[\\/]+/g, " \u00b7 ").replace(/\s+/g, " ").trim();
-  const suffix = ` \u00b7 ${faceId ? `Face ${faceId}` : "Part"}`;
+  const suffix = ` \u00b7 ${faceId ? `Face ${faceId}` : edgeId ? `Edge ${edgeId}` : "Part"}`;
   const budget = 160 - suffix.length;
   return `${part.length > budget ? `${part.slice(0, budget - 3)}...` : part}${suffix}`;
 }

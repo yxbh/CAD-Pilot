@@ -116,6 +116,7 @@ export class ReviewStore {
       pose: {
         explode: state.explode, direction: state.direction, fixedId: state.fixedId,
         hiddenIds: [...state.hiddenIds], selectedIds: [...state.selectedIds], selectedFace: state.selectedFace,
+        selectedEdge: state.selectedEdge ?? null,
         camera: capture.camera,
         appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
       },

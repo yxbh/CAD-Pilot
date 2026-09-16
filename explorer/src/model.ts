@@ -12,6 +12,15 @@ export type CadFace = {
   bounds: Bounds;
 };
 export type FaceSelection = { nodeId: string; faceId: string };
+export type CadEdge = {
+  id: string;
+  positions: number[];
+  curveType: string;
+  length: number;
+  center: Vec3;
+  bounds: Bounds;
+};
+export type EdgeSelection = { nodeId: string; edgeId: string };
 export type Part = {
   id: string;
   label: string;
@@ -21,6 +30,7 @@ export type Part = {
   indices: number[];
   bounds: Bounds;
   faces: CadFace[];
+  edges?: CadEdge[];
 };
 export type ModelNode = {
   id: string;
@@ -47,7 +57,8 @@ export type ViewState = {
   modelName: string;
   selectedIds: string[];
   selectedFace: FaceSelection | null;
-  selectionMode: "face" | "part";
+  selectedEdge: EdgeSelection | null;
+  selectionMode: "face" | "edge" | "part";
   autoCopy: boolean;
   hiddenIds: string[];
   explode: number;
@@ -65,7 +76,7 @@ export type ViewState = {
   camera: CameraState | null;
 };
 export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds };
-export type HoverTarget = { nodeId: string; faceId: string | null };
+export type HoverTarget = { nodeId: string; faceId: string | null; edgeId?: string };
 
 export function faceAtTriangle(part: Part, triangle: number): CadFace | null {
   if (!Number.isInteger(triangle) || triangle < 0) return null;
@@ -82,9 +93,18 @@ export function faceAtTriangle(part: Part, triangle: number): CadFace | null {
 }
 
 export function hoverTarget(part: Part, nodeId: string, mode: ViewState["selectionMode"], triangle: number): HoverTarget | null {
+  if (mode === "edge") return null;
   if (mode === "part") return { nodeId, faceId: null };
   const face = faceAtTriangle(part, triangle);
   return face ? { nodeId, faceId: face.id } : null;
+}
+
+export function edgeSegments(edge: CadEdge): number[] {
+  const segments: number[] = [];
+  for (let offset = 0; offset + 5 < edge.positions.length; offset += 3) {
+    segments.push(...edge.positions.slice(offset, offset + 6));
+  }
+  return segments;
 }
 
 export function facePositions(part: Part, face: CadFace): Float32Array {

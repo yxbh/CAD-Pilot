@@ -1,7 +1,8 @@
 """Disposable native STEP preview converter, independent of imported CAD tooling.
 
 Meshes retain the source's Z-up frame and use millimeters. Colors are linear RGB.
-The JSON maps render triangles to CAD faces, not editable design history.
+The JSON maps render triangles to CAD faces and ordered polylines to native CAD
+edges, not editable design history.
 Limits bound exported data, not the native reader's peak memory or execution time;
 the caller should impose a process timeout and only open trusted local models.
 """
@@ -20,12 +21,13 @@ import sys
 import numpy as np
 from OCP.Bnd import Bnd_Box
 from OCP.BRep import BRep_Tool
-from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GProp import GProp_GProps
+from OCP.GCPnts import GCPnts_AbscissaPoint, GCPnts_TangentialDeflection
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Quantity import Quantity_ColorRGBA, Quantity_TOC_RGB
 from OCP.Standard import Standard_Failure
@@ -35,8 +37,9 @@ from OCP.TDataStd import TDataStd_Name
 from OCP.TDF import TDF_Label, TDF_LabelSequence, TDF_Tool
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
-from OCP.TopExp import TopExp_Explorer
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
+from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.TopoDS import TopoDS
 from OCP.gp import gp_Trsf
 from OCP.XCAFDoc import (
@@ -53,6 +56,8 @@ MAX_ENTITIES = 1_000_000
 MAX_VERTICES = 600_000
 MAX_TRIANGLES = 1_000_000
 MAX_FACES = 100_000
+MAX_EDGES = 200_000
+MAX_EDGE_POINTS = 1_000_000
 MAX_NODES = 20_000
 MAX_PARTS = 10_000
 MAX_DEPTH = 64
@@ -226,6 +231,62 @@ def _corners(bounds: dict) -> np.ndarray:
     ])
 
 
+def _edges(shape, budget: dict, warnings: WarningLog) -> list[dict]:
+    # An indexed native map deduplicates shared/seam edges by topology and location,
+    # not by coincident coordinates or a triangulation's artificial diagonals.
+    edges = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(shape, TopAbs_EDGE, edges)
+    budget["edges"] += edges.Extent()
+    if budget["edges"] > MAX_EDGES:
+        raise ConversionError("CAD edge limit exceeded.")
+    records = []
+    for index in range(1, edges.Extent() + 1):
+        edge = TopoDS.Edge_s(edges.FindKey(index))
+        edge_id = f"e{index}"
+        if BRep_Tool.Degenerated_s(edge):
+            warnings.add(f"Degenerate CAD edge {edge_id} was omitted from edge selection.")
+            continue
+        curve = BRepAdaptor_Curve(edge)
+        if not all(map(math.isfinite, (curve.FirstParameter(), curve.LastParameter()))):
+            raise ConversionError(f"CAD edge {edge_id} has an unbounded curve.")
+        properties = GProp_GProps()
+        BRepGProp.LinearProperties_s(edge, properties, False, False)
+        # Fixed-order mass integration is noticeably inaccurate for some splines;
+        # measure the native curve with an explicit adaptive length tolerance.
+        length = GCPnts_AbscissaPoint.Length_s(curve, 1e-7)
+        center = list(properties.CentreOfMass().Coord())
+        if not math.isfinite(length) or length < 0 or not all(map(math.isfinite, center)):
+            raise ConversionError(f"CAD edge {edge_id} has invalid native curve properties.")
+        if length == 0:
+            warnings.add(f"Zero-length CAD edge {edge_id} was omitted from edge selection.")
+            continue
+        samples = GCPnts_TangentialDeflection(
+            curve, ANGULAR_DEFLECTION_RADIANS, LINEAR_DEFLECTION_MM
+        )
+        budget["edgePoints"] += samples.NbPoints()
+        if budget["edgePoints"] > MAX_EDGE_POINTS:
+            raise ConversionError("CAD edge point limit exceeded.")
+        points = np.asarray([samples.Value(i).Coord() for i in range(1, samples.NbPoints() + 1)])
+        if len(points) < 2 or not np.isfinite(points).all() or not np.any(points[1:] != points[0]):
+            raise ConversionError(f"CAD edge {edge_id} could not be sampled; refusing partial preview.")
+        if edge.Orientation() == TopAbs_REVERSED:
+            points = points[::-1]
+        box = Bnd_Box()
+        BRepBndLib.AddOptimal_s(edge, box, False, True)
+        if box.IsVoid() or box.IsOpen():
+            raise ConversionError(f"CAD edge {edge_id} has unbounded native geometry.")
+        extent = box.Get()
+        if not all(map(math.isfinite, extent)):
+            raise ConversionError(f"CAD edge {edge_id} has non-finite native bounds.")
+        records.append({
+            "id": edge_id, "positions": points.ravel().tolist(),
+            "curveType": str(curve.GetType()).split(".")[-1].removeprefix("GeomAbs_").lower(),
+            "length": length, "center": center,
+            "bounds": {"min": list(extent[:3]), "max": list(extent[3:])},
+        })
+    return records
+
+
 def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
     if shape.IsNull() or not BRepCheck_Analyzer(shape).IsValid():
         raise ConversionError("Part contains null or invalid native geometry.")
@@ -317,9 +378,8 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
         faces.Next()
     if not indices:
         raise ConversionError("Part has no tessellatable faces; wire/point-only STEP is unsupported.")
-    if (TopExp_Explorer(shape, TopAbs_EDGE, TopAbs_FACE).More()
-            or TopExp_Explorer(shape, TopAbs_VERTEX, TopAbs_EDGE).More()):
-        warnings.add("Standalone wires/points are unsupported and are not drawn.")
+    if TopExp_Explorer(shape, TopAbs_VERTEX, TopAbs_EDGE).More():
+        warnings.add("Standalone points are unsupported and are not drawn.")
     box = Bnd_Box()
     BRepBndLib.AddOptimal_s(shape, box, False, True)
     if box.IsVoid() or box.IsOpen():
@@ -330,11 +390,12 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
     bounds["max"] = [max(bounds["max"][i], native[i + 3]) for i in range(3)]
     if not all(math.isfinite(v) for v in bounds["min"] + bounds["max"]):
         raise ConversionError("Part has non-finite native geometry bounds.")
-    return {"positions": positions, "normals": normals, "indices": indices, "bounds": bounds, "faces": face_records}
+    return {"positions": positions, "normals": normals, "indices": indices, "bounds": bounds,
+            "faces": face_records, "edges": _edges(shape, budget, warnings)}
 
 
 def convert_step(input_path: str | Path) -> dict:
-    """Read a self-contained STEP into the schemaVersion=2 face-mapped contract."""
+    """Read a self-contained STEP into the schemaVersion=2 face/edge-mapped contract."""
     path = Path(input_path)
     data = _read_bytes(path)
     warnings = WarningLog()
@@ -348,7 +409,7 @@ def convert_step(input_path: str | Path) -> dict:
     parts: dict[str, dict] = {}
     nodes = []
     world_corners = []
-    budget = {"vertices": 0, "triangles": 0, "faces": 0}
+    budget = {"vertices": 0, "triangles": 0, "faces": 0, "edges": 0, "edgePoints": 0}
 
     def visit(label, parent_id, parent_world, inherited_color, ancestry, path_id):
         if len(nodes) >= MAX_NODES or len(ancestry) > MAX_DEPTH:

@@ -11,18 +11,22 @@ import tempfile
 import numpy as np
 import pytest
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeSphere
+from OCP.BRep import BRep_Builder
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 from OCP.IFSelect import IFSelect_RetDone
+from OCP.Geom import Geom_BezierCurve
 from OCP.Quantity import Quantity_Color, Quantity_TOC_RGB
 from OCP.Standard import Standard_Failure
 from OCP.STEPCAFControl import STEPCAFControl_Writer
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
+from OCP.TColgp import TColgp_Array1OfPnt
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS_Compound
 from OCP.XCAFDoc import XCAFDoc_ColorSurf, XCAFDoc_DocumentTool
 from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 
@@ -102,7 +106,7 @@ def _assert_contract(model):
     assert len(part_map) == len(model["parts"])
     all_ids = list(part_map)
     for part in model["parts"]:
-        assert set(part) == {"id", "label", "color", "positions", "normals", "indices", "bounds", "faces"}
+        assert set(part) == {"id", "label", "color", "positions", "normals", "indices", "bounds", "faces", "edges"}
         assert isinstance(part["label"], str) and part["label"]
         points = np.array(part["positions"]).reshape(-1, 3)
         normals = np.array(part["normals"]).reshape(-1, 3)
@@ -129,6 +133,16 @@ def _assert_contract(model):
             assert len(face["center"]) == 3 and np.isfinite(face["center"]).all()
             assert face["surfaceType"]
         assert next_triangle == len(triangles)
+        assert len({edge["id"] for edge in part["edges"]}) == len(part["edges"])
+        for edge in part["edges"]:
+            assert set(edge) == {"id", "positions", "curveType", "length", "center", "bounds"}
+            assert edge["id"].startswith("e") and int(edge["id"][1:]) > 0
+            edge_points = np.asarray(edge["positions"]).reshape(-1, 3)
+            assert len(edge_points) >= 2 and np.isfinite(edge_points).all()
+            assert edge["curveType"] and np.isfinite(edge["length"]) and edge["length"] > 0
+            assert len(edge["center"]) == 3 and np.isfinite(edge["center"]).all()
+            assert np.all(edge_points >= np.asarray(edge["bounds"]["min"]) - 1e-6)
+            assert np.all(edge_points <= np.asarray(edge["bounds"]["max"]) + 1e-6)
     worlds = {}
     for node in model["nodes"]:
         assert set(node) == {"id", "label", "parentId", "partId", "matrix", "color"}
@@ -174,6 +188,69 @@ def test_direct_step_exact_bytes_and_finite_contract(workdir):
     assert all(face["surfaceType"] == "plane" for face in model["parts"][0]["faces"])
     assert all(face["triangleCount"] == 2 for face in model["parts"][0]["faces"])
     assert sorted(face["area"] for face in model["parts"][0]["faces"]) == pytest.approx([200, 200, 300, 300, 600, 600])
+    edges = model["parts"][0]["edges"]
+    assert len(edges) == 12
+    assert all(edge["curveType"] == "line" and len(edge["positions"]) == 6 for edge in edges)
+    assert sorted(edge["length"] for edge in edges) == pytest.approx([10] * 4 + [20] * 4 + [30] * 4)
+    for edge in edges:
+        points = np.asarray(edge["positions"]).reshape(-1, 3)
+        np.testing.assert_allclose(edge["center"], points.mean(axis=0), atol=1e-9)
+
+
+def test_circular_edges_are_native_unique_closed_curves_with_exact_length(workdir):
+    path = workdir / "cylinder.step"
+    _write_direct(path, BRepPrimAPI_MakeCylinder(12, 25).Shape())
+    model = converter.convert_step(path)
+    _assert_contract(model)
+    edges = model["parts"][0]["edges"]
+    assert len(edges) == 3, "Two shared circular boundaries and one seam, not tessellation facets"
+    circles = [edge for edge in edges if edge["curveType"] == "circle"]
+    assert len(circles) == 2
+    for edge in circles:
+        points = np.asarray(edge["positions"]).reshape(-1, 3)
+        assert len(points) > 12
+        np.testing.assert_allclose(points[0], points[-1], atol=1e-8)
+        np.testing.assert_allclose(np.linalg.norm(points[:, :2], axis=1), 12, atol=1e-8)
+        assert edge["length"] == pytest.approx(24 * np.pi)
+        assert np.linalg.norm(np.diff(points, axis=0), axis=1).sum() < edge["length"]
+        np.testing.assert_allclose(edge["center"][:2], [0, 0], atol=1e-8)
+        np.testing.assert_allclose(edge["bounds"]["min"][:2], [-12, -12], atol=1e-6)
+        np.testing.assert_allclose(edge["bounds"]["max"][:2], [12, 12], atol=1e-6)
+
+
+def test_edges_deduplicate_shared_topology_not_coincident_or_located_geometry():
+    compound = TopoDS_Compound()
+    builder = BRep_Builder()
+    builder.MakeCompound(compound)
+    box = BRepPrimAPI_MakeBox(2, 3, 4).Shape()
+    builder.Add(compound, box)
+    builder.Add(compound, box)
+    builder.Add(compound, BRepPrimAPI_MakeBox(2, 3, 4).Shape())
+    builder.Add(compound, box.Moved(_location(10, 20, 30, np.pi / 2)))
+    warnings = converter.WarningLog()
+    edges = converter._edges(compound, {"edges": 0, "edgePoints": 0}, warnings)
+    assert len(edges) == 36
+    assert not warnings.items
+    for original, located in zip(edges[:12], edges[24:]):
+        points = np.asarray(original["positions"]).reshape(-1, 3)
+        expected = points @ np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]]) + [10, 20, 30]
+        np.testing.assert_allclose(np.asarray(located["positions"]).reshape(-1, 3), expected, atol=1e-8)
+        assert original["length"] == pytest.approx(located["length"])
+
+
+def test_spline_edge_sampling_preserves_order_and_uses_native_curve_length():
+    poles = TColgp_Array1OfPnt(1, 3)
+    for index, point in enumerate([(0, 0, 0), (5, 10, 0), (10, 0, 0)], start=1):
+        poles.SetValue(index, gp_Pnt(*point))
+    shape = BRepBuilderAPI_MakeEdge(Geom_BezierCurve(poles)).Shape()
+    edge, = converter._edges(shape, {"edges": 0, "edgePoints": 0}, converter.WarningLog())
+    points = np.asarray(edge["positions"]).reshape(-1, 3)
+    assert edge["curveType"] == "beziercurve"
+    assert len(points) > 3
+    np.testing.assert_allclose(points[[0, -1]], [[0, 0, 0], [10, 0, 0]], atol=1e-9)
+    assert np.all(np.diff(points[:, 0]) > 0)
+    assert edge["length"] == pytest.approx(5 * np.sqrt(5) + 2.5 * np.arcsinh(2), rel=1e-6)
+    assert np.linalg.norm(np.diff(points, axis=0), axis=1).sum() < edge["length"]
 
 
 def test_demo_reuses_spacers_and_preserves_local_frames(workdir):
@@ -281,6 +358,8 @@ def test_curved_surface_normals_and_analytic_bounds(workdir):
     positions = np.asarray(model["parts"][0]["positions"]).reshape(-1, 3)
     normals = np.asarray(model["parts"][0]["normals"]).reshape(-1, 3)
     assert np.all(np.sum(positions * normals, axis=1) > 0)
+    assert len(model["parts"][0]["edges"]) == 1
+    assert any("Degenerate CAD edge" in warning for warning in model["warnings"])
 
 
 def test_repeat_conversion_is_deterministic_and_has_no_stale_state(workdir):
@@ -374,6 +453,17 @@ def test_mesh_budget_fails_explicitly(workdir, monkeypatch):
     _write_direct(path)
     monkeypatch.setattr(converter, "MAX_VERTICES", 3)
     with pytest.raises(converter.ConversionError, match="vertex/triangle limit"):
+        converter.convert_step(path)
+
+
+@pytest.mark.parametrize("budget,message", [
+    ("MAX_EDGES", "CAD edge limit"), ("MAX_EDGE_POINTS", "CAD edge point limit"),
+])
+def test_edge_budget_fails_explicitly(workdir, monkeypatch, budget, message):
+    path = workdir / "small.step"
+    _write_direct(path)
+    monkeypatch.setattr(converter, budget, 1)
+    with pytest.raises(converter.ConversionError, match=message):
         converter.convert_step(path)
 
 

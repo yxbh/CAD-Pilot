@@ -9,7 +9,8 @@ import { initialState } from "../server/protocol.mjs";
 
 const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jM1sAAAAASUVORK5CYII=";
 const camera = { position: [10, -10, 10], target: [0, 0, 0], up: [0, 0, 1], fov: 42 };
-const state = { ...initialState(), revision: 5, modelName: "Review model.step", documentRevision: "a".repeat(64), topologyRevision: "b".repeat(64), explode: 0.5 };
+const state = { ...initialState(), revision: 5, modelName: "Review model.step", documentRevision: "a".repeat(64), topologyRevision: "b".repeat(64), explode: 0.5,
+  selectedIds: ["a"], selectedEdge: { nodeId: "a", edgeId: "e1" } };
 const capture = { dataUrl, width: 1, height: 1, camera };
 const stroke = { id: "pen-1", tool: "pen", color: "#ff0000", width: 3, points: [[0.1, 0.2], [0.8, 0.7]] };
 async function testDirectory() {
@@ -24,6 +25,7 @@ test("reviews persist drawing history and remain bound to their original image a
     const store = new ReviewStore(directory);
     const original = await store.create(capture, state, 5);
     assert.equal(original.pose.explode, 0.5);
+    assert.deepEqual(original.pose.selectedEdge, state.selectedEdge);
     assert.equal(original.source.topologyRevision, state.topologyRevision);
     const drawing = { past: [[]], present: [stroke], future: [] };
     const saved = await store.save(original.id, drawing, 1);
@@ -35,6 +37,7 @@ test("reviews persist drawing history and remain bound to their original image a
     const metadata = JSON.parse(await readFile(`${result.path}.json`, "utf8"));
     assert.deepEqual(metadata.drawing, [stroke]);
     assert.equal(metadata.pose.explode, 0.5);
+    assert.deepEqual(metadata.pose.selectedEdge, state.selectedEdge);
     assert.equal((await store.list())[0].strokeCount, 1);
     await assert.rejects(store.save(original.id, emptyDrawing(), 1), /changed in another panel/);
     await assert.rejects(store.saveImage(original.id, 1, dataUrl), /Review changed/);

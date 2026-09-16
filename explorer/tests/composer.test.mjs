@@ -24,7 +24,7 @@ test("native attachment carries the exact face identity and a readable composer 
   assert.equal(attachment.payload.source.sha256, model.source.sha256);
   assert.equal(attachment.payload.displayOnlyExplosion, 0.5);
   assert.deepEqual(parseReference(attachment.payload.references[0].reference), {
-    nodeId: "root/cover", faceId: "f6", topologyRevision: model.topologyRevision,
+    nodeId: "root/cover", faceId: "f6", edgeId: null, topologyRevision: model.topologyRevision,
   });
   assert.equal(attachment.payload.inspectionTool, "cad_explorer_prototype_inspect");
   assert.equal("extensionId" in attachment, false);

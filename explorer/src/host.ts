@@ -1,4 +1,4 @@
-import type { FaceSelection, Model, ViewState } from "./model.ts";
+import type { EdgeSelection, FaceSelection, Model, ViewState } from "./model.ts";
 import type { CameraState } from "../shared/view-settings.mjs";
 export type { CameraState } from "../shared/view-settings.mjs";
 import type { Review } from "./drawing/types.ts";
@@ -11,6 +11,7 @@ export type ViewCapture = { dataUrl: string; width: number; height: number; came
 export type RenderReport = {
   revision: number; modelHash: string; topologyRevision: string; visibleParts: number;
   selectedIds: string[]; selectedFace: FaceSelection | null; highlightedTriangles: number;
+  selectedEdge: EdgeSelection | null; highlightedSegments: number; selectedEdgeScreen: number[] | null;
   selectedFaceScreen: number[] | null; bounds: { min: number[]; max: number[] } | null;
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
@@ -31,7 +32,7 @@ export interface ViewerHost {
   captureResult(result: object): Promise<unknown>;
   captureImage(): Promise<{ path: string }>;
   upload(file: File): Promise<unknown>;
-  copyReference(model: Model, id: string, faceId?: string): Promise<NativeCopyResult>;
+  copyReference(model: Model, id: string, faceId?: string, edgeId?: string): Promise<NativeCopyResult>;
   cancelPendingCopy(): void;
   copyImage(image: Promise<Blob>): Promise<void>;
   listReviews(): Promise<ReviewSummary[]>;
@@ -75,9 +76,9 @@ export function createDesktopHost(): ViewerHost {
     captureResult: (result) => post("capture-result", result),
     captureImage: () => post("capture", {}),
     upload: (file) => request("upload", { method: "POST", headers: { "x-file-name": encodeURIComponent(file.name) }, body: file }),
-    copyReference(model, id, faceId) {
+    copyReference(model, id, faceId, edgeId) {
       const sequence = ++copySequence;
-      const reference = createReference(model, id, faceId ?? null);
+      const reference = createReference(model, id, faceId ?? null, edgeId ?? null);
       const preparation = prepareQueue.then(() => post<{ text: string; title: string }>("clipboard-reference", { reference }));
       prepareQueue = preparation.catch(() => undefined);
       return copyPreparedReference(preparation, (text) => sequence === copySequence

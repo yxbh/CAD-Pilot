@@ -47,15 +47,17 @@ Explosion percentage, direction, fixed-part selection and Reassemble move only t
 
 Inspect uses a grid and readable outlines. Studio uses local reflection and area lighting, soft-edged shadow lighting and a floor. Plastic, satin metal, polished metal and rubber are visual finishes over the original colors, not measured materials or changes to STEP. Outlines can be switched independently; changing modes starts with them on for Inspect and off for Studio. No remote environment images or conversion services are used.
 
-## Face references and chat
+## Face, edge and part references
 
-In Faces mode, moving over a surface previews its whole CAD face and selecting it keeps the stronger face highlight. Parts mode previews and selects an occurrence instead. The parts list also selects an occurrence. Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
+Use the Faces, Edges or Parts toolbar buttons to choose what to select. Faces previews and selects a whole CAD face; Edges previews and selects a whole straight or curved CAD edge; Parts selects an occurrence. The parts list also selects an occurrence. Edge picking uses a six-CSS-pixel radius at any zoom, ignores edges behind opaque geometry and follows each part's exploded placement. Edge mode shows the selectable outlines even when Studio's Outlines setting is off. Selected edges have a stronger highlight, with their curve type and exact CAD length in millimeters in the selection panel. These are STEP topology edges, including seams, not triangle boundaries or view-dependent silhouettes.
 
-The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face. A middle dot separates part and face in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
+Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
+
+The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
 `cad_explorer_inspect` resolves these references. `cad_explorer_prototype_inspect` remains a supported alias for existing descriptors and conversations. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
 
-Inspection keeps compact validated face/part/placement facts rather than retaining another copy of mesh arrays. Its default cache is limited to four entries and 64 MiB of accounted fact data; source-digest entries have a separate bound. These are retained-cache accounting limits, not a bound on transient JSON parsing or total process memory. Unchanged warm selections avoid full mesh parsing/validation and source hashing; changed files invalidate the relevant entry, and source hashing is streamed. Synthetic timing checks do not certify real large-assembly performance.
+Inspection keeps compact validated face/edge/part/placement facts rather than retaining another copy of mesh or edge-polyline arrays. Its default cache is limited to four entries and 64 MiB of accounted fact data; source-digest entries have a separate bound. These are retained-cache accounting limits, not a bound on transient JSON parsing or total process memory. Unchanged warm selections avoid full mesh parsing/validation and source hashing; changed files invalidate the relevant entry, and source hashing is streamed. Synthetic timing checks do not certify real large-assembly performance.
 
 Clipboard access can be denied by the host; a selected-text/manual-copy path remains available. Browser clipboard checks, native chip presentation, and delivery of the descriptor in the next user message are separate acceptance checks. Do not treat one as proof of the others.
 
@@ -75,7 +77,7 @@ Copy marked image and Save marked image include annotations. The saved metadata 
 
 Maintained code lives in `explorer\`; retained data deliberately stays under `.github\extensions\cad-explorer-prototype\.runtime`. Existing pasted chips contain absolute descriptor paths there. Moving or deleting those files would break references already present in conversations.
 
-Keep `models`, `inputs`, `references`, `views`, `reviews` and captures at that retained location. Do not remove the old-named directory merely because the running extension is now `cad-explorer`. Existing v1 geometry caches, perspective-only camera records and saved reviews retain their compatibility paths. Source-file cleanup is separate from data deletion.
+Keep `models`, `inputs`, `references`, `views`, `reviews` and captures at that retained location. Do not remove the old-named directory merely because the running extension is now `cad-explorer`. Existing v1 geometry caches, perspective-only camera records and saved reviews retain their compatibility paths. Live models converted before edge support are reconverted from their source snapshot into a new topology revision; old cached face/part references remain resolvable against their original revision. Source-file cleanup is separate from data deletion.
 
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
 
@@ -95,11 +97,13 @@ Browser checks run against an isolated standalone/test view using the workbench'
 
 `node --test tests\import-warnings.test.mjs` checks warning-panel dismissal/reopening, scrollable long warnings, live-model versus drawing-review context, and actual pointer/keyboard access to the explosion slider on desktop, narrow and short windows. The fixture injects warnings into its isolated browser response rather than modifying cached CAD data.
 
+`node --test tests/edge-picking.test.ts tests/edge-browser.test.mjs` checks screen-space hit tolerance, occlusion, whole-edge highlighting, real pointer picking of straight and curved edges, native-reference copying, repeated and exploded occurrences, mode switching, saved selection, drawing capture and narrow/high-DPI windows. Build first. The browser test uses the isolated synthetic STEP assembly, not a user's design. Converter tests separately check exact topology and CAD edge lengths; display polylines approximate curves and do not replace exact geometry.
+
 The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
 
 ## Scope and ownership
 
-This release maintains the current STEP, face/part picking, native reference copying, saved drawing, explosion, view and appearance workflows. It does not add live file watching, CAD-edge picking, GLB transport, collision-aware disassembly, a VS Code extension, slicing or printer control. Preview meshes are JSON arrays; assemblies are not certified for large-model performance.
+This release maintains the current STEP, face/edge/part picking, native reference copying, saved drawing, explosion, view and appearance workflows. It does not add live file watching, vertex picking, GLB transport, collision-aware disassembly, a VS Code extension, slicing or printer control. Preview meshes and edge polylines are JSON arrays; assemblies are not certified for large-model performance.
 
 The host boundary is `ViewerHost`; the Copilot adapter registers canvases/tools and serves local HTTP/SSE. Conversion, inspection, view state and drawing logic do not require the imported viewer. Native CAD conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
 

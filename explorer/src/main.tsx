@@ -7,7 +7,7 @@ import { useReviews } from "./useReviews.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
 import {
   Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen,
-  Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal,
+  Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
 } from "lucide-react";
 import { axisViews, type ViewPreset } from "./camera.ts";
 import { IconButton } from "./ui/IconButton";
@@ -150,10 +150,10 @@ export function App({ host }: { host: ViewerHost }) {
     await run("set_auto_copy", { enabled });
     setPendingAutoCopy(null);
   }
-  function copySelection(id: string, faceId?: string) {
+  function copySelection(id: string, faceId?: string, edgeId?: string) {
     if (!model) return;
     const sequence = ++copySequence.current;
-    const result = host.copyReference(model, id, faceId);
+    const result = host.copyReference(model, id, faceId, edgeId);
     setCopyStatus({ kind: "pending", message: "Copying reference...", text: "" });
     void result.then(({ prepared, result: outcome }) => {
       if (sequence !== copySequence.current) return;
@@ -167,20 +167,21 @@ export function App({ host }: { host: ViewerHost }) {
     });
     return result;
   }
-  function select(id: string, faceId?: string) {
+  function select(id: string, faceId?: string, edgeId?: string) {
     if (latest.current?.activeReviewId) return;
     copySequence.current++;
     host.cancelPendingCopy();
     setCopyStatus({ kind: "idle", message: "", text: "" });
     if (!id) { run("select_parts", { ids: [] }); return; }
     if (!model || model.topologyRevision !== state?.topologyRevision || model.source.name !== state.modelName || state.loading) {
-      setError("The displayed model is updating. Select the face again when loading finishes.");
+      setError("The displayed model is updating. Select the geometry again when loading finishes.");
       return;
     }
     try {
-      const copied = (pendingAutoCopy ?? latest.current?.autoCopy ?? true) ? copySelection(id, faceId) : undefined;
+      const copied = (pendingAutoCopy ?? latest.current?.autoCopy ?? true) ? copySelection(id, faceId, edgeId) : undefined;
       const sequence = copySequence.current;
-      run(faceId ? "select_face" : "select_parts", faceId
+      run(edgeId ? "select_edge" : faceId ? "select_face" : "select_parts", edgeId
+        ? { id, edgeId, topologyRevision: model.topologyRevision } : faceId
         ? { id, faceId, topologyRevision: model.topologyRevision }
         : { ids: [id], topologyRevision: model.topologyRevision }, (failure) => {
           if (!copied) return;
@@ -196,6 +197,8 @@ export function App({ host }: { host: ViewerHost }) {
   const selected = leaves.find((node) => state?.selectedIds.includes(node.id));
   const selectedPart = model?.parts.find((part) => part.id === selected?.partId);
   const selectedFace = selectedPart?.faces.find((face) => face.id === state?.selectedFace?.faceId);
+  const selectedEdge = selectedPart?.edges?.find((edge) => edge.id === state?.selectedEdge?.edgeId);
+  const selectionName = state?.selectionMode === "edge" ? "edge" : state?.selectionMode === "part" ? "part" : "face";
   const referenceText = copyStatus.text;
   const ready = model && state && model.topologyRevision === state.topologyRevision && model.source.name === state.modelName;
   const loading = !state || state.loading;
@@ -260,6 +263,7 @@ export function App({ host }: { host: ViewerHost }) {
             </div>
             <div className="tool-group" role="group" aria-label="Selection mode">
               <IconButton label="Faces" icon={ScanFace} aria-pressed={state?.selectionMode === "face"} onClick={() => run("set_selection_mode", { mode: "face" })} />
+              <IconButton label="Edges" icon={Spline} aria-pressed={state?.selectionMode === "edge"} onClick={() => run("set_selection_mode", { mode: "edge" })} />
               <IconButton label="Parts" icon={Box} aria-pressed={state?.selectionMode === "part"} onClick={() => run("set_selection_mode", { mode: "part" })} />
             </div>
             <div className="tool-group">
@@ -324,10 +328,13 @@ export function App({ host }: { host: ViewerHost }) {
             </div>;
           })}</div>
           <div className="selection-info">
-            <span className="eyebrow">SELECTION</span><strong>{selected?.label || "Pick a face"}</strong>
-            <p>{selectedFace ? `Face ${selectedFace.id} / ${selectedFace.surfaceType} / ${selectedFace.area.toFixed(2)} mm\u00b2`
+            <span className="eyebrow">SELECTION</span><strong>{selected?.label || `Pick a ${selectionName}`}</strong>
+            <p>{selectedEdge ? `Edge ${selectedEdge.id} / ${selectedEdge.curveType} / ${selectedEdge.length.toFixed(2)} mm`
+              : selectedFace ? `Face ${selectedFace.id} / ${selectedFace.surfaceType} / ${selectedFace.area.toFixed(2)} mm\u00b2`
               : selectedPart ? `${selectedPart.bounds.max.map((value, axis) => (value - selectedPart.bounds.min[axis]).toFixed(1)).join(" x ")} mm`
-                : "Click a surface to select its CAD face."}</p>
+                : state?.selectionMode === "edge" ? "Point near an outline to select its CAD edge."
+                  : state?.selectionMode === "part" ? "Click an object to select its whole part."
+                    : "Click a surface to select its CAD face."}</p>
             <div className="selection-actions">
               <IconButton label="Keep fixed" icon={Pin} disabled={!selected} onClick={() => run("set_explode", { fixedId: selected?.id })} />
               <IconButton label="Isolate" icon={Expand} disabled={!selected} onClick={() => run("isolate", { id: selected?.id })} />
@@ -354,7 +361,7 @@ export function App({ host }: { host: ViewerHost }) {
           aria-label="Auto-copy reference" disabled={!state || drawingActive || pendingAutoCopy !== null} onChange={(event) => void setAutoCopy(event.target.checked)} />
           Auto-copy</label>
         <IconButton label="Copy reference" icon={Copy} disabled={!selected || busy || drawingActive}
-          onClick={() => selected && void copySelection(selected.id, selectedFace?.id)} />
+          onClick={() => selected && void copySelection(selected.id, selectedFace?.id, selectedEdge?.id)} />
         </div>
       </section>
       <div className="status-line"><span className={`dot ${connected ? "live" : ""}`} aria-hidden="true" />

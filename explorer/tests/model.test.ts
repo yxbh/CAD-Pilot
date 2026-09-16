@@ -52,6 +52,7 @@ test("triangle picking resolves a whole face and builds all its highlight triang
   assert.deepEqual(hoverTarget(part, "node-a", "face", 1), { nodeId: "node-a", faceId: "f1" });
   assert.deepEqual(hoverTarget(part, "node-a", "part", -1), { nodeId: "node-a", faceId: null });
   assert.equal(hoverTarget(part, "node-a", "face", -1), null);
+  assert.equal(hoverTarget(part, "node-a", "edge", 1), null);
   assert.equal(facePositions(part, part.faces[0]).length, 18);
   assert.deepEqual([...facePositions(part, part.faces[0])], [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]);
 });
