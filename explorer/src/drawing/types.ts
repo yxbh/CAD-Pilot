@@ -17,6 +17,7 @@ export type Review = {
     hiddenIds: string[];
     selectedIds: string[];
     selectedFace: { nodeId: string; faceId: string } | null;
+    selectedEdge?: { nodeId: string; edgeId: string } | null;
     camera: CameraState;
     appearance?: ViewState["appearance"];
     materialFinish?: ViewState["materialFinish"];

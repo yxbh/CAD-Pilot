@@ -46,7 +46,10 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       const value = {
         topologyRevision: model.topologyRevision,
         source: { name: shortLabel(model.source.name), sha256: model.source.sha256 },
-        parts: model.parts.map(({ id, bounds, faces }) => ({ id, bounds, faces })),
+        parts: model.parts.map(({ id, bounds, faces, edges }) => ({
+          id, bounds, faces,
+          edges: edges?.map(({ id, curveType, length, center, bounds }) => ({ id, curveType, length, center, bounds })),
+        })),
         nodes: model.nodes.map(({ id, label, parentId, partId, matrix }) => ({ id, label: shortLabel(label), parentId, partId, matrix })),
       };
       return { value, bytes: Math.max(4096, Buffer.byteLength(JSON.stringify(value)) * 8) };
@@ -72,8 +75,8 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
   });
 
   function modelError(error) {
-    if (error?.code === "ENOENT") return new PrototypeError("reference_unavailable", "This exact snapshot is no longer cached. Reopen the STEP and select the face again.", 404);
-    if (error instanceof FileChangedError) return new PrototypeError("stale_reference", "Cached topology changed during inspection. Reopen the STEP and select the face again.", 409);
+    if (error?.code === "ENOENT") return new PrototypeError("reference_unavailable", "This exact snapshot is no longer cached. Reopen the STEP and select the geometry again.", 404);
+    if (error instanceof FileChangedError) return new PrototypeError("stale_reference", "Cached topology changed during inspection. Reopen the STEP and select the geometry again.", 409);
     return error;
   }
 
@@ -95,7 +98,7 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     const cached = modelRecord.value;
     if (cached.topologyRevision !== reference.topologyRevision) throw new PrototypeError("stale_reference", "Cached topology identity does not match this reference", 409);
     let entity;
-    try { entity = referenceEntity(cached, reference.nodeId, reference.faceId); }
+    try { entity = referenceEntity(cached, reference.nodeId, reference.faceId, reference.edgeId); }
     catch (error) { throw new PrototypeError("invalid_reference", message(error)); }
     const ancestors = [];
     for (let node = entity.node; node; node = cached.nodes.find((item) => item.id === node.parentId)) {
@@ -103,6 +106,21 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       ancestors.unshift(node.matrix);
     }
     const originalWorldMatrix = ancestors.reduce(multiply, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const transformPoint = (point) => [0, 1, 2].map((axis) => originalWorldMatrix[12 + axis] +
+      point.reduce((sum, value, index) => sum + value * originalWorldMatrix[index * 4 + axis], 0));
+    let worldEdge = null;
+    if (entity.edge) {
+      const { min, max } = entity.edge.bounds;
+      const corners = [min[0], max[0]].flatMap((x) => [min[1], max[1]].flatMap((y) =>
+        [min[2], max[2]].map((z) => transformPoint([x, y, z]))));
+      worldEdge = {
+        center: transformPoint(entity.edge.center),
+        bounds: {
+          min: [0, 1, 2].map((axis) => Math.min(...corners.map((point) => point[axis]))),
+          max: [0, 1, 2].map((axis) => Math.max(...corners.map((point) => point[axis]))),
+        },
+      };
+    }
     let snapshotPath = path.join(runtimeRoot, "inputs", `${cached.source.sha256}.step`);
     let snapshotStatus = "available";
     let sourceRecord;
@@ -125,16 +143,18 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       }) : null,
     ]);
     return {
-      reference: createReference(cached, reference.nodeId, reference.faceId),
+      reference: createReference(cached, reference.nodeId, reference.faceId, reference.edgeId),
       source: { name: shortLabel(cached.source.name), sha256: cached.source.sha256 },
       topologyRevision: cached.topologyRevision,
       workbenchRelativeSnapshot: snapshotPath ? path.relative(workbenchRoot, snapshotPath) : null,
       snapshotStatus,
       occurrence: { id: entity.node.id, label: shortLabel(entity.node.label), partId: entity.part.id },
       face: structuredClone(entity.face),
+      edge: structuredClone(entity.edge),
+      worldEdge,
       partBounds: structuredClone(entity.part.bounds),
       originalWorldMatrix,
-      coordinateFrame: "Face facts are part-local millimeters; originalWorldMatrix is the column-major assembled placement, without exploded offsets. Display names are capped at 240 characters.",
+      coordinateFrame: "Face and edge facts are part-local millimeters; originalWorldMatrix is the column-major assembled placement, without exploded offsets. worldEdge has the assembled center and a conservative transformed local bounding box, not a remeasured world curve bound. Display names are capped at 240 characters.",
       note: "This is the exact cached snapshot, not a claim that a current source file or Python generator is unchanged.",
     };
   }
@@ -144,7 +164,7 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     const directory = path.join(runtimeRoot, "references");
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${hash(entity.reference)}.json`);
-    const title = nativeReferenceTitle(entity.occurrence.label, entity.face?.id ?? null);
+    const title = nativeReferenceTitle(entity.occurrence.label, entity.face?.id ?? null, entity.edge?.id ?? null);
     await atomicJson(filePath, {
       schemaVersion: 1, kind: "cad-prototype-selection", inspectionTool: "cad_explorer_prototype_inspect", ...entity,
     });

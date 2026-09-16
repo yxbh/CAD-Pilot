@@ -50,7 +50,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
   });
   const inspectionTool = (name) => ({
     name,
-    description: "Resolve a cadproto:v2 reference to its exact cached STEP occurrence or CAD face and original placement. These are not imported @cad inspector ordinals.",
+    description: "Resolve a cadproto:v2 reference to its exact cached STEP occurrence, CAD face or CAD edge and original placement. These are not imported @cad inspector ordinals.",
     parameters: objectSchema({ reference: { type: "string", maxLength: 16384 } }, ["reference"]),
     handler: async ({ reference }) => {
       try { return { textResultForLlm: JSON.stringify(await inspect(reference)), resultType: "success" }; }
@@ -62,7 +62,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     canvases: [createCanvas({
       id: "cad-explorer",
       displayName: "CAD Explorer",
-      description: "Local STEP assemblies with exact face references, exploded views, Studio appearance and saved drawing reviews.",
+      description: "Local STEP assemblies with exact face and edge references, exploded views, Studio appearance and saved drawing reviews.",
       inputSchema: objectSchema({
         projectRoot: { type: "string", description: "Authorized CAD project root; defaults to this workbench checkout." },
         file: { type: "string", description: "STEP path inside that root. Omit to restore this setup or load the demo." },
@@ -79,7 +79,10 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
         action("select_face", "Highlight a CAD face on the exact displayed topology, without writing the clipboard.", {
           id: { type: "string" }, faceId: { type: "string" }, topologyRevision: { type: "string" },
         }, ["id", "faceId", "topologyRevision"]),
-        action("set_selection_mode", "Choose face or whole-part picking.", { mode: { enum: ["face", "part"] } }, ["mode"]),
+        action("select_edge", "Highlight a native CAD edge on the exact displayed topology, without writing the clipboard.", {
+          id: { type: "string" }, edgeId: { type: "string" }, topologyRevision: { type: "string" },
+        }, ["id", "edgeId", "topologyRevision"]),
+        action("set_selection_mode", "Choose face, edge or whole-part picking.", { mode: { enum: ["face", "edge", "part"] } }, ["mode"]),
         action("set_auto_copy", "Enable clipboard copying for future user selections. Selection never inserts or sends a chat message.", { enabled: { type: "boolean" } }, ["enabled"]),
         action("prepare_clipboard_reference", "Prepare a local exact-selection descriptor and native file-reference markup. Does not alter clipboard or chat.", { reference: { type: "string", maxLength: 16384 } }, ["reference"]),
         action("inspect_reference", "Resolve a copied cadproto reference from the retained exact cache.", { reference: { type: "string", maxLength: 16384 } }, ["reference"]),

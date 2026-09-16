@@ -10,7 +10,7 @@ export class PrototypeError extends Error {
 
 export function initialState() {
   return {
-    revision: 0, documentRevision: "", topologyRevision: "", modelName: "", selectedIds: [], selectedFace: null,
+    revision: 0, documentRevision: "", topologyRevision: "", modelName: "", selectedIds: [], selectedFace: null, selectedEdge: null,
     selectionMode: "face", autoCopy: true, hiddenIds: [],
     explode: 0, fixedId: "", direction: "radial", cameraPreset: "iso", fitNonce: 0,
     loading: false, error: "",
@@ -25,7 +25,7 @@ export function changeView(state, model, name, input = {}) {
     throw new PrototypeError("stale_view", "The view changed. Refresh state and retry.", 409);
   }
   if (input.topologyRevision !== undefined && input.topologyRevision !== model?.topologyRevision) {
-    throw new PrototypeError("stale_topology", "This reference belongs to an older model. Select the face again.", 409);
+    throw new PrototypeError("stale_topology", "This reference belongs to an older model. Select the geometry again.", 409);
   }
   if (name === "set_auto_copy") {
     if (typeof input.enabled !== "boolean") throw new PrototypeError("bad_auto_copy", "Auto-copy must be enabled or disabled");
@@ -46,6 +46,7 @@ export function changeView(state, model, name, input = {}) {
     case "select_parts":
       next.selectedIds = ids();
       next.selectedFace = null;
+      next.selectedEdge = null;
       break;
     case "select_face": {
       if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
@@ -56,13 +57,28 @@ export function changeView(state, model, name, input = {}) {
       if (!part.faces.some((face) => face.id === input.faceId)) throw new PrototypeError("unknown_face", "Unknown CAD face on this occurrence");
       next.selectedIds = [nodeId];
       next.selectedFace = { nodeId, faceId: input.faceId };
+      next.selectedEdge = null;
       next.selectionMode = "face";
       break;
     }
+    case "select_edge": {
+      if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
+      const nodeId = requireId(input.id);
+      if (state.hiddenIds.includes(nodeId)) throw new PrototypeError("hidden_edge", "Show this part before selecting its edge", 409);
+      const node = model.nodes.find((item) => item.id === nodeId);
+      const part = model.parts.find((item) => item.id === node.partId);
+      if (!part.edges?.some((edge) => edge.id === input.edgeId)) throw new PrototypeError("unknown_edge", "Unknown CAD edge on this occurrence");
+      next.selectedIds = [nodeId];
+      next.selectedFace = null;
+      next.selectedEdge = { nodeId, edgeId: input.edgeId };
+      next.selectionMode = "edge";
+      break;
+    }
     case "set_selection_mode":
-      if (!["face", "part"].includes(input.mode)) throw new PrototypeError("bad_mode", "Choose face or part selection");
+      if (!["face", "edge", "part"].includes(input.mode)) throw new PrototypeError("bad_mode", "Choose face, edge or part selection");
       next.selectionMode = input.mode;
       next.selectedFace = null;
+      next.selectedEdge = null;
       break;
     case "set_explode":
       if (input.amount === undefined && input.direction === undefined && input.fixedId === undefined) {
@@ -86,11 +102,13 @@ export function changeView(state, model, name, input = {}) {
       const selected = ids();
       next.hiddenIds = input.visible ? state.hiddenIds.filter((id) => !selected.includes(id)) : [...new Set([...state.hiddenIds, ...selected])];
       if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
+      if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
       break;
     }
     case "isolate":
       next.hiddenIds = [...valid].filter((id) => id !== requireId(input.id));
       if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
+      if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
       next.fitNonce++;
       next.camera = null;
       break;
@@ -139,11 +157,17 @@ export function changeView(state, model, name, input = {}) {
   return next;
 }
 
-export function topologyRevision(model) {
+function topologyDigest(model, conversionVersion) {
   return createHash("sha256").update(JSON.stringify({
+    ...(conversionVersion ? { conversionVersion } : {}),
     schemaVersion: model.schemaVersion, sourceHash: model.source.sha256,
     units: model.units, parts: model.parts, nodes: model.nodes,
   })).digest("hex");
+}
+
+export function topologyRevision(model) {
+  // Preserve face-only addresses; new edge caches have an independent converter version.
+  return topologyDigest(model, model.parts.some((part) => part.edges !== undefined) ? "native-edges-v1" : undefined);
 }
 
 export function validateModel(model, { requireRevision = true } = {}) {
@@ -171,6 +195,20 @@ export function validateModel(model, { requireRevision = true } = {}) {
       nextTriangle += face.triangleCount;
     }
     if (nextTriangle !== part.indices.length / 3) fail("CAD face map does not cover the final triangles exactly");
+    // Old schema-2 caches remain immutable and inspectable without an edge map.
+    if (part.edges !== undefined) {
+      if (!Array.isArray(part.edges)) fail("Invalid CAD edge map");
+      const edgeIds = new Set();
+      for (const edge of part.edges) {
+        if (!edge || !/^e[1-9][0-9]*$/.test(edge.id) || edgeIds.has(edge.id) ||
+            !Array.isArray(edge.positions) || edge.positions.length < 6 || edge.positions.length % 3 ||
+            !edge.positions.every(Number.isFinite) || !vector(edge.center, 3) || !bounds(edge.bounds) ||
+            !Number.isFinite(edge.length) || edge.length <= 0 || typeof edge.curveType !== "string" || !edge.curveType) fail("Invalid CAD edge mapping or properties");
+        if (!edge.positions.some((value, index) => index >= 3 && value !== edge.positions[index % 3])) fail("CAD edge polyline has no length");
+        if (edge.positions.some((value, index) => value < edge.bounds.min[index % 3] - 1e-6 || value > edge.bounds.max[index % 3] + 1e-6)) fail("CAD edge polyline exceeds native bounds");
+        edgeIds.add(edge.id);
+      }
+    }
   }
   const nodes = new Set();
   for (const node of model.nodes) {
@@ -181,7 +219,10 @@ export function validateModel(model, { requireRevision = true } = {}) {
   }
   if (!model.nodes.some((node) => node.partId)) fail("No displayable part occurrences");
   if (!Array.isArray(model.warnings) || !model.warnings.every((warning) => typeof warning === "string")) fail("Invalid import diagnostics");
-  if (requireRevision && model.topologyRevision !== topologyRevision(model)) fail("Cached model topology does not match its reference identity");
+  // Early schema-2 edge snapshots used the original unsalted full-content hash.
+  // Keep those copied references resolvable without changing their cache or identity.
+  if (requireRevision && model.topologyRevision !== topologyRevision(model) &&
+      model.topologyRevision !== topologyDigest(model)) fail("Cached model topology does not match its reference identity");
   return model;
 }
 import { createHash } from "node:crypto";

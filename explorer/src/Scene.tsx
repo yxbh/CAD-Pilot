@@ -1,10 +1,14 @@
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, events, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, EdgesGeometry, Matrix4, Vector3 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { center, diagonal, faceAtTriangle, facePositions, hoverTarget, mergeBounds, placeParts, type CadFace, type HoverTarget, type Model, type Part, type Placement, type ViewState } from "./model.ts";
+import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, mergeBounds, placeParts, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type ViewState } from "./model.ts";
 import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
-import { GeometryResources, type PartResources } from "./resources.ts";
+import { edgeAtSegment, GeometryResources, type EdgeRange, type PartResources } from "./resources.ts";
+import { edgeScreenPoint, prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
 import { CameraController, type ViewPreset } from "./camera.ts";
 import { AxisIndicator, createAxisStore, type AxisStore } from "./AxisIndicator.tsx";
@@ -16,7 +20,7 @@ type Props = {
   state: ViewState;
   amount: number;
   active: boolean;
-  onSelect: (id: string, faceId?: string) => void;
+  onSelect: (id: string, faceId?: string, edgeId?: string) => void;
   onError: (message: string) => void;
   registerCapture: (capture: (() => ViewCapture) | null) => void;
   onRendered: (report: RenderReport) => Promise<unknown>;
@@ -45,14 +49,62 @@ function FaceOverlay({ part, face, selected }: { part: Part; face: CadFace; sele
   );
 }
 
-function PartMesh({ placement, resources, origin, selected, faceId, hovered, hoverFaceId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
+function CadLines({ geometry, color, width, visible = true, picking, onSelect, onHover, onHoverEnd }: {
+  geometry: LineSegmentsGeometry;
+  color: string;
+  width: number;
+  visible?: boolean;
+  picking?: { nodeId: string; ranges: EdgeRange[]; tolerance: number };
+  onSelect?: Props["onSelect"];
+  onHover?: (target: HoverTarget | null) => void;
+  onHoverEnd?: (nodeId: string) => void;
+}) {
+  const { scene, size } = useThree();
+  const material = useMemo(() => new LineMaterial({
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  }), []);
+  const lines = useMemo(() => new LineSegments2(geometry, material), [geometry, material]);
+  material.color.set(color);
+  material.linewidth = width;
+  material.resolution.set(size.width, size.height);
+  useEffect(() => () => material.dispose(), [material]);
+  return <primitive object={lines} visible={visible} userData={{ cadEdges: true }}
+    raycast={(raycaster: Parameters<LineSegments2["raycast"]>[0], hits: Parameters<LineSegments2["raycast"]>[1]) => {
+      if (!picking) return;
+      for (const hit of visibleEdgeHits(lines, raycaster, scene.getObjectsByProperty("name", "cad-surface"),
+        size.width, size.height, picking.tolerance)) hits.push(hit);
+    }}
+    onClick={(event: ThreeEvent<MouseEvent>) => {
+      if (!picking || event.delta > 4) return;
+      event.stopPropagation();
+      const edge = edgeAtSegment(picking.ranges, event.faceIndex ?? -1);
+      if (edge) onSelect?.(picking.nodeId, undefined, edge.id);
+    }}
+    onPointerMove={(event: ThreeEvent<PointerEvent>) => {
+      if (!picking) return;
+      event.stopPropagation();
+      const edge = edgeAtSegment(picking.ranges, event.faceIndex ?? -1);
+      onHover?.(edge ? { nodeId: picking.nodeId, faceId: null, edgeId: edge.id } : null);
+    }}
+    onPointerOut={() => { if (picking) onHoverEnd?.(picking.nodeId); }} />;
+}
+
+function EdgeOverlay({ edge, selected }: { edge: CadEdge; selected: boolean }) {
+  const geometry = useMemo(() => new LineSegmentsGeometry().setPositions(edgeSegments(edge)), [edge]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <CadLines geometry={geometry} color={selected ? "#13d9f0" : "#b5e9f1"} width={selected ? 4 : 2.5} />;
+}
+
+function PartMesh({ placement, resources, origin, selected, faceId, edgeId, hovered, hoverFaceId, hoverEdgeId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
   placement: Placement;
   resources: PartResources;
   origin: number[];
   selected: boolean;
   faceId: string | null;
+  edgeId: string | null;
   hovered: boolean;
   hoverFaceId: string | null;
+  hoverEdgeId: string | null;
   selectionMode: ViewState["selectionMode"];
   pickingEnabled: boolean;
   studio: boolean;
@@ -66,23 +118,26 @@ function PartMesh({ placement, resources, origin, selected, faceId, hovered, hov
   const { geometry, edges } = resources;
   const selectedFace = part.faces.find((item) => item.id === faceId) ?? null;
   const hoveredFace = part.faces.find((item) => item.id === hoverFaceId && item.id !== faceId) ?? null;
+  const selectedEdge = part.edges?.find((item) => item.id === edgeId) ?? null;
+  const hoveredEdge = part.edges?.find((item) => item.id === hoverEdgeId && item.id !== edgeId) ?? null;
   const matrix = useMemo(() => {
     const result = new Matrix4().fromArray(placement.matrix);
     for (let axis = 0; axis < 3; axis++) result.elements[12 + axis] -= origin[axis];
     return result;
   }, [placement, origin]);
   const color = new Color(...node.color);
-  const wholePartSelected = selected && !selectedFace;
+  const wholePartSelected = selected && !selectedFace && !selectedEdge;
   const wholePartHovered = hovered && !wholePartSelected;
   return (
     <group matrix={matrix} matrixAutoUpdate={false}>
-      <mesh castShadow={studio} receiveShadow={studio} onClick={(event) => {
+      <mesh name="cad-surface" castShadow={studio} receiveShadow={studio} onClick={(event) => {
         event.stopPropagation();
         if (!pickingEnabled || event.delta > 4) return;
         if (selectionMode === "face") {
           const hitFace = faceAtTriangle(part, event.faceIndex ?? -1);
           if (hitFace) onSelect(node.id, hitFace.id);
-        } else onSelect(node.id);
+        } else if (selectionMode === "part") onSelect(node.id);
+        else onSelect("");
       }} onPointerMove={(event) => {
         if (!pickingEnabled) return;
         event.stopPropagation();
@@ -98,13 +153,22 @@ function PartMesh({ placement, resources, origin, selected, faceId, hovered, hov
           emissive={wholePartSelected ? "#167b75" : wholePartHovered ? "#134d59" : "#000000"}
           emissiveIntensity={wholePartSelected ? 0.3 : wholePartHovered ? 0.18 : 0} />
       </mesh>
-      <lineSegments visible={showEdges || wholePartSelected || wholePartHovered} raycast={() => undefined}>
+      <lineSegments visible={!resources.cadEdges && (showEdges || wholePartSelected || wholePartHovered)} raycast={() => undefined}>
         <primitive object={edges} attach="geometry" />
         <lineBasicMaterial color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : "#0e2533"} transparent
           opacity={wholePartSelected ? 0.9 : wholePartHovered ? 0.75 : 0.45} />
       </lineSegments>
+      {resources.cadEdges && <CadLines geometry={resources.cadEdges}
+        color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : selectionMode === "edge" ? "#7896a6" : "#0e2533"} width={1}
+        visible={showEdges || selectionMode === "edge" || wholePartSelected || wholePartHovered}
+        picking={pickingEnabled && selectionMode === "edge" ? {
+          nodeId: node.id, ranges: resources.edgeRanges, tolerance: Math.max(diagonal(part.bounds) * 1e-5, 1e-6),
+        } : undefined}
+        onSelect={onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />}
       {hoveredFace && <FaceOverlay part={part} face={hoveredFace} selected={false} />}
       {selectedFace && <FaceOverlay part={part} face={selectedFace} selected />}
+      {hoveredEdge && <EdgeOverlay edge={hoveredEdge} selected={false} />}
+      {selectedEdge && <EdgeOverlay edge={selectedEdge} selected />}
     </group>
   );
 }
@@ -239,6 +303,8 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
       point.sub(new Vector3(...origin)).project(camera);
       selectedFaceScreen = [(point.x + 1) * size.width / 2, (1 - point.y) * size.height / 2];
     }
+    const edgePlacement = visible.find((item) => item.node.id === current.state.selectedEdge?.nodeId);
+    const selectedEdge = edgePlacement?.part.edges?.find((edge) => edge.id === current.state.selectedEdge?.edgeId);
     const report: RenderReport = {
       revision: current.state.revision,
       modelHash: current.model.source.sha256,
@@ -248,6 +314,10 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
       selectedFace: current.state.selectedFace,
       highlightedTriangles: selectedFace?.triangleCount ?? 0,
       selectedFaceScreen,
+      selectedEdge: current.state.selectedEdge,
+      highlightedSegments: selectedEdge ? selectedEdge.positions.length / 3 - 1 : 0,
+      selectedEdgeScreen: selectedEdge && edgePlacement
+        ? edgeScreenPoint(selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
       bounds: mergeBounds(visible.map((part) => part.bounds)),
       positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
       renderer: "React Three Fiber / WebGL2",
@@ -274,10 +344,10 @@ export default function Scene(props: Props) {
   const axes = useMemo(createAxisStore, []);
   const pickingEnabled = props.active && amount === state.explode && !state.loading;
   const onHover = useCallback((next: HoverTarget | null) => setHovered((current) =>
-    current?.nodeId === next?.nodeId && current?.faceId === next?.faceId ? current : next
+    current?.nodeId === next?.nodeId && current?.faceId === next?.faceId && current?.edgeId === next?.edgeId ? current : next
   ), []);
   const onHoverEnd = useCallback((nodeId: string) => setHovered((current) => current?.nodeId === nodeId ? null : current), []);
-  useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, pickingEnabled]);
+  useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, state.hiddenIds, state.explode, state.direction, state.fixedId, pickingEnabled]);
   useEffect(() => () => resources.dispose(), [resources]);
   const displayedBounds = mergeBounds(placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((part) => part.bounds)) || model.bounds;
   const gridSize = Math.max(diagonal(model.bounds) * 2, 100);
@@ -289,6 +359,10 @@ export default function Scene(props: Props) {
   return (
     <>
     <Canvas frameloop={props.active ? "demand" : "never"} shadows={studio ? "percentage" : false} dpr={[1, 2]} camera={{ fov: 42, up: [0, 0, 1] }}
+      events={(store) => ({
+        ...events(store),
+        filter: (hits, root) => prioritizeEdges(hits, root.camera, root.pointer, root.size.width, root.size.height),
+      })}
       gl={{ antialias: true, preserveDrawingBuffer: true }}
       onPointerMissed={() => { if (props.active) props.onSelect(""); }}
       onCreated={({ gl }) => {
@@ -308,8 +382,10 @@ export default function Scene(props: Props) {
         <PartMesh key={placement.node.id} placement={placement} resources={resources.get(placement.part)} origin={origin}
           selected={state.selectedIds.includes(placement.node.id)}
           faceId={state.selectedFace?.nodeId === placement.node.id ? state.selectedFace.faceId : null}
+          edgeId={state.selectedEdge?.nodeId === placement.node.id ? state.selectedEdge.edgeId : null}
           hovered={state.selectionMode === "part" && hovered?.nodeId === placement.node.id}
           hoverFaceId={state.selectionMode === "face" && hovered?.nodeId === placement.node.id ? hovered.faceId : null}
+          hoverEdgeId={state.selectionMode === "edge" && hovered?.nodeId === placement.node.id ? hovered.edgeId ?? null : null}
           selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}
           studio={studio} finish={state.materialFinish} showEdges={state.showEdges}
           onSelect={props.onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />

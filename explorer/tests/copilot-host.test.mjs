@@ -43,6 +43,8 @@ test("maintained host registers the legacy inspect alias without changing its ex
     }
     assert.ok(canvas.actions.every((action) => !action.name.startsWith("canvas.") && typeof action.handler === "function"));
     assert.equal(new Set(canvas.actions.map((action) => action.name)).size, canvas.actions.length);
+    assert.deepEqual(canvas.actions.find((action) => action.name === "select_edge").inputSchema.required, ["id", "edgeId", "topologyRevision"]);
+    assert.deepEqual(canvas.actions.find((action) => action.name === "set_selection_mode").inputSchema.properties.mode.enum, ["face", "edge", "part"]);
   } finally { await provider.shutdown(); }
 });
 
@@ -56,6 +58,9 @@ test("host routes actions, retains one panel per setup and waits for actual rend
     await invoke("get_state");
     await invoke("set_explode", { amount: 0.4, expectedRevision: 3 });
     assert.deepEqual(calls.at(-1), ["set_explode", { amount: 0.4, expectedRevision: 3 }, { rendered: true }]);
+    const edge = { id: "a", edgeId: "e1", topologyRevision: "a".repeat(64) };
+    await invoke("select_edge", edge);
+    assert.deepEqual(calls.at(-1), ["select_edge", edge, { rendered: true }]);
     assert.equal(calls.find((item) => item[0] === "get_state")[2].rendered, false);
     assert.deepEqual(await invoke("capture_image"), { path: "capture.png" });
     await canvas.onClose({ instanceId: "existing" });
