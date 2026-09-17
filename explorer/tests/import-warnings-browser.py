@@ -328,9 +328,49 @@ def run(url, output):
             browser.close()
 
 
+def check_restored_cleanup(url, output):
+    output.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": 1100, "height": 800})
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto(url)
+            info = page.get_by_role("button", name="Import information", exact=True)
+            expect(info).to_be_visible()
+            expect(page.get_by_role("button", name="Import warnings", exact=False)).to_have_count(0)
+            model = page.request.get(url + "api/model").json()
+            assert not model["warnings"]
+            assert all(type(count) is int and count > 0 for count in model["cleanup"].values())
+            info.click()
+            dialog = page.get_by_role("dialog", name="Import information", exact=True)
+            expect(dialog).to_have_class("import-warnings-panel information-panel")
+            expect(dialog.locator("dd")).to_have_text([
+                str(model["cleanup"]["degenerateEdges"]), str(model["cleanup"]["zeroAreaTriangles"]),
+            ])
+            expect(dialog).not_to_contain_text("Count unavailable")
+            expect(dialog).to_contain_text("Low-priority information")
+            page.screenshot(path=str(output / "restored-measured-cleanup.png"))
+            page.keyboard.press("Escape")
+            page.reload()
+            info.click()
+            expect(dialog.locator("dd")).to_have_text([
+                str(model["cleanup"]["degenerateEdges"]), str(model["cleanup"]["zeroAreaTriangles"]),
+            ])
+            assert not errors, errors
+            print(json.dumps({"restoredMeasuredCleanup": model["cleanup"], "neutralInformation": True, "pageErrors": errors}))
+        finally:
+            browser.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--restored-cleanup", action="store_true")
     args = parser.parse_args()
-    run(args.url, args.output)
+    if args.restored_cleanup:
+        check_restored_cleanup(args.url, args.output)
+    else:
+        run(args.url, args.output)

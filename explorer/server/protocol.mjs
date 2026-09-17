@@ -170,6 +170,22 @@ export function topologyRevision(model) {
   return topologyDigest(model, model.parts.some((part) => part.edges !== undefined) ? "native-edges-v1" : undefined);
 }
 
+function validCleanupCounts(cleanup, allowUnknown) {
+  return cleanup && typeof cleanup === "object" && !Array.isArray(cleanup) && Object.keys(cleanup).length === 2 &&
+    ["degenerateEdges", "zeroAreaTriangles"].every((key) =>
+      (allowUnknown && cleanup[key] === null) || (Number.isSafeInteger(cleanup[key]) && cleanup[key] >= 0 &&
+        cleanup[key] <= (key === "degenerateEdges" ? 200_000 : 1_000_000)));
+}
+
+export function validateMeasuredCleanup(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2 ||
+      typeof value.topologyRevision !== "string" || !/^[a-f0-9]{64}$/.test(value.topologyRevision) ||
+      !validCleanupCounts(value.counts, false)) {
+    throw new PrototypeError("invalid_saved_cleanup", "Invalid saved measured cleanup diagnostics", 422);
+  }
+  return value;
+}
+
 export function validateModel(model, { requireRevision = true } = {}) {
   const fail = (message) => { throw new PrototypeError("invalid_model", message, 422); };
   const vector = (value, length) => Array.isArray(value) && value.length === length && value.every(Number.isFinite);
@@ -219,13 +235,7 @@ export function validateModel(model, { requireRevision = true } = {}) {
   }
   if (!model.nodes.some((node) => node.partId)) fail("No displayable part occurrences");
   if (!Array.isArray(model.warnings) || !model.warnings.every((warning) => typeof warning === "string")) fail("Invalid import diagnostics");
-  if (model.cleanup !== undefined) {
-    const cleanup = model.cleanup;
-    if (!cleanup || Array.isArray(cleanup) || Object.keys(cleanup).length !== 2 ||
-        !["degenerateEdges", "zeroAreaTriangles"].every((key) =>
-          cleanup[key] === null || (Number.isSafeInteger(cleanup[key]) && cleanup[key] >= 0 &&
-            cleanup[key] <= (key === "degenerateEdges" ? 200_000 : 1_000_000)))) fail("Invalid display cleanup diagnostics");
-  }
+  if (model.cleanup !== undefined && !validCleanupCounts(model.cleanup, true)) fail("Invalid display cleanup diagnostics");
   // Early schema-2 edge snapshots used the original unsalted full-content hash.
   // Keep those copied references resolvable without changing their cache or identity.
   if (requireRevision && model.topologyRevision !== topologyRevision(model) &&

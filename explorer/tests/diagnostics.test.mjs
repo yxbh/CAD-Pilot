@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { importDiagnostics } from "../shared/diagnostics.mjs";
-import { topologyRevision, validateModel } from "../server/protocol.mjs";
+import { topologyRevision, validateMeasuredCleanup, validateModel } from "../server/protocol.mjs";
 import { inspectionModel } from "./inspection-fixtures.mjs";
 
 test("legacy generic limitations are not reported as model-specific import warnings", () => {
@@ -65,4 +65,21 @@ test("cleanup counts are optional for old models, bounded and validated independ
   const broken = structuredClone(model);
   broken.parts[0].faces = [];
   assert.throws(() => validateModel({ ...broken, ...importDiagnostics(broken) }), /Missing CAD face map/);
+});
+
+test("saved measured cleanup requires an exact revision and bounded known counts", () => {
+  const valid = { topologyRevision: "a".repeat(64), counts: { degenerateEdges: 30, zeroAreaTriangles: 30 } };
+  assert.deepEqual(validateMeasuredCleanup(valid), valid);
+  for (const value of [
+    null, [], {}, { ...valid, topologyRevision: "unknown" }, { ...valid, topologyRevision: 123 },
+    { ...valid, extra: true }, { topologyRevision: valid.topologyRevision },
+    ...[null, [], {}, { degenerateEdges: 0 }, { degenerateEdges: null, zeroAreaTriangles: null },
+      { degenerateEdges: 0, zeroAreaTriangles: -1 }, { degenerateEdges: 0.5, zeroAreaTriangles: 0 },
+      { degenerateEdges: "30", zeroAreaTriangles: 30 }, { degenerateEdges: 200_001, zeroAreaTriangles: 0 },
+      { degenerateEdges: 0, zeroAreaTriangles: 1_000_001 }, { degenerateEdges: Infinity, zeroAreaTriangles: 0 },
+      { degenerateEdges: 0, zeroAreaTriangles: NaN }, { degenerateEdges: 30, zeroAreaTriangles: 30, extra: true },
+    ].map((counts) => ({ ...valid, counts })),
+  ]) assert.throws(() => validateMeasuredCleanup(value), { code: "invalid_saved_cleanup" });
+  validateMeasuredCleanup({ ...valid, counts: { degenerateEdges: 0, zeroAreaTriangles: 0 } });
+  validateMeasuredCleanup({ ...valid, counts: { degenerateEdges: 200_000, zeroAreaTriangles: 1_000_000 } });
 });
