@@ -75,11 +75,9 @@ A failed or uncertain save can be reconciled with the saved version. Conflicting
 
 Copy marked image and Save marked image include annotations. The saved metadata records the original source revision, pose and visual appearance. A review remains tied to its captured snapshot even after a different STEP is opened. The current limits are 20 reviews per setup, bounded image sizes and bounded stroke/history counts.
 
-## Retained data and prototype migration
+## Local data
 
-Maintained code lives in `explorer\`; retained data deliberately stays under `.github\extensions\cad-explorer-prototype\.runtime`. Existing pasted chips contain absolute descriptor paths there. Moving or deleting those files would break references already present in conversations.
-
-Keep `models`, `inputs`, `references`, `views`, `reviews` and captures at that retained location. Do not remove the old-named directory merely because the running extension is now `cad-explorer`. Existing v1 geometry caches, perspective-only camera records and saved reviews retain their compatibility paths. Live models converted before edge support are reconverted from their source snapshot into a new topology revision; old cached face/part references remain resolvable against their original revision. Source-file cleanup is separate from data deletion.
+Saved models, source snapshots, references, view setups, drawing reviews and captures live in `.github/extensions/cad-explorer-prototype/.runtime/`. This is a local data directory, not an extension. Its path stays stable because pasted references contain absolute paths to files there; moving or deleting it can break references and lose saved work.
 
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
 
