@@ -103,10 +103,8 @@ Browser checks run against an isolated standalone/test view using the workbench'
 
 The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
 
-## Scope and ownership
+## Limits
 
-This release maintains the current STEP, face/edge/part picking, native reference copying, saved drawing, explosion, view and appearance workflows. It does not add live file watching, vertex picking, GLB transport, collision-aware disassembly, a VS Code extension, slicing or printer control. Preview meshes and edge polylines are JSON arrays; assemblies are not certified for large-model performance.
+CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
 
-The host boundary is `ViewerHost`; the Copilot adapter registers canvases/tools and serves local HTTP/SSE. Conversion, inspection, view state and drawing logic do not require the imported viewer. Native CAD conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
-
-Original code is authored for CAD-Pilot; no additional license is granted here. React, React Three Fiber and Three.js retain their MIT licenses. Lucide retains its ISC and applicable Feather attribution notices. Python dependencies retain their own licenses. No imported-skill files or upstream notices are replaced.
+See the repository's [ownership and provenance guidance](../README.md#provenance).
