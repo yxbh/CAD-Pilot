@@ -7,11 +7,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
-from OCP.BRep import BRep_Builder
+from OCP.BRep import BRep_Builder, BRep_Tool
+from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Geom import Geom_BezierCurve
@@ -23,10 +25,11 @@ from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TColgp import TColgp_Array1OfPnt
 from OCP.TDocStd import TDocStd_Document
-from OCP.TopAbs import TopAbs_FACE
-from OCP.TopExp import TopExp_Explorer
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS_Compound
+from OCP.TopTools import TopTools_IndexedMapOfShape
+from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_ColorSurf, XCAFDoc_DocumentTool
 from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 
@@ -94,7 +97,7 @@ def _run(script, *args, cwd):
 
 
 def _assert_contract(model):
-    assert set(model) == {"schemaVersion", "source", "units", "parts", "nodes", "bounds", "warnings"}
+    assert set(model) == {"schemaVersion", "source", "units", "parts", "nodes", "bounds", "warnings", "cleanup"}
     assert model["schemaVersion"] == 2
     assert model["units"] == "mm"
     assert set(model["source"]) == {"name", "sha256"}
@@ -102,6 +105,8 @@ def _assert_contract(model):
     assert len(model["source"]["sha256"]) == 64
     assert model["parts"] and model["nodes"]
     assert all(isinstance(w, str) for w in model["warnings"])
+    assert set(model["cleanup"]) == {"degenerateEdges", "zeroAreaTriangles"}
+    assert all(type(count) is int and count >= 0 for count in model["cleanup"].values())
     part_map = {part["id"]: part for part in model["parts"]}
     assert len(part_map) == len(model["parts"])
     all_ids = list(part_map)
@@ -359,7 +364,185 @@ def test_curved_surface_normals_and_analytic_bounds(workdir):
     normals = np.asarray(model["parts"][0]["normals"]).reshape(-1, 3)
     assert np.all(np.sum(positions * normals, axis=1) > 0)
     assert len(model["parts"][0]["edges"]) == 1
-    assert any("Degenerate CAD edge" in warning for warning in model["warnings"])
+    assert not model["warnings"]
+    assert model["cleanup"]["degenerateEdges"] == 2
+
+
+def _budget():
+    return {"vertices": 0, "triangles": 0, "faces": 0, "edges": 0, "edgePoints": 0}
+
+
+def _assert_native_retention(shape, mesh, cleanup):
+    native_edges = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(shape, TopAbs_EDGE, native_edges)
+    expected_ids = [
+        f"e{i}" for i in range(1, native_edges.Extent() + 1)
+        if not BRep_Tool.Degenerated_s(TopoDS.Edge_s(native_edges.FindKey(i)))
+    ]
+    assert [edge["id"] for edge in mesh["edges"]] == expected_ids
+    assert cleanup["degenerateEdges"] == native_edges.Extent() - len(expected_ids)
+    faces = TopExp_Explorer(shape, TopAbs_FACE)
+    offset = 0
+    face_count = 0
+    collapsed = 0
+    expected_indices = []
+    while faces.More():
+        face = TopoDS.Face_s(faces.Current())
+        location = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(face, location)
+        matrix = converter._matrix(location)
+        points = np.asarray([triangulation.Node(i).Coord() for i in range(1, triangulation.NbNodes() + 1)])
+        points = points @ matrix[:3, :3].T + matrix[:3, 3]
+        triangles = np.asarray([triangulation.Triangle(i).Get() for i in range(1, triangulation.NbTriangles() + 1)]) - 1
+        if (face.Orientation() == TopAbs_REVERSED) != (np.linalg.det(matrix[:3, :3]) < 0):
+            triangles = triangles[:, [0, 2, 1]]
+        areas = np.linalg.norm(np.cross(points[triangles[:, 1]] - points[triangles[:, 0]],
+                                        points[triangles[:, 2]] - points[triangles[:, 0]]), axis=1)
+        collapsed += int(np.count_nonzero(areas == 0))
+        expected_indices.extend((triangles[areas > 0] + offset).ravel().tolist())
+        assert mesh["faces"][face_count]["id"] == f"f{face_count + 1}"
+        assert mesh["faces"][face_count]["triangleCount"] == int(np.count_nonzero(areas > 0))
+        offset += len(points)
+        face_count += 1
+        faces.Next()
+    assert len(mesh["faces"]) == face_count
+    assert mesh["indices"] == expected_indices
+    assert cleanup["zeroAreaTriangles"] == collapsed
+
+
+def _rounded_box():
+    box = BRepPrimAPI_MakeBox(10, 20, 30).Shape()
+    fillet = BRepFilletAPI_MakeFillet(box)
+    edges = TopExp_Explorer(box, TopAbs_EDGE)
+    while edges.More():
+        fillet.Add(2, TopoDS.Edge_s(edges.Current()))
+        edges.Next()
+    fillet.Build()
+    assert fillet.IsDone()
+    return fillet.Shape()
+
+
+@pytest.mark.parametrize("factory", [lambda: BRepPrimAPI_MakeSphere(12).Shape(), _rounded_box])
+def test_cleanup_preserves_every_native_face_nondegenerate_edge_id_and_retained_triangle(factory):
+    shape = factory()
+    log = converter.WarningLog()
+    mesh = converter._mesh(shape, _budget(), log)
+    assert not log.items
+    assert log.cleanup["degenerateEdges"] > 0
+    _assert_native_retention(shape, mesh, log.cleanup)
+
+
+def test_more_than_100_unique_degenerate_edges_do_not_consume_warning_budget(workdir, monkeypatch):
+    compound = TopoDS_Compound()
+    builder = BRep_Builder()
+    builder.MakeCompound(compound)
+    for i in range(60):
+        builder.Add(compound, BRepPrimAPI_MakeSphere(gp_Pnt(i * 30, 0, 0), 12).Shape())
+    path = workdir / "many rounded parts.step"
+    _write_direct(path, compound)
+    original = converter._mesh
+
+    def checked_mesh(shape, budget, log):
+        before = log.cleanup.copy()
+        result = original(shape, budget, log)
+        _assert_native_retention(shape, result, {key: log.cleanup[key] - before[key] for key in before})
+        return result
+
+    monkeypatch.setattr(converter, "_mesh", checked_mesh)
+    model = converter.convert_step(path)
+    _assert_contract(model)
+    assert not model["warnings"]
+    assert model["cleanup"]["degenerateEdges"] == 120
+    assert sum(len(part["faces"]) for part in model["parts"]) == 60
+    assert sum(len(part["edges"]) for part in model["parts"]) == 60
+    # Also exercise a single part's unique eN IDs beyond the old warning cap.
+    log = converter.WarningLog()
+    converter._edges(compound, _budget(), log)
+    assert log.cleanup["degenerateEdges"] == 120
+    assert not log.items
+    for i in range(converter.MAX_WARNINGS):
+        log.add(f"STEP transfer: genuine warning {i}")
+    assert len(log.items) == converter.MAX_WARNINGS
+    with pytest.raises(converter.ConversionError, match="Too many conversion warnings"):
+        log.add("STEP transfer: one warning over the limit")
+
+
+def test_cleanup_counts_reusable_geometry_once_with_mixed_real_warnings(workdir):
+    document, shapes, colors = _document()
+    root = shapes.NewShape()
+    sphere = shapes.AddShape(BRepPrimAPI_MakeSphere(12).Shape(), False)
+    from OCP.Quantity import Quantity_ColorRGBA
+    colors.SetColor(sphere, Quantity_ColorRGBA(Quantity_Color(0.2, 0.4, 0.6, Quantity_TOC_RGB), 0.5), XCAFDoc_ColorSurf)
+    for i in range(60):
+        shapes.AddComponent(root, sphere, _location(i * 30))
+    path = workdir / "repeated spheres.step"
+    _write_document(document, path)
+    model = converter.convert_step(path)
+    _assert_contract(model)
+    assert len(model["parts"]) == 1
+    assert len([node for node in model["nodes"] if node["partId"]]) == 60
+    assert model["cleanup"]["degenerateEdges"] == 2
+    assert model["warnings"] == ["Transparency is unsupported; transparent parts are shown opaque."]
+
+
+def test_flagged_nonpoint_edge_is_not_benign_cleanup():
+    edge = BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0)).Edge()
+    BRep_Builder().Degenerated(edge, True)
+    with pytest.raises(converter.ConversionError, match="not a finite point"):
+        converter._edges(edge, _budget(), converter.WarningLog())
+
+
+def test_unflagged_zero_length_edge_keeps_warning_and_invalid_curve_is_an_error(monkeypatch):
+    edge = BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(10, 0, 0)).Edge()
+    log = converter.WarningLog()
+    monkeypatch.setattr(converter, "GCPnts_AbscissaPoint", SimpleNamespace(Length_s=lambda *_: 0))
+    assert converter._edges(edge, _budget(), log) == []
+    assert log.items == ["Zero-length CAD edge e1 was omitted from edge selection."]
+    assert log.cleanup == {"degenerateEdges": 0, "zeroAreaTriangles": 0}
+    monkeypatch.setattr(converter, "GCPnts_AbscissaPoint", SimpleNamespace(Length_s=lambda *_: float("nan")))
+    with pytest.raises(converter.ConversionError, match="invalid native curve properties"):
+        converter._edges(edge, _budget(), converter.WarningLog())
+
+
+@pytest.mark.parametrize("fault,message", [
+    ("missing", "could not be tessellated"),
+    ("collapsed", "no non-degenerate triangles"),
+    ("nonfinite", "non-finite positions"),
+    ("indices", "out-of-range triangle indices"),
+])
+def test_bad_face_mesh_still_fails_instead_of_reporting_cleanup(monkeypatch, fault, message):
+    class Mesh:
+        def __init__(self, native):
+            self.native = native
+
+        def __getattr__(self, name):
+            return getattr(self.native, name)
+
+        def Triangle(self, index):
+            if fault == "collapsed":
+                return SimpleNamespace(Get=lambda: (1, 1, 1))
+            if fault == "indices":
+                return SimpleNamespace(Get=lambda: (1, 2, self.native.NbNodes() + 1))
+            return self.native.Triangle(index)
+
+        def Node(self, index):
+            if fault == "nonfinite":
+                return SimpleNamespace(Coord=lambda: (float("nan"), 0, 0))
+            return self.native.Node(index)
+
+    monkeypatch.setattr(converter, "BRep_Tool", SimpleNamespace(
+        Triangulation_s=lambda *args: None if fault == "missing" else Mesh(BRep_Tool.Triangulation_s(*args)),
+    ))
+    with pytest.raises(converter.ConversionError, match=message):
+        converter._mesh(BRepPrimAPI_MakeBox(10, 20, 30).Shape(), _budget(), converter.WarningLog())
+
+
+def test_null_and_invalid_native_shapes_remain_errors(monkeypatch):
+    with pytest.raises(converter.ConversionError, match="null or invalid"):
+        converter._mesh(TopoDS_Shape(), _budget(), converter.WarningLog())
+    monkeypatch.setattr(converter, "BRepCheck_Analyzer", lambda _: SimpleNamespace(IsValid=lambda: False))
+    with pytest.raises(converter.ConversionError, match="null or invalid"):
+        converter._mesh(BRepPrimAPI_MakeBox(10, 20, 30).Shape(), _budget(), converter.WarningLog())
 
 
 def test_repeat_conversion_is_deterministic_and_has_no_stale_state(workdir):

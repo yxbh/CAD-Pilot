@@ -227,8 +227,9 @@ export function App({ host }: { host: ViewerHost }) {
           <option value="">Live model</option>
           {reviews.items.map((review) => <option key={review.id} value={review.id}>{review.title} ({review.strokeCount} marks)</option>)}
         </select>
-        {!drawingActive && !busy && model && model.warnings.length > 0 && <ImportWarnings
-          key={`${model.topologyRevision}:${model.source.name}`} warnings={model.warnings} sourceName={model.source.name} target={warningsTarget} />}
+        {!drawingActive && !busy && model && <ImportWarnings
+          key={`${model.topologyRevision}:${model.source.name}`} warnings={model.warnings} cleanup={model.cleanup} sourceName={model.source.name}
+          target={warningsTarget} onOpen={() => setNotice("")} />}
         <IconButton label="Open STEP" icon={FolderOpen} onClick={() => fileInput.current?.click()} disabled={loading || drawingActive} />
         <IconButton label="Toggle parts panel" icon={PanelRight} aria-pressed={treeOpen} onClick={() => setTreeOpen(!treeOpen)} />
         <input ref={fileInput} hidden type="file" accept=".step,.stp" onChange={(event) => {

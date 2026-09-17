@@ -219,6 +219,13 @@ export function validateModel(model, { requireRevision = true } = {}) {
   }
   if (!model.nodes.some((node) => node.partId)) fail("No displayable part occurrences");
   if (!Array.isArray(model.warnings) || !model.warnings.every((warning) => typeof warning === "string")) fail("Invalid import diagnostics");
+  if (model.cleanup !== undefined) {
+    const cleanup = model.cleanup;
+    if (!cleanup || Array.isArray(cleanup) || Object.keys(cleanup).length !== 2 ||
+        !["degenerateEdges", "zeroAreaTriangles"].every((key) =>
+          cleanup[key] === null || (Number.isSafeInteger(cleanup[key]) && cleanup[key] >= 0 &&
+            cleanup[key] <= (key === "degenerateEdges" ? 200_000 : 1_000_000)))) fail("Invalid display cleanup diagnostics");
+  }
   // Early schema-2 edge snapshots used the original unsalted full-content hash.
   // Keep those copied references resolvable without changing their cache or identity.
   if (requireRevision && model.topologyRevision !== topologyRevision(model) &&

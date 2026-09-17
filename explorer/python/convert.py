@@ -74,6 +74,8 @@ class ConversionError(ValueError):
 class WarningLog:
     def __init__(self) -> None:
         self.items: list[str] = []
+        # Counts cover reusable part geometry, not repeated assembly placements.
+        self.cleanup = {"degenerateEdges": 0, "zeroAreaTriangles": 0}
 
     def add(self, message: str) -> None:
         if message not in self.items:
@@ -244,7 +246,15 @@ def _edges(shape, budget: dict, warnings: WarningLog) -> list[dict]:
         edge = TopoDS.Edge_s(edges.FindKey(index))
         edge_id = f"e{index}"
         if BRep_Tool.Degenerated_s(edge):
-            warnings.add(f"Degenerate CAD edge {edge_id} was omitted from edge selection.")
+            vertices = TopTools_IndexedMapOfShape()
+            TopExp.MapShapes_s(edge, TopAbs_VERTEX, vertices)
+            points = np.asarray([
+                BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertices.FindKey(i))).Coord()
+                for i in range(1, vertices.Extent() + 1)
+            ])
+            if not len(points) or not np.isfinite(points).all() or np.any(points != points[0]):
+                raise ConversionError(f"Degenerate CAD edge {edge_id} is not a finite point.")
+            warnings.cleanup["degenerateEdges"] += 1
             continue
         curve = BRepAdaptor_Curve(edge)
         if not all(map(math.isfinite, (curve.FirstParameter(), curve.LastParameter()))):
@@ -347,7 +357,7 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
             raise ConversionError("Tessellation contains non-finite triangle areas.")
         if np.any(areas == 0):
             # Native sphere/cone pole meshes can contain collapsed triangles.
-            warnings.add("Zero-area tessellation triangles were omitted.")
+            warnings.cleanup["zeroAreaTriangles"] += int(np.count_nonzero(areas == 0))
             triangles = triangles[areas > 0]
         if not len(triangles):
             raise ConversionError("A face has no non-degenerate triangles; refusing partial preview.")
@@ -491,6 +501,7 @@ def convert_step(input_path: str | Path) -> dict:
         "nodes": nodes,
         "bounds": _bounds(np.asarray(world_corners)),
         "warnings": warnings.items,
+        "cleanup": warnings.cleanup,
     }
 
 

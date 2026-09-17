@@ -6,7 +6,7 @@ import path from "node:path";
 import { changeView, initialState, PrototypeError, topologyRevision, validateModel } from "./protocol.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
-import { importWarnings } from "../shared/diagnostics.mjs";
+import { importDiagnostics } from "../shared/diagnostics.mjs";
 import { ReviewStore, validateCamera } from "./reviews.mjs";
 import { atomicJson } from "./storage.mjs";
 import { createInspectionService } from "./inspection.mjs";
@@ -177,7 +177,7 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
       await python("convert.py", [snapshot, "--output", output]);
       if ((await stat(output)).size > maxJsonBytes) throw new PrototypeError("model_too_large", "Converted mesh exceeds the viewer's size limit", 413);
       const loaded = validateModel(JSON.parse(await readFile(output, "utf8")), { requireRevision: false });
-      loaded.warnings = importWarnings(loaded.warnings);
+      Object.assign(loaded, importDiagnostics(loaded));
       await unlink(output);
       if (loaded.source.sha256 !== sourceHash) throw new PrototypeError("revision_mismatch", "Converted model does not match the STEP snapshot", 422);
       loaded.source.name = displayName || path.basename(resolved);
@@ -456,7 +456,7 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
           await loadFile(path.join(uploadDir, `${cached.source.sha256}.step`), saved.inputName || state.modelName || cached.source.name, true);
         } else {
           model = cached;
-          model.warnings = importWarnings(model.warnings);
+          Object.assign(model, importDiagnostics(model));
           modelCache = saved.modelCache;
           inputFile = saved.inputFile;
           inputName = saved.inputName || state.modelName || model.source.name;

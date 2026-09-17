@@ -49,6 +49,7 @@ export type Model = {
   nodes: ModelNode[];
   bounds: Bounds;
   warnings: string[];
+  cleanup?: { degenerateEdges: number | null; zeroAreaTriangles: number | null };
 };
 export type ViewState = {
   revision: number;
