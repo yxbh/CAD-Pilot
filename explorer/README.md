@@ -81,8 +81,6 @@ Maintained code lives in `explorer\`; retained data deliberately stays under `.g
 
 Keep `models`, `inputs`, `references`, `views`, `reviews` and captures at that retained location. Do not remove the old-named directory merely because the running extension is now `cad-explorer`. Existing v1 geometry caches, perspective-only camera records and saved reviews retain their compatibility paths. Live models converted before edge support are reconverted from their source snapshot into a new topology revision; old cached face/part references remain resolvable against their original revision. Source-file cleanup is separate from data deletion.
 
-Validated older model caches have their exact known cleanup messages classified as information when loaded, without rewriting retained files or changing topology identities, references or reviews. Their logs did not preserve exact cleanup counts; the viewer says those counts are unavailable until a fresh import measures them. Freshly measured counts are also saved with the view's exact topology revision, so reimporting an existing immutable cache retains those counts across restarts. Only matching, validated counts are restored, after historical warnings are normalized; counts from another revision are discarded with a diagnostic, and malformed saved counts are rejected. Other historical warnings remain warnings. New conversions record two bounded aggregate counters outside the topology hash, leaving the real-warning budget available for genuine diagnostics.
-
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
 
 ## Validation
