@@ -2,7 +2,7 @@ import { createExplorerServer } from "./server.mjs";
 
 const service = await createExplorerServer({
   projectRoot: process.cwd(),
-  viewId: process.env.CAD_EXPLORER_VIEW || process.env.CAD_PROTOTYPE_VIEW || "standalone",
+  viewId: process.env.CAD_EXPLORER_VIEW || "standalone",
   file: process.argv[2],
 });
 process.stdout.write(`${service.url}\n`);

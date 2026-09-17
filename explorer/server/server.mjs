@@ -3,10 +3,10 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, stat, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
-import { changeView, initialState, PrototypeError, topologyRevision, validateModel } from "./protocol.mjs";
+import { changeView, initialState, PrototypeError, topologyRevision, validateMeasuredCleanup, validateModel } from "./protocol.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
-import { importWarnings } from "../shared/diagnostics.mjs";
+import { importDiagnostics } from "../shared/diagnostics.mjs";
 import { ReviewStore, validateCamera } from "./reviews.mjs";
 import { atomicJson } from "./storage.mjs";
 import { createInspectionService } from "./inspection.mjs";
@@ -74,12 +74,14 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
   const stateFile = path.join(viewDir, `${viewKey}.json`);
   const reviews = new ReviewStore(path.join(runtimeRoot, "reviews", viewKey));
   const saved = await readOptionalJson(stateFile);
+  let measuredCleanup = saved?.measuredCleanup === undefined ? undefined : validateMeasuredCleanup(saved.measuredCleanup);
   let state = { ...initialState(), ...saved?.state };
   delete state.autoAdd;
   let model = null;
-  let modelCache = "";
-  let inputFile = "";
-  let inputName = "";
+  // A failed explicit startup import must not discard the last saved snapshot.
+  let modelCache = saved?.modelCache ?? "";
+  let inputFile = saved?.inputFile ?? "";
+  let inputName = saved?.inputName ?? "";
   let closed = false;
   let closing;
   let initialization;
@@ -101,9 +103,10 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
   const emit = (name, data) => {
     for (const client of clients) client.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+  const saveView = (next) => atomicJson(stateFile, { state: next, modelCache, inputFile, inputName, measuredCleanup });
   const commit = async (patch) => {
     const next = { ...state, ...patch, revision: state.revision + 1 };
-    await atomicJson(stateFile, { state: next, modelCache, inputFile, inputName });
+    await saveView(next);
     state = next;
     emit("state", state);
     return state;
@@ -177,11 +180,12 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
       await python("convert.py", [snapshot, "--output", output]);
       if ((await stat(output)).size > maxJsonBytes) throw new PrototypeError("model_too_large", "Converted mesh exceeds the viewer's size limit", 413);
       const loaded = validateModel(JSON.parse(await readFile(output, "utf8")), { requireRevision: false });
-      loaded.warnings = importWarnings(loaded.warnings);
+      Object.assign(loaded, importDiagnostics(loaded));
       await unlink(output);
       if (loaded.source.sha256 !== sourceHash) throw new PrototypeError("revision_mismatch", "Converted model does not match the STEP snapshot", 422);
       loaded.source.name = displayName || path.basename(resolved);
       loaded.topologyRevision = topologyRevision(loaded);
+      const cleanup = validateMeasuredCleanup({ topologyRevision: loaded.topologyRevision, counts: loaded.cleanup });
       const cache = `${loaded.topologyRevision}.json`;
       try {
         const cached = validateModel(JSON.parse(await readFile(path.join(modelDir, cache), "utf8")));
@@ -194,6 +198,7 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
       modelCache = cache;
       inputFile = snapshot;
       inputName = loaded.source.name;
+      measuredCleanup = cleanup;
       lastRendered = null;
       await commit({ ...initialState(), autoCopy: state.autoCopy, documentRevision: sourceHash, topologyRevision: loaded.topologyRevision, modelName: inputName, fitNonce: state.fitNonce + 1 });
       return state;
@@ -333,7 +338,7 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
           validateCamera(report.camera);
           if ((report.camera.projection ?? "perspective") !== state.projection) throw new PrototypeError("bad_render_report", "Rendered projection does not match the view", 409);
           const next = { ...state, camera: report.camera };
-          await atomicJson(stateFile, { state: next, modelCache, inputFile, inputName });
+          await saveView(next);
           state = next;
         }
         lastRendered = report;
@@ -456,7 +461,14 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
           await loadFile(path.join(uploadDir, `${cached.source.sha256}.step`), saved.inputName || state.modelName || cached.source.name, true);
         } else {
           model = cached;
-          model.warnings = importWarnings(model.warnings);
+          Object.assign(model, importDiagnostics(model));
+          // Normalize historical warning strings before adding newly measured counts.
+          if (measuredCleanup?.topologyRevision === model.topologyRevision) {
+            model.cleanup = { ...measuredCleanup.counts };
+          } else if (measuredCleanup) {
+            log("Discarding saved cleanup counts for a different topology revision.");
+            measuredCleanup = undefined;
+          }
           modelCache = saved.modelCache;
           inputFile = saved.inputFile;
           inputName = saved.inputName || state.modelName || model.source.name;

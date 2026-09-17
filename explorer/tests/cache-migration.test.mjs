@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { createExplorerServer, explorerRoot, workbenchRoot, runtimeRoot } from "../server/server.mjs";
@@ -196,5 +196,97 @@ test("face-only schema-2 caches regenerate edges without changing retained refer
   } finally {
     await service.close();
     await Promise.all([stateFile, oldFile].filter(Boolean).map((file) => unlink(file)));
+  }
+});
+
+test("legacy cleanup normalizes on reopen without rewriting topology, descriptors or saved reviews", async () => {
+  const viewId = `cleanup-migration-${randomUUID()}`;
+  const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
+  const stateFile = path.join(runtimeRoot, "views", `${key}.json`);
+  const logs = [];
+  let service = await createExplorerServer({ projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message) });
+  let oldFile, descriptorFile;
+  try {
+    await service.initialize();
+    const legacy = await (await fetch(service.url + "api/model")).json();
+    delete legacy.cleanup;
+    legacy.nodes[0].label = viewId;
+    const realWarnings = [
+      "STEP transfer: actual file warning",
+      "Transparency is unsupported; transparent parts are shown opaque.",
+      "Zero-length CAD edge e45 was omitted from edge selection.",
+    ];
+    legacy.warnings = [
+      "Zero-area tessellation triangles were omitted.",
+      ...Array.from({ length: 30 }, (_, i) => `Degenerate CAD edge e${i + 70} was omitted from edge selection.`),
+      ...realWarnings,
+    ];
+    legacy.topologyRevision = topologyRevision(legacy);
+    oldFile = path.join(runtimeRoot, "models", `${legacy.topologyRevision}.json`);
+    const oldBytes = JSON.stringify(legacy);
+    await writeFile(oldFile, oldBytes);
+    const node = legacy.nodes.find((item) => item.partId);
+    const part = legacy.parts.find((item) => item.id === node.partId);
+    const edge = part.edges[0];
+    const refs = [createReference(legacy, node.id), createReference(legacy, node.id, part.faces[0].id),
+      createReference(legacy, node.id, null, edge.id)];
+    const descriptor = await service.execute("prepare_clipboard_reference", { reference: refs[2] });
+    descriptorFile = descriptor.filePath;
+    const descriptorBytes = await readFile(descriptorFile, "utf8");
+    await service.close();
+    const saved = JSON.parse(await readFile(stateFile, "utf8"));
+    saved.modelCache = path.basename(oldFile);
+    saved.state.topologyRevision = legacy.topologyRevision;
+    saved.state.selectedIds = [node.id];
+    saved.state.selectedEdge = { nodeId: node.id, edgeId: edge.id };
+    saved.state.selectionMode = "edge";
+    saved.state.explode = 0.6;
+    await writeFile(stateFile, JSON.stringify(saved));
+    service = await createExplorerServer({ projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message) });
+    await service.initialize();
+    const restored = await (await fetch(service.url + "api/model")).json();
+    assert.equal(service.getState().error, "");
+    assert.equal(restored.topologyRevision, legacy.topologyRevision);
+    assert.deepEqual(restored.parts, legacy.parts);
+    assert.deepEqual(restored.nodes, legacy.nodes);
+    assert.deepEqual(restored.warnings, realWarnings);
+    assert.deepEqual(restored.cleanup, { degenerateEdges: null, zeroAreaTriangles: null });
+    assert.deepEqual(service.getState().selectedEdge, saved.state.selectedEdge);
+    assert.equal(service.getState().explode, 0.6);
+    assert.equal(service.getState().selectedReferences[0].reference, refs[2]);
+    for (const reference of refs) {
+      const result = await service.execute("inspect_reference", { reference });
+      assert.equal(result.occurrence.id, node.id);
+    }
+    const current = service.getState();
+    const camera = { position: [100, -100, 100], target: [0, 0, 0], up: [0, 0, 1], fov: 42 };
+    const response = await fetch(service.url + "api/reviews", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: current.revision, capture: {
+        dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jM1sAAAAASUVORK5CYII=",
+        width: 1, height: 1, camera,
+      } }),
+    });
+    assert.equal(response.status, 200);
+    const review = await response.json();
+    const reviewFile = path.join(runtimeRoot, "reviews", key, `${review.id}.json`);
+    const reviewBytes = await readFile(reviewFile, "utf8");
+    await service.close();
+    service = await createExplorerServer({ projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message) });
+    await service.initialize();
+    assert.equal(service.getState().activeReviewId, review.id);
+    assert.equal(service.getState().topologyRevision, legacy.topologyRevision);
+    assert.deepEqual(service.getState().camera, camera);
+    await service.execute("close_review");
+    await service.execute("open_review", { id: review.id });
+    assert.equal(await readFile(reviewFile, "utf8"), reviewBytes);
+    assert.equal(await readFile(oldFile, "utf8"), oldBytes);
+    assert.equal(await readFile(descriptorFile, "utf8"), descriptorBytes);
+    assert.ok(!logs.some((message) => /Rebuilding/.test(message)));
+    assert.deepEqual((await (await fetch(service.url + "api/model")).json()).warnings, realWarnings);
+  } finally {
+    await service.close();
+    await Promise.all([stateFile, oldFile, descriptorFile].filter(Boolean).map((file) => unlink(file)));
+    await rm(path.join(runtimeRoot, "reviews", key), { recursive: true, force: true });
   }
 });

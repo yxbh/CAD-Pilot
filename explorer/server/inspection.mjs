@@ -32,12 +32,12 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     maxBytes: cacheLimits.modelMaxBytes ?? 64 * 1024 * 1024,
     io,
     check: (info) => {
-      if (info.size > modelLimit) throw new PrototypeError("model_too_large", "Cached reference exceeds the prototype limit", 413);
+      if (info.size > modelLimit) throw new PrototypeError("model_too_large", "Cached reference exceeds the Explorer limit", 413);
     },
     load: async (handle) => {
       counts.modelReads++;
       const text = await handle.readFile("utf8");
-      if (Buffer.byteLength(text) > modelLimit) throw new PrototypeError("model_too_large", "Cached reference exceeds the prototype limit", 413);
+      if (Buffer.byteLength(text) > modelLimit) throw new PrototypeError("model_too_large", "Cached reference exceeds the Explorer limit", 413);
       counts.jsonParses++;
       const parsed = JSON.parse(text);
       counts.modelValidations++;
@@ -166,7 +166,7 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     const filePath = path.join(directory, `${hash(entity.reference)}.json`);
     const title = nativeReferenceTitle(entity.occurrence.label, entity.face?.id ?? null, entity.edge?.id ?? null);
     await atomicJson(filePath, {
-      schemaVersion: 1, kind: "cad-prototype-selection", inspectionTool: "cad_explorer_prototype_inspect", ...entity,
+      schemaVersion: 1, kind: "cad-prototype-selection", inspectionTool: "cad_explorer_inspect", ...entity,
     });
     return { text: nativeFileReference(filePath, title), title, filePath, reference: entity.reference };
   }

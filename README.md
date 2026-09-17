@@ -32,7 +32,7 @@ Commit `explorer/package.json`, but keep its `package-lock.json` local and Git-i
 
 Prepare source releases from tracked files, such as a Git archive, rather than zipping the working directory. Local locks, runtime data and caches are not release content.
 
-Reload project extensions and open **CAD Explorer**. See its [workflow and retained-data guidance](explorer/README.md) before moving or removing old prototype data: existing pasted references and drawings still use `.github\extensions\cad-explorer-prototype\.runtime`.
+Reload project extensions and open **CAD Explorer**. See its [workflow and local-data guidance](explorer/README.md#local-data) before moving or removing saved references and drawings.
 
 `AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
 

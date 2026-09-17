@@ -89,8 +89,8 @@ test("a pasted reference resolves from immutable cache without its original canv
   await assert.rejects(inspectReference(createReference(model, model.nodes[0].id, "f1")), /no longer cached/);
 });
 
-test("legacy chip descriptors exist before preparation resolves and remain inspectable after service restart", async (t) => {
-  assert.equal(runtimeRoot, path.join(workbenchRoot, ".github", "extensions", "cad-explorer-prototype", ".runtime"));
+test("chip descriptors use the maintained runtime and remain inspectable after service restart", async (t) => {
+  assert.equal(runtimeRoot, path.join(workbenchRoot, ".github", "extensions", "cad-explorer", ".runtime"));
   const fixture = await inspectionFixture(t);
   const { service, reference, model } = fixture;
   const prepared = await service.prepareClipboardReference(reference);
@@ -101,7 +101,7 @@ test("legacy chip descriptors exist before preparation resolves and remain inspe
   const descriptor = JSON.parse(await readFile(prepared.filePath, "utf8"));
   assert.equal(descriptor.schemaVersion, 1);
   assert.equal(descriptor.kind, "cad-prototype-selection");
-  assert.equal(descriptor.inspectionTool, "cad_explorer_prototype_inspect");
+  assert.equal(descriptor.inspectionTool, "cad_explorer_inspect");
   assert.equal(descriptor.reference, reference);
   assert.equal(descriptor.topologyRevision, model.topologyRevision);
   assert.equal(descriptor.occurrence.id, model.nodes[0].id);

@@ -31,13 +31,15 @@ node "$Workbench\explorer\server\standalone.mjs"
 Pop-Location
 ```
 
-The process prints a loopback URL and stays attached to the launching terminal. It does not submit Copilot messages. `CAD_EXPLORER_VIEW` can select a different remembered setup; the previous `CAD_PROTOTYPE_VIEW` variable remains a compatibility fallback.
+The process prints a loopback URL and stays attached to the launching terminal. It does not submit Copilot messages. `CAD_EXPLORER_VIEW` selects a different remembered setup.
 
 ## Model, views and appearance
 
 The viewer loads ordinary STEP/STP parts and assemblies through the workbench's local OCP converter. It preserves repeated occurrences, placements, names and supported part colors. Different surfaces within one part, transparency and source visibility flags are not fully represented; detected limitations appear as import warnings. Missing colors use blue-grey. The demo deliberately has a blue base, green cover and gold spacers.
 
-When the live model has import warnings, a warning button with a count appears in the document header. Open it to read the full list in a scrollable panel; close it with its X button, Escape or the header button. The list stays above the bottom controls, so it never covers the explosion slider. Closing the list does not erase the warnings: reopen it from the same button. Details start closed for each newly loaded model and are not shown over captured drawing reviews.
+When the live model has import warnings, a warning button with a count appears in the document header. Normal display cleanup of verified kernel point edges and exactly zero-area triangles is instead summarized as low-priority information, with counts for reusable part geometry rather than repeated placements. Cleanup alone shows a neutral information button; mixed imports keep the real warning count and show cleanup separately in the same panel. No CAD faces are removed by this cleanup. Tessellation tolerances, triangle filtering and selectable nondegenerate edges are unchanged; unflagged zero-length edges remain warnings, and invalid or missing geometry remains an error.
+
+Open the header button to read the scrollable details; close them with the X button, Escape or the header button. Details stay above the bottom controls, so they never cover the explosion slider. Opening them dismisses a transient success notice, not an error. Closing the details does not erase diagnostics: reopen them from the same button. Details start closed for each newly loaded model and are not shown over captured drawing reviews.
 
 Orbit, pan, zoom, fit and six exact axis views are available. Right is +X, left -X, back +Y, front -Y, top +Z and bottom -Z. Z is the source model's up direction, not a manufacturing instruction. The labelled corner indicator follows the camera and its endpoints choose a view. Toolbar buttons have mouse-hover and keyboard-focus tooltips.
 
@@ -55,7 +57,7 @@ Auto-copy copies the selected reference inside the user's click gesture; Copy re
 
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
-`cad_explorer_inspect` resolves these references. `cad_explorer_prototype_inspect` remains a supported alias for existing descriptors and conversations. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
+`cad_explorer_inspect` resolves these references. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
 
 Inspection keeps compact validated face/edge/part/placement facts rather than retaining another copy of mesh or edge-polyline arrays. Its default cache is limited to four entries and 64 MiB of accounted fact data; source-digest entries have a separate bound. These are retained-cache accounting limits, not a bound on transient JSON parsing or total process memory. Unchanged warm selections avoid full mesh parsing/validation and source hashing; changed files invalidate the relevant entry, and source hashing is streamed. Synthetic timing checks do not certify real large-assembly performance.
 
@@ -73,13 +75,13 @@ A failed or uncertain save can be reconciled with the saved version. Conflicting
 
 Copy marked image and Save marked image include annotations. The saved metadata records the original source revision, pose and visual appearance. A review remains tied to its captured snapshot even after a different STEP is opened. The current limits are 20 reviews per setup, bounded image sizes and bounded stroke/history counts.
 
-## Retained data and prototype migration
+## Local data
 
-Maintained code lives in `explorer\`; retained data deliberately stays under `.github\extensions\cad-explorer-prototype\.runtime`. Existing pasted chips contain absolute descriptor paths there. Moving or deleting those files would break references already present in conversations.
-
-Keep `models`, `inputs`, `references`, `views`, `reviews` and captures at that retained location. Do not remove the old-named directory merely because the running extension is now `cad-explorer`. Existing v1 geometry caches, perspective-only camera records and saved reviews retain their compatibility paths. Live models converted before edge support are reconverted from their source snapshot into a new topology revision; old cached face/part references remain resolvable against their original revision. Source-file cleanup is separate from data deletion.
+Saved models, source snapshots, references, view setups, drawing reviews and captures live in `.github/extensions/cad-explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data.
 
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
+
+To relocate a runtime directory within this checkout, stop its Explorer processes and run `node explorer/scripts/relocate-runtime.mjs <source-.runtime-directory>` from the workbench root, then reload the extension. The destination must not exist; the command verifies the copy before removing the source and updates saved snapshot paths. It does not create old-path redirects or rewrite previously pasted chips.
 
 ## Validation
 
@@ -95,16 +97,14 @@ Browser checks run against an isolated standalone/test view using the workbench'
 
 `npm test` includes the review-recovery browser checks and requires the workbench's Playwright Chromium setup. The extended live camera check is opt-in: from `explorer`, set `$env:EXPLORER_BROWSER_TESTS='1'` and run `node --test tests\camera-browser.test.mjs`. It checks R3F camera matrices and scale across panel, viewport and device-pixel-ratio changes, not just toolbar layout.
 
-`node --test tests\import-warnings.test.mjs` checks warning-panel dismissal/reopening, scrollable long warnings, live-model versus drawing-review context, and actual pointer/keyboard access to the explosion slider on desktop, narrow and short windows. The fixture injects warnings into its isolated browser response rather than modifying cached CAD data.
+`node --test tests/import-warnings.test.mjs` checks neutral cleanup information from a native rounded STEP import, mixed real warnings, legacy unknown counts, dismissal/reopening, saved review and edge-reference continuity, invalid-import errors, and pointer/keyboard access to the explosion slider on desktop, narrow and short windows. Synthetic long warnings and legacy-normalized diagnostics are injected only into the isolated browser response, not into retained CAD data. Converter tests compare native face/edge retention and final triangle indices, exercise more than 100 legitimate degenerate edges, and retain strict failure and resource-limit checks. `diagnostics.test.mjs` and `cache-migration.test.mjs` cover bounded counters and immutable legacy-cache compatibility. `cleanup-persistence.test.mjs` checks fresh reimport over a legacy cache, provider/browser restart, failed imports, camera saves, view isolation and stale/malformed saved measurement guards.
 
 `node --test tests/edge-picking.test.ts tests/edge-browser.test.mjs` checks screen-space hit tolerance, occlusion, whole-edge highlighting, real pointer picking of straight and curved edges, native-reference copying, repeated and exploded occurrences, mode switching, saved selection, drawing capture and narrow/high-DPI windows. Build first. The browser test uses the isolated synthetic STEP assembly, not a user's design. Converter tests separately check exact topology and CAD edge lengths; display polylines approximate curves and do not replace exact geometry.
 
 The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
 
-## Scope and ownership
+## Limits
 
-This release maintains the current STEP, face/edge/part picking, native reference copying, saved drawing, explosion, view and appearance workflows. It does not add live file watching, vertex picking, GLB transport, collision-aware disassembly, a VS Code extension, slicing or printer control. Preview meshes and edge polylines are JSON arrays; assemblies are not certified for large-model performance.
+CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
 
-The host boundary is `ViewerHost`; the Copilot adapter registers canvases/tools and serves local HTTP/SSE. Conversion, inspection, view state and drawing logic do not require the imported viewer. Native CAD conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
-
-Original code is authored for CAD-Pilot; no additional license is granted here. React, React Three Fiber and Three.js retain their MIT licenses. Lucide retains its ISC and applicable Feather attribution notices. Python dependencies retain their own licenses. No imported-skill files or upstream notices are replaced.
+See the repository's [ownership and provenance guidance](../README.md#provenance).

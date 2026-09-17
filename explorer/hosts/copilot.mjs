@@ -58,7 +58,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     },
   });
   session = await joinSession({
-    tools: [inspectionTool("cad_explorer_inspect"), inspectionTool("cad_explorer_prototype_inspect")],
+    tools: [inspectionTool("cad_explorer_inspect")],
     canvases: [createCanvas({
       id: "cad-explorer",
       displayName: "CAD Explorer",

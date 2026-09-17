@@ -9,7 +9,7 @@ description: 'Choose and open a STEP viewer and co-design CAD with a non-CAD use
 
 Prefer the maintained `cad-explorer` canvas whenever it is available in the current host, even when the imported cad skill describes starting its browser viewer. Keep using that skill for build123d generation and the appropriate geometric inspection; choosing our viewer does not replace the modeling skill.
 
-Check the available canvas types, inspect `cad-explorer` capabilities, and pass the selected design directory as `projectRoot` and its actual STEP as `file`. Reuse an existing panel for the same setup. Do not omit the file and accidentally show the demo, open the archived prototype, move the model into the workbench, or regenerate geometry merely to view an existing STEP. Build and reload the maintained extension when needed using the [Explorer instructions](../../../explorer/README.md); a failed build/connection is an explicit error, not a reason to silently show another viewer.
+Check the available canvas types, inspect `cad-explorer` capabilities, and pass the selected design directory as `projectRoot` and its actual STEP as `file`. Reuse an existing panel for the same setup. Do not omit the file and accidentally show the demo, move the model into the workbench, or regenerate geometry merely to view an existing STEP. Build and reload the maintained extension when needed using the [Explorer instructions](../../../explorer/README.md); a failed build/connection is an explicit error, not a reason to silently show another viewer.
 
 When the maintained canvas is unavailable in the current host, use the imported browser viewer and CLI workflow described by the cad skill. This includes hosts without the canvas integration; access to an external workbench path does not register its project extension. Do not imply a separate VS Code extension exists or that desktop native reference chips work in another chat host.
 
@@ -25,7 +25,7 @@ When the maintained canvas is unavailable in the current host, use the imported 
 
 ## References and Tool Boundaries
 
-Maintained-viewer references use `cadproto:v2` topology/occurrence/face, edge or whole-part identities. Use Faces, Edges or Parts in the toolbar; edge references identify actual STEP edges, not tessellation outlines. Inspect the token in a pasted JSON descriptor with `cad_explorer_inspect` or the canvas's `inspect_reference` action; the old `cad_explorer_prototype_inspect` name is a supported compatibility alias. Do not feed these IDs into the imported inspector. Imported `@cad[...]` references belong to that viewer's CLI inspection workflow and must be resolved there.
+Maintained-viewer references use `cadproto:v2` topology/occurrence/face, edge or whole-part identities. Use Faces, Edges or Parts in the toolbar; edge references identify actual STEP edges, not tessellation outlines. Inspect the token in a pasted JSON descriptor with `cad_explorer_inspect` or the canvas's `inspect_reference` action. Do not feed these IDs into the imported inspector. Imported `@cad[...]` references belong to that viewer's CLI inspection workflow and must be resolved there.
 
 The maintained canvas exposes explicit state, selection, view, explosion and capture actions. Read their returned state before claiming to know what is selected or visible. User clicks can copy references to the clipboard, but do not insert or send chat messages. The imported browser viewer does not gain these canvas actions merely because both viewers are called CAD Explorer.
 
