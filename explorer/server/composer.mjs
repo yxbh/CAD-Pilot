@@ -34,7 +34,7 @@ export function composerAttachment(model, state, expectedRevision) {
       topologyRevision: model.topologyRevision,
       references,
       displayOnlyExplosion: state.explode,
-      inspectionTool: "cad_explorer_prototype_inspect",
+      inspectionTool: "cad_explorer_inspect",
     },
   };
 }

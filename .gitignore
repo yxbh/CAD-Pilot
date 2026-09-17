@@ -216,7 +216,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 # CAD-Pilot machine-local state and generated artifacts
-/.github/extensions/cad-explorer-prototype/.runtime/
+/.github/extensions/cad-explorer/.runtime/
 !.agents/skills/cad/explorer/lib/
 !.agents/skills/cad/explorer/lib/**
 .local/

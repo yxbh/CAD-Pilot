@@ -13,9 +13,7 @@ export function workbenchPythonPath(root, platform = process.platform) {
 }
 
 export const workbenchPython = workbenchPythonPath(workbenchRoot);
-export const legacyPrototypeRoot = path.join(workbenchRoot, ".github", "extensions", "cad-explorer-prototype");
-// Pasted file chips contain absolute descriptor paths in this retained directory.
-export const runtimeRoot = path.join(legacyPrototypeRoot, ".runtime");
+export const runtimeRoot = path.join(workbenchRoot, ".github", "extensions", "cad-explorer", ".runtime");
 
 export async function canonicalProjectRoot(root) {
   const project = await realpath(root);

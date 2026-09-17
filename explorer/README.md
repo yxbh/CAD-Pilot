@@ -31,7 +31,7 @@ node "$Workbench\explorer\server\standalone.mjs"
 Pop-Location
 ```
 
-The process prints a loopback URL and stays attached to the launching terminal. It does not submit Copilot messages. `CAD_EXPLORER_VIEW` can select a different remembered setup; the previous `CAD_PROTOTYPE_VIEW` variable remains a compatibility fallback.
+The process prints a loopback URL and stays attached to the launching terminal. It does not submit Copilot messages. `CAD_EXPLORER_VIEW` selects a different remembered setup.
 
 ## Model, views and appearance
 
@@ -57,7 +57,7 @@ Auto-copy copies the selected reference inside the user's click gesture; Copy re
 
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
-`cad_explorer_inspect` resolves these references. `cad_explorer_prototype_inspect` remains a supported alias for existing descriptors and conversations. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
+`cad_explorer_inspect` resolves these references. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
 
 Inspection keeps compact validated face/edge/part/placement facts rather than retaining another copy of mesh or edge-polyline arrays. Its default cache is limited to four entries and 64 MiB of accounted fact data; source-digest entries have a separate bound. These are retained-cache accounting limits, not a bound on transient JSON parsing or total process memory. Unchanged warm selections avoid full mesh parsing/validation and source hashing; changed files invalidate the relevant entry, and source hashing is streamed. Synthetic timing checks do not certify real large-assembly performance.
 
@@ -77,9 +77,11 @@ Copy marked image and Save marked image include annotations. The saved metadata 
 
 ## Local data
 
-Saved models, source snapshots, references, view setups, drawing reviews and captures live in `.github/extensions/cad-explorer-prototype/.runtime/`. This is a local data directory, not an extension. Its path stays stable because pasted references contain absolute paths to files there; moving or deleting it can break references and lose saved work.
+Saved models, source snapshots, references, view setups, drawing reviews and captures live in `.github/extensions/cad-explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data.
 
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
+
+To relocate a runtime directory within this checkout, stop its Explorer processes and run `node explorer/scripts/relocate-runtime.mjs <source-.runtime-directory>` from the workbench root, then reload the extension. The destination must not exist; the command verifies the copy before removing the source and updates saved snapshot paths. It does not create old-path redirects or rewrite previously pasted chips.
 
 ## Validation
 

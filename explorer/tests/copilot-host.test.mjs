@@ -30,12 +30,12 @@ async function fixture({ missingBuild = false } = {}) {
   });
   return { provider, declaration, canvas: declaration.canvases[0], calls };
 }
-test("maintained host registers the legacy inspect alias without changing its exact-reference result", async () => {
+test("maintained host registers one inspection tool for exact references", async () => {
   const { provider, declaration, canvas } = await fixture();
   try {
     assert.equal(canvas.id, "cad-explorer");
     assert.equal(canvas.displayName, "CAD Explorer");
-    assert.deepEqual(declaration.tools.map((tool) => tool.name), ["cad_explorer_inspect", "cad_explorer_prototype_inspect"]);
+    assert.deepEqual(declaration.tools.map((tool) => tool.name), ["cad_explorer_inspect"]);
     for (const tool of declaration.tools) {
       const result = await tool.handler({ reference: "cadproto:v2:fixture" });
       assert.equal(result.resultType, "success");
