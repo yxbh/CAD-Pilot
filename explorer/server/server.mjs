@@ -332,24 +332,31 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
       if (route === "api/rendered" && req.method === "POST") {
         const report = await jsonBody(req);
         const result = await enqueue(async () => {
-        if (!Number.isInteger(report.revision) || report.modelHash !== state.documentRevision || report.topologyRevision !== state.topologyRevision) throw new PrototypeError("bad_render_report", "Renderer revision does not match the model", 409);
-        if (report.revision !== state.revision) return { accepted: false, reason: "superseded_view" };
-        if (report.camera && !state.activeReviewId) {
-          validateCamera(report.camera);
-          if ((report.camera.projection ?? "perspective") !== state.projection) throw new PrototypeError("bad_render_report", "Rendered projection does not match the view", 409);
-          const next = { ...state, camera: report.camera };
-          await saveView(next);
-          state = next;
-        }
-        lastRendered = report;
-        for (const waiter of [...renderWaiters]) {
-          if (report.revision >= waiter.revision) {
-            clearTimeout(waiter.timer); renderWaiters.delete(waiter);
-            if (report.revision === waiter.revision && report.topologyRevision === waiter.topologyRevision) waiter.resolve(report);
-            else waiter.reject(new PrototypeError("superseded_view", "A newer view command superseded this one", 409));
+          if (!report || typeof report !== "object" || Array.isArray(report) ||
+              !Number.isSafeInteger(report.revision) || report.revision < 0 ||
+              ![report.modelHash, report.topologyRevision].every((value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value))) {
+            throw new PrototypeError("bad_render_report", "Invalid renderer revision or model identity", 409);
           }
-        }
-        return { accepted: true };
+          if (report.camera !== undefined) validateCamera(report.camera);
+          // Old model hashes are expected after a switch; no stale report may write or release a waiter.
+          if (report.revision < state.revision) return { accepted: false, reason: "superseded_view" };
+          if (report.revision > state.revision) throw new PrototypeError("bad_render_report", "Renderer revision is ahead of the view", 409);
+          if (report.modelHash !== state.documentRevision || report.topologyRevision !== state.topologyRevision) throw new PrototypeError("bad_render_report", "Renderer revision does not match the model", 409);
+          if (report.camera && !state.activeReviewId) {
+            if ((report.camera.projection ?? "perspective") !== state.projection) throw new PrototypeError("bad_render_report", "Rendered projection does not match the view", 409);
+            const next = { ...state, camera: report.camera };
+            await saveView(next);
+            state = next;
+          }
+          lastRendered = report;
+          for (const waiter of [...renderWaiters]) {
+            if (report.revision >= waiter.revision) {
+              clearTimeout(waiter.timer); renderWaiters.delete(waiter);
+              if (report.revision === waiter.revision && report.topologyRevision === waiter.topologyRevision) waiter.resolve(report);
+              else waiter.reject(new PrototypeError("superseded_view", "A newer view command superseded this one", 409));
+            }
+          }
+          return { accepted: true };
         });
         return respond(200, result);
       }

@@ -103,6 +103,8 @@ Browser checks run against an isolated standalone/test view using the workbench'
 
 The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
 
+`node --test tests/render-reports.test.mjs` checks delayed render reports across synthetic STEP switches and view changes, including responses arriving after renderer teardown. Well-formed older reports return `accepted: false` with `reason: "superseded_view"` without changing saved state or satisfying current render/capture requests. Malformed identities or cameras, future revisions and current-model mismatches remain errors. Superseded renderer callbacks cannot replace current messages; genuine current-render and failed-import errors remain visible. Build first; the tests use disposable local fixtures and an isolated service, not a user's open model.
+
 ## Limits
 
 CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.

@@ -180,10 +180,16 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
   const lastReported = useRef(-1);
   const fitted = useRef("");
   const contextLost = useRef(false);
+  const reportLifetime = useRef({ active: false });
   const latest = useRef({ model, state, amount, active, placements });
   latest.current = { model, state, amount, active, placements };
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
+  useLayoutEffect(() => {
+    const lifetime = { active };
+    reportLifetime.current = lifetime;
+    return () => { lifetime.active = false; };
+  }, [model, state.revision, active]);
   useLayoutEffect(() => observeGraphicsContext(gl.domElement, () => {
     contextLost.current = true;
     if (controls.current) controls.current.enabled = false;
@@ -330,7 +336,12 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
         max: [0, 1, 2].map((axis) => Math.max(...projected.map((point) => point[axis]))),
       } : null,
     };
-    queueMicrotask(() => { void onRendered(report).catch((error: Error) => onError(error.message)); });
+    // Requests can finish after a view change or after this renderer has unmounted.
+    const lifetime = reportLifetime.current;
+    queueMicrotask(() => {
+      if (!lifetime.active) return;
+      void onRendered(report).catch((error: Error) => { if (lifetime.active) onError(error.message); });
+    });
   });
   return null;
 }
