@@ -1,9 +1,9 @@
 import { createReference, referenceEntity } from "../shared/references.mjs";
-import { PrototypeError } from "./protocol.mjs";
+import { PrototypeError, validateCommandRevision } from "./protocol.mjs";
 
 export function composerAttachment(model, state, expectedRevision) {
   if (!model || state.loading) throw new PrototypeError("not_ready", "Wait for the model to finish loading", 409);
-  if (expectedRevision !== state.revision) throw new PrototypeError("stale_view", "Selection changed. Review it and add the reference again.", 409);
+  validateCommandRevision(state, "add_reference_to_chat", expectedRevision, "Selection changed. Review it and add the reference again.");
   if (model.topologyRevision !== state.topologyRevision) throw new PrototypeError("stale_topology", "The displayed model has changed", 409);
   if (!state.selectedIds.length) throw new PrototypeError("empty_selection", "Select a face, edge or part first");
   const references = state.selectedIds.map((id) => {

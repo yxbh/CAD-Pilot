@@ -1,6 +1,5 @@
 import argparse
 import json
-import time
 from pathlib import Path
 
 from OCP.BRep import BRep_Builder
@@ -13,6 +12,7 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Compound
 from OCP.gp import gp_Pnt
 from playwright.sync_api import expect, sync_playwright
+from browser_session import BrowserSession
 
 
 def rounded_fixture(path):
@@ -59,25 +59,8 @@ def run(url, output):
             page.route("**/api/model", inject_warnings)
             page.goto(url)
 
-            def state():
-                return page.request.get(url + "api/state").json()
-
-            def wait(predicate, timeout=30):
-                deadline = time.monotonic() + timeout
-                while True:
-                    current = state()
-                    if predicate(current):
-                        return current
-                    assert time.monotonic() < deadline, f"State did not settle: {current}; errors={errors}"
-                    page.wait_for_timeout(50)
-
-            def settled():
-                return wait(lambda current: current.get("rendered") and current["rendered"]["revision"] == current["revision"])
-
-            def command(name, data=None):
-                response = page.request.post(url + "api/command", data={"name": name, "input": data or {}})
-                assert response.ok, response.text()
-                return settled()
+            session = BrowserSession(page, url, errors)
+            state, wait, settled, command = session.state, session.wait, session.settled, session.command
 
             def slider_accessible():
                 assert slider.evaluate("""slider => {

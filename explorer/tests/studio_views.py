@@ -3,12 +3,12 @@ import base64
 import io
 import json
 import math
-import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 from PIL import Image, ImageChops, ImageStat
 from playwright.sync_api import expect, sync_playwright
+from browser_session import BrowserSession
 
 
 def run(url, output):
@@ -23,25 +23,8 @@ def run(url, output):
             page.on("request", lambda request: external.append(request.url) if urlparse(request.url).hostname not in ("127.0.0.1", None) else None)
             page.goto(url)
 
-            def state():
-                return page.request.get(url + "api/state").json()
-
-            def wait(predicate, timeout=30):
-                deadline = time.monotonic() + timeout
-                while True:
-                    current = state()
-                    if predicate(current):
-                        return current
-                    assert time.monotonic() < deadline, f"View did not settle: {current}; errors={errors}; graphics={graphics_errors}"
-                    page.wait_for_timeout(50)
-
-            def settled():
-                return wait(lambda current: current.get("rendered") and current["rendered"]["revision"] == current["revision"])
-
-            def command(name, data=None):
-                response = page.request.post(url + "api/command", data={"name": name, "input": data or {}})
-                assert response.ok, response.text()
-                return settled()
+            session = BrowserSession(page, url, {"page": errors, "graphics": graphics_errors})
+            state, wait, settled, command = session.state, session.wait, session.settled, session.command
 
             def click(label):
                 before = state()["revision"]
@@ -195,14 +178,25 @@ def run(url, output):
             wait(lambda current: current["activeReviewId"] is None)
             settled()
             for width in [760, 590, 390, 320]:
-                page.set_viewport_size({"width": width, "height": 844})
-                page.wait_for_timeout(150)
+                session.resize(width, 844)
                 toolbar = page.locator(".mode-toolbar").bounding_box()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 for button in page.locator(".model-toolbar button").all():
                     rect = button.bounding_box()
                     assert rect["x"] >= 0 and rect["x"] + rect["width"] <= width + 1, (width, rect)
                     assert rect["y"] + rect["height"] <= toolbar["y"] + toolbar["height"] + 1, (width, rect, toolbar)
+            narrow_viewport = page.locator(".viewport").bounding_box()
+            command("fit_view")
+            page.get_by_role("button", name="Draw", exact=True).click()
+            expect(page.get_by_label("Drawing canvas")).to_be_visible()
+            assert page.locator(".viewport").bounding_box() == narrow_viewport
+            toolbar = page.locator(".mode-toolbar").bounding_box()
+            for button in page.locator(".drawing-toolbar button").all():
+                rect = button.bounding_box()
+                assert rect["y"] + rect["height"] <= toolbar["y"] + toolbar["height"] + 1
+            page.get_by_role("button", name="Back to model").click()
+            wait(lambda current: current["activeReviewId"] is None)
+            assert page.locator(".viewport").bounding_box() == narrow_viewport
             page.set_viewport_size({"width": 390, "height": 844})
             page.screenshot(path=str(output / "studio-narrow.png"))
             expect(page.get_by_role("alert")).to_have_count(0)

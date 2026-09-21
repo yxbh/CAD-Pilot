@@ -15,6 +15,11 @@ export function workbenchPythonPath(root, platform = process.platform) {
 export const workbenchPython = workbenchPythonPath(workbenchRoot);
 export const runtimeRoot = path.join(workbenchRoot, ".github", "extensions", "cad-explorer", ".runtime");
 
+export function isInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
 export async function canonicalProjectRoot(root) {
   const project = await realpath(root);
   if (!(await stat(project)).isDirectory()) throw new Error("Project root must be a directory");

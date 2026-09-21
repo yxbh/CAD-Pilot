@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import Scene from "./Scene.tsx";
 import { newestState, type Model, type ViewState } from "./model.ts";
-import { blobDataUrl, createDesktopHost, type CameraState, type CaptureRequest, type ViewCapture, type ViewerHost } from "./host.ts";
+import { createDesktopHost, type CameraState, type ViewerHost } from "./host.ts";
 import { useReviews } from "./useReviews.ts";
+import { useSelection } from "./useSelection.ts";
+import { useViewCapture } from "./useViewCapture.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
 import {
   Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen,
@@ -33,14 +35,9 @@ export function App({ host }: { host: ViewerHost }) {
   const [treeOpen, setTreeOpen] = useState(() => window.innerWidth >= 760);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [warningsTarget, setWarningsTarget] = useState<HTMLDivElement | null>(null);
-  const [changingMode, setChangingMode] = useState(false);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [pendingAutoCopy, setPendingAutoCopy] = useState<boolean | null>(null);
-  const [copyStatus, setCopyStatus] = useState<{ kind: "idle" | "pending" | "copied" | "blocked"; message: string; text: string }>({ kind: "idle", message: "", text: "" });
-  const copySequence = useRef(0);
   const referenceField = useRef<HTMLTextAreaElement | null>(null);
-  const capture = useRef<(() => ViewCapture) | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const latest = useRef(state);
@@ -49,26 +46,10 @@ export function App({ host }: { host: ViewerHost }) {
     latest.current = accepted;
     setState(accepted);
   }, []);
-  const registerCapture = useCallback((callback: (() => ViewCapture) | null) => { capture.current = callback; }, []);
   const reportError = useCallback((message: string) => { setError(message); }, []);
   const reportReviewError = useCallback((message: string) => { setReviewError(message); }, []);
   const reviews = useReviews(host, state?.activeReviewId ?? null, reportReviewError);
-  const captureHandler = useRef<(request: CaptureRequest) => Promise<void>>(async () => undefined);
-  captureHandler.current = async (requested) => {
-    try {
-      if (latest.current?.revision !== requested.revision) throw new Error("View changed before capture");
-      if (requested.reviewId) {
-        const image = await reviews.captureRequested(requested);
-        await host.captureResult({ ...requested, dataUrl: await blobDataUrl(image) });
-      } else {
-        if (!capture.current || latest.current.activeReviewId) throw new Error("Model renderer is not ready");
-        const captured = capture.current();
-        await host.captureResult({ ...requested, dataUrl: captured.dataUrl, camera: captured.camera });
-      }
-    } catch (failure) {
-      await host.captureResult({ ...requested, error: failure instanceof Error ? failure.message : String(failure) });
-    }
-  };
+  const { registerCapture, onCapture, beginDrawing, changingMode } = useViewCapture({ host, latest, queue, reviews, onError: reportError });
 
   const run = useCallback((name: string, input: object = {}, onFailure?: (failure: Error) => void) => {
     setError("");
@@ -83,6 +64,9 @@ export function App({ host }: { host: ViewerHost }) {
     });
     return queue.current;
   }, [host, acceptState]);
+  const { select, copySelection, setAutoCopy, copyStatus, autoCopyEnabled, autoCopyPending, dismissCopyStatus } = useSelection({
+    host, model, state, latest, run, onError: reportError,
+  });
 
   useEffect(() => {
     let active = true;
@@ -90,21 +74,15 @@ export function App({ host }: { host: ViewerHost }) {
       onConnection: setConnected,
       onState: (incoming) => { if (active) acceptState(incoming); },
       onError: (failure) => setError(failure.message),
-      onCapture: (requested) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          void captureHandler.current(requested).catch((failure: Error) => setError(failure.message));
-        }));
-      },
+      onCapture,
     });
     void host.getState().then((value) => { if (active) acceptState(value); }, (failure: Error) => setError(failure.message));
     return () => { active = false; unsubscribe(); };
-  }, [host, acceptState]);
+  }, [host, acceptState, onCapture]);
 
   useEffect(() => {
     if (!state?.topologyRevision) return;
     let active = true;
-    copySequence.current++;
-    setCopyStatus({ kind: "idle", message: "", text: "" });
     void host.loadModel().then((value) => { if (active) setModel(value); }, (failure: Error) => { if (active) setError(failure.message); });
     return () => { active = false; };
   }, [host, state?.topologyRevision, state?.modelName]);
@@ -123,76 +101,12 @@ export function App({ host }: { host: ViewerHost }) {
       setNotice(`Screenshot saved: ${result.path}`);
     } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
   }
-  async function beginDrawing() {
-    if (changingMode) return;
-    setChangingMode(true);
-    setError("");
-    try {
-      await queue.current;
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (!capture.current || !latest.current || latest.current.loading) throw new Error("Wait for the model to finish loading");
-      const captured = capture.current();
-      await reviews.start(captured, latest.current.revision);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-    finally { setChangingMode(false); }
-  }
   const saveCamera = useCallback((camera: CameraState) => {
     if (!latest.current || latest.current.activeReviewId) return;
     void run("save_camera", { camera, topologyRevision: latest.current.topologyRevision });
   }, [run]);
   const chooseView = useCallback((preset: ViewPreset) => { void run("set_view", { preset }); }, [run]);
   const rendered = useCallback((report: Parameters<ViewerHost["reportRendered"]>[0]) => host.reportRendered(report), [host]);
-  async function setAutoCopy(enabled: boolean) {
-    copySequence.current++;
-    host.cancelPendingCopy();
-    setCopyStatus({ kind: "idle", message: "", text: "" });
-    setPendingAutoCopy(enabled);
-    await run("set_auto_copy", { enabled });
-    setPendingAutoCopy(null);
-  }
-  function copySelection(id: string, faceId?: string, edgeId?: string) {
-    if (!model) return;
-    const sequence = ++copySequence.current;
-    const result = host.copyReference(model, id, faceId, edgeId);
-    setCopyStatus({ kind: "pending", message: "Copying reference...", text: "" });
-    void result.then(({ prepared, result: outcome }) => {
-      if (sequence !== copySequence.current) return;
-      setCopyStatus(outcome.ok
-        ? { kind: "copied", message: `Copied ${prepared.title}`, text: prepared.text }
-        : { kind: "blocked", message: outcome.error, text: prepared.text });
-    }, (failure: Error) => {
-      if (sequence !== copySequence.current) return;
-      setCopyStatus({ kind: "idle", message: "", text: "" });
-      setError(`Reference was not copied: ${failure.message}`);
-    });
-    return result;
-  }
-  function select(id: string, faceId?: string, edgeId?: string) {
-    if (latest.current?.activeReviewId) return;
-    copySequence.current++;
-    host.cancelPendingCopy();
-    setCopyStatus({ kind: "idle", message: "", text: "" });
-    if (!id) { run("select_parts", { ids: [] }); return; }
-    if (!model || model.topologyRevision !== state?.topologyRevision || model.source.name !== state.modelName || state.loading) {
-      setError("The displayed model is updating. Select the geometry again when loading finishes.");
-      return;
-    }
-    try {
-      const copied = (pendingAutoCopy ?? latest.current?.autoCopy ?? true) ? copySelection(id, faceId, edgeId) : undefined;
-      const sequence = copySequence.current;
-      run(edgeId ? "select_edge" : faceId ? "select_face" : "select_parts", edgeId
-        ? { id, edgeId, topologyRevision: model.topologyRevision } : faceId
-        ? { id, faceId, topologyRevision: model.topologyRevision }
-        : { ids: [id], topologyRevision: model.topologyRevision }, (failure) => {
-          if (!copied) return;
-          void copied.then(({ result }) => {
-            if (sequence === copySequence.current && result.ok) setError(`Reference copied, but the selection could not be saved: ${failure.message}`);
-          }, () => undefined);
-        });
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    }
-  }
   const leaves = model?.nodes.filter((node) => node.partId) || [];
   const selected = leaves.find((node) => state?.selectedIds.includes(node.id));
   const selectedPart = model?.parts.find((part) => part.id === selected?.partId);
@@ -203,7 +117,6 @@ export function App({ host }: { host: ViewerHost }) {
   const ready = model && state && model.topologyRevision === state.topologyRevision && model.source.name === state.modelName;
   const loading = !state || state.loading;
   const busy = loading || !ready;
-  const autoCopyEnabled = pendingAutoCopy ?? state?.autoCopy ?? true;
   const drawingActive = reviews.active;
   const activeReview = reviews.review;
   useEffect(() => {
@@ -359,7 +272,7 @@ export function App({ host }: { host: ViewerHost }) {
         </div>
         <div className={`reference-bar ${copyStatus.kind}`} aria-label="Chat references" data-copy-status={copyStatus.kind}>
         <label><input type="checkbox" role="switch" checked={autoCopyEnabled}
-          aria-label="Auto-copy reference" disabled={!state || drawingActive || pendingAutoCopy !== null} onChange={(event) => void setAutoCopy(event.target.checked)} />
+          aria-label="Auto-copy reference" disabled={!state || drawingActive || autoCopyPending} onChange={(event) => void setAutoCopy(event.target.checked)} />
           Auto-copy</label>
         <IconButton label="Copy reference" icon={Copy} disabled={!selected || busy || drawingActive}
           onClick={() => selected && void copySelection(selected.id, selectedFace?.id, selectedEdge?.id)} />
@@ -371,7 +284,7 @@ export function App({ host }: { host: ViewerHost }) {
         {drawingActive && activeReview && <span className="status-detail">{activeReview.drawing.present.length} marks</span>}
       </div>
       {referenceText && !drawingActive && <details className="reference-details" open={referenceOpen || copyStatus.kind === "blocked"}>
-        <summary onClick={(event) => { event.preventDefault(); setReferenceOpen(false); setCopyStatus({ kind: "idle", message: "", text: referenceText }); }}>Reference text <X size={14} aria-hidden="true" /></summary>
+        <summary onClick={(event) => { event.preventDefault(); setReferenceOpen(false); dismissCopyStatus(); }}>Reference text <X size={14} aria-hidden="true" /></summary>
         <textarea ref={referenceField} aria-label="Selected CAD reference" readOnly value={referenceText} onFocus={(event) => event.currentTarget.select()} />
       </details>}
       <div className="messages">

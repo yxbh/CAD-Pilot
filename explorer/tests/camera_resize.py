@@ -3,10 +3,10 @@
 import argparse
 import json
 import math
-import time
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
+from browser_session import BrowserSession
 
 
 # Observe the actual R3F store through React's devtools contract, without a
@@ -60,27 +60,8 @@ def run(url, output):
             page.on("request", lambda request: reports.append(request.post_data_json) if request.url == url + "api/rendered" else None)
             page.goto(url)
 
-            def state():
-                response = page.request.get(url + "api/state")
-                assert response.ok, response.text()
-                return response.json()
-
-            def wait(predicate, timeout=30):
-                deadline = time.monotonic() + timeout
-                while True:
-                    current = state()
-                    if predicate(current):
-                        return current
-                    assert time.monotonic() < deadline, f"Camera did not settle: {current}; errors={errors}"
-                    page.wait_for_timeout(50)
-
-            def settled():
-                return wait(lambda current: current.get("rendered") and current["rendered"]["revision"] == current["revision"])
-
-            def command(name, data=None):
-                response = page.request.post(url + "api/command", data={"name": name, "input": data or {}})
-                assert response.ok, response.text()
-                return settled()
+            session = BrowserSession(page, url, errors)
+            state, wait, settled, command = session.state, session.wait, session.settled, session.command
 
             def changed(action):
                 revision = state()["revision"]

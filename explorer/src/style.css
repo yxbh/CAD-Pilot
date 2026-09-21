@@ -138,6 +138,8 @@ select { color: var(--text-color-default, #c3dbe1); background: var(--background
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (max-width: 360px) {
+  .mode-toolbar { height: 109px; flex-basis: 109px; }
+  .appearance-popover { top: 151px; }
   .model-toolbar .icon-control { width: 26px; flex-basis: 26px; }
   .model-toolbar .icon-button { width: 26px; }
 }

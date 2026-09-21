@@ -30,7 +30,7 @@ test("fresh cleanup measurements survive an immutable legacy cache, failed loads
     await execute(workbenchPython, ["-B", "-c",
       "import runpy, sys; runpy.run_path(sys.argv[1])['rounded_fixture'](sys.argv[2])",
       browserScript, source,
-    ], { timeout: 30_000 });
+    ], { timeout: 30_000, cwd: path.dirname(browserScript) });
     // Keep this cache independent of other tests converting the same synthetic shape.
     await writeFile(source, Buffer.concat([await readFile(source), Buffer.from(`\n/* ${viewId} */\n`)]));
     const open = (id = viewId, file) => createExplorerServer({

@@ -22,4 +22,4 @@ dev = ["pytest", "pyyaml"]
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "explorer/tests"]

@@ -2,13 +2,13 @@ import argparse
 import io
 import json
 import math
-import time
 from pathlib import Path
 
 from PIL import Image, ImageChops
 from playwright.sync_api import expect, sync_playwright
 
 from browser_smoke import ReferenceMarkup
+from browser_session import BrowserSession
 
 
 def run(url, output):
@@ -22,25 +22,8 @@ def run(url, output):
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(url)
 
-            def state():
-                return page.request.get(url + "api/state").json()
-
-            def wait(predicate, timeout=30):
-                deadline = time.monotonic() + timeout
-                while True:
-                    current = state()
-                    if predicate(current):
-                        return current
-                    assert time.monotonic() < deadline, f"View did not settle: {current}; errors={errors}; alerts={page.get_by_role('alert').all_text_contents()}"
-                    page.wait_for_timeout(50)
-
-            def settled():
-                return wait(lambda current: current.get("rendered") and current["rendered"]["revision"] == current["revision"])
-
-            def command(name, data=None):
-                response = page.request.post(url + "api/command", data={"name": name, "input": data or {}})
-                assert response.ok, response.text()
-                return settled()
+            session = BrowserSession(page, url, errors)
+            state, wait, settled, command = session.state, session.wait, session.settled, session.command
 
             def toolbar(name):
                 previous = state()["revision"]

@@ -20,7 +20,7 @@ Reload project extensions, then open **CAD Explorer**. Build output and dependen
 
 The canvas accepts an explicit authorized `projectRoot`, a STEP `file` inside it, and an optional `viewId` for its remembered setup. Without a file it restores that setup, or creates the synthetic demo when none exists. The default project is the workbench checkout. Use Open STEP to import another local snapshot; the source file is not modified and its Python generator is never executed.
 
-A remembered setup includes the active model, camera, hidden/exploded parts and drawing reviews. Reopen its existing panel rather than creating a linked duplicate. V1 keeps one live panel per setup; independent `viewId` values allow side-by-side setups. Equivalent Windows path spellings resolve to the same owner. An exclusive OS lease also prevents another Explorer process from writing that setup simultaneously; on Windows, ownership is released if the process terminates.
+A remembered setup includes the active model, camera, hidden/exploded parts and drawing reviews. Reopen its existing panel rather than creating a linked duplicate. Explorer keeps one live panel per setup; independent `viewId` values allow side-by-side setups. Equivalent Windows path spellings resolve to the same owner. An exclusive OS lease also prevents another Explorer process from writing that setup simultaneously; on Windows, ownership is released if the process terminates.
 
 For a standalone browser, capture the workbench path before switching to the intended design directory:
 
@@ -85,25 +85,50 @@ To relocate a runtime directory within this checkout, stop its Explorer processe
 
 ## Validation
 
-From the workbench root:
+The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Test** task. It covers both the workbench and maintained Explorer, not the imported viewer's independent npm package. Python discovery includes `explorer/tests/test_converter.py`.
+
+Use these commands from the workbench root for narrower checks:
+
+| Scope | Command | Coverage |
+| --- | --- | --- |
+| Complete Explorer | `npm --prefix explorer test` | Core checks, then a fresh build and the browser suite |
+| Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, commands, HTTP, references, persistence, cache compatibility and ownership |
+| Browser | `npm --prefix explorer run test:browser` | Build/type-check, real selection/clipboard, camera matrices, Studio, drawing recovery, diagnostics and delayed render reports |
+| Build only | `npm --prefix explorer run build` | TypeScript and production assets |
+| Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
+
+Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run serially against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
+
+For a targeted run, build first if it uses the browser, then pass individual files to Node. For example:
 
 ```text
-npm --prefix explorer test
-npm --prefix explorer run build
-uv run pytest explorer/tests/test_converter.py -q
+node --test explorer/tests/commands.test.mjs explorer/tests/protocol.test.mjs explorer/tests/copilot-host.test.mjs
+node --test --test-concurrency=1 explorer/tests/render-reports.test.mjs explorer/tests/render-reports-browser.test.mjs
 ```
 
-Browser checks run against an isolated standalone/test view using the workbench's Python interpreter. `browser_smoke.py` checks the actual reference clipboard and picking workflow; `v2_browser.py` checks drawing/image parity and recovery; `studio_views.py` checks projection, appearance and capture; `draw_transition.py` measures fixed-layout transitions and genuine context-loss reporting; `explode_camera.py` exercises camera-preserving explosion from an orbited, panned and zoomed view. Run context-loss tests only on disposable test views.
+Name browser suites `*-browser.test.mjs` so the runner discovers them in the correct group. Shared Node fixtures own service startup/shutdown and per-view cleanup; `browser_session.py` owns state polling and settled-command checks. Scenario-specific pointer actions, assertions and delayed-response injection stay in the individual scripts. Browser evidence is written under `explorer/.local/`; retained shared model/reference snapshots follow the runtime retention policy, not blanket test cleanup.
 
-`npm test` includes the review-recovery browser checks and requires the workbench's Playwright Chromium setup. The extended live camera check is opt-in: from `explorer`, set `$env:EXPLORER_BROWSER_TESTS='1'` and run `node --test tests\camera-browser.test.mjs`. It checks R3F camera matrices and scale across panel, viewport and device-pixel-ratio changes, not just toolbar layout.
+Preserve these contracts when changing their owners:
 
-`node --test tests/import-warnings.test.mjs` checks neutral cleanup information from a native rounded STEP import, mixed real warnings, legacy unknown counts, dismissal/reopening, saved review and edge-reference continuity, invalid-import errors, and pointer/keyboard access to the explosion slider on desktop, narrow and short windows. Synthetic long warnings and legacy-normalized diagnostics are injected only into the isolated browser response, not into retained CAD data. Converter tests compare native face/edge retention and final triangle indices, exercise more than 100 legitimate degenerate edges, and retain strict failure and resource-limit checks. `diagnostics.test.mjs` and `cache-migration.test.mjs` cover bounded counters and immutable legacy-cache compatibility. `cleanup-persistence.test.mjs` checks fresh reimport over a legacy cache, provider/browser restart, failed imports, camera saves, view isolation and stale/malformed saved measurement guards.
+| Contract | Regression files in `tests/` |
+| --- | --- |
+| Exact face/edge identity, pixel-space picking, occlusion and clipboard behavior | `references.test.mjs`, `edge-picking.test.ts`, `edge-browser.test.mjs`, `viewer-browser.test.mjs` |
+| Fresh measured cleanup versus unknown historical counts; immutable caches and failed-import recovery | `model-import.test.mjs`, `diagnostics.test.mjs`, `cache-migration.test.mjs`, `cleanup-persistence-browser.test.mjs`, `test_converter.py` |
+| Warning/info panels do not obscure controls or alter camera and drawings | `import-warnings-browser.test.mjs` |
+| Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `viewer-browser.test.mjs` |
+| Review conflicts preserve unsaved local marks and other writers' data | `reviews.test.mjs`, `review-recovery-browser.test.mjs` |
+| Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
+| View ownership, file-cache invalidation and runtime relocation | `view-registry.test.mjs`, `inspection-cache.test.mjs`, `runtime-relocation.test.mjs` |
 
-`node --test tests/edge-picking.test.ts tests/edge-browser.test.mjs` checks screen-space hit tolerance, occlusion, whole-edge highlighting, real pointer picking of straight and curved edges, native-reference copying, repeated and exploded occurrences, mode switching, saved selection, drawing capture and narrow/high-DPI windows. Build first. The browser test uses the isolated synthetic STEP assembly, not a user's design. Converter tests separately check exact topology and CAD edge lengths; display polylines approximate curves and do not replace exact geometry.
+The service reports the actual rendered camera and topology revision, not just requested parameters. Browser clipboard behavior, native host chip presentation and delivery to the next user message remain separate acceptance checks. Synthetic scenarios do not certify large-assembly responsiveness, physical fit or manufacturing suitability.
 
-The service reports the actual rendered camera and topology revision, not just the last requested parameters. Preserve targeted checks for camera resize, service ownership, inspection cache invalidation and drawing conflicts as these surfaces change. A small synthetic demo is not evidence of large-assembly responsiveness or certification.
+## Maintenance boundaries
 
-`node --test tests/render-reports.test.mjs` checks delayed render reports across synthetic STEP switches and view changes, including responses arriving after renderer teardown. Well-formed older reports return `accepted: false` with `reason: "superseded_view"` without changing saved state or satisfying current render/capture requests. Malformed identities or cameras, future revisions and current-model mismatches remain errors. Superseded renderer callbacks cannot replace current messages; genuine current-render and failed-import errors remain visible. Build first; the tests use disposable local fixtures and an isolated service, not a user's open model.
+`shared/commands.mjs` owns canvas action schemas and revision/render/review policies. The host adapter projects those definitions into SDK actions; server handlers still validate model identity, geometry, cameras and stored data in context. HTTP inputs and canvas schemas are deliberately not interchangeable. Reads and snapshot loads retain their existing revision semantics; explicit draft attachment and camera persistence require a current revision.
+
+`server/model-import.mjs` prepares a validated source snapshot and immutable geometry cache without mutating the live view. `server.mjs` publishes the new model only after saving its view metadata. Failed conversion leaves the prior snapshot available; transient conversion JSON is removed without deleting retained caches.
+
+Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, and `useRenderReports` scopes queued sends and failures to the active model/view. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
 
 ## Limits
 

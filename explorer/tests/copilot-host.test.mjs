@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { startCopilotExplorer } from "../hosts/copilot.mjs";
 import { workbenchRoot } from "../server/paths.mjs";
+import { COMMANDS } from "../shared/commands.mjs";
 
 class CanvasError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -45,6 +46,8 @@ test("maintained host registers one inspection tool for exact references", async
     assert.equal(new Set(canvas.actions.map((action) => action.name)).size, canvas.actions.length);
     assert.deepEqual(canvas.actions.find((action) => action.name === "select_edge").inputSchema.required, ["id", "edgeId", "topologyRevision"]);
     assert.deepEqual(canvas.actions.find((action) => action.name === "set_selection_mode").inputSchema.properties.mode.enum, ["face", "edge", "part"]);
+    assert.deepEqual(canvas.actions.map((action) => action.name), Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas));
+    for (const action of canvas.actions) assert.deepEqual(action.inputSchema, COMMANDS[action.name].inputSchema);
   } finally { await provider.shutdown(); }
 });
 
@@ -63,6 +66,10 @@ test("host routes actions, retains one panel per setup and waits for actual rend
     assert.deepEqual(calls.at(-1), ["select_edge", edge, { rendered: true }]);
     assert.equal(calls.find((item) => item[0] === "get_state")[2].rendered, false);
     assert.deepEqual(await invoke("capture_image"), { path: "capture.png" });
+    for (const action of canvas.actions.filter((action) => action.name !== "capture_image")) {
+      await invoke(action.name);
+      assert.equal(calls.at(-1)[2].rendered, COMMANDS[action.name].render === "live", action.name);
+    }
     await canvas.onClose({ instanceId: "existing" });
     await assert.rejects(invoke("get_state"), (error) => error.code === "not_open");
   } finally { await provider.shutdown(); }

@@ -6,16 +6,14 @@ Personal workbench for conversational CAD design and 3D-print preparation with G
 
 The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
 
-Prerequisites: Windows or macOS, Git, uv, and Node.js 22.12+ or 24. PowerShell 7 is needed for the PowerShell examples. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
+Prerequisites: Windows or macOS, Git, uv, and Node.js 22.18+ or 24+. Node's built-in TypeScript support is used by Explorer tests. PowerShell 7 is needed for the PowerShell examples. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
 
 ```text
 uv sync
-npm --prefix .agents/skills/cad/explorer ci
 uv run python -m playwright install chromium
-uv run pytest -q
 ```
 
-Run setup from the workbench root. Playwright Chromium is needed for browser checks and the imported render commands, not for STEP generation. A VS Code task is available for tests. Installing/running third-party tools executes code; this is not a sandbox.
+Run setup from the workbench root. Playwright Chromium is needed for browser checks and the imported render commands, not for STEP generation. Installing/running third-party tools executes code; this is not a sandbox.
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled with dependency versions and integrity hashes preserved; a documented local patch omits private registry URLs and prevents registry-resolved URLs from being written back.
 
@@ -32,7 +30,9 @@ Commit `explorer/package.json`, but keep its `package-lock.json` local and Git-i
 
 Prepare source releases from tracked files, such as a Git archive, rather than zipping the working directory. Local locks, runtime data and caches are not release content.
 
-Reload project extensions and open **CAD Explorer**. See its [workflow and local-data guidance](explorer/README.md#local-data) before moving or removing saved references and drawings.
+Reload project extensions and open **CAD Explorer**. Its [README](explorer/README.md) owns build/open, viewer behavior and local-data guidance. Preserve useful saved references and drawings before moving or removing runtime data.
+
+Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Test** task runs the same command. The imported browser viewer is independent: install it with `npm --prefix .agents/skills/cad/explorer ci` when using that fallback, and use its separate checks below.
 
 `AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
 
@@ -48,7 +48,7 @@ Invoke the imported tools with the workbench's Python interpreter, while keeping
 
 ```powershell
 $Workbench = $PWD.Path
-$Python = Join-Path $Workbench '.venv/Scripts/python.exe'
+$Python = if ($IsWindows) { Join-Path $Workbench '.venv/Scripts/python.exe' } else { Join-Path $Workbench '.venv/bin/python' }
 $Cad = Join-Path $Workbench '.agents/skills/cad'
 Push-Location ../first-part
 New-Item -ItemType Directory -Path outputs -Force | Out-Null
@@ -110,8 +110,17 @@ Keep workbench content evergreen: document supported workflows, current limitati
 
 ## Validation and Limits
 
+From the workbench root, the aggregate check runs Python workbench/converter tests, Explorer core tests, a fresh type-check/build, and isolated browser scenarios:
+
+```text
+node tools/check.mjs
+```
+
+For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` builds and exercises the maintained UI. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations. A failed stage stops the aggregate command with a nonzero exit code.
+
+The imported viewer has a separate dependency lock, build and browser workflow. After relevant imported changes, follow its provenance update procedure and run:
+
 ```powershell
-uv run pytest -q
 npm --prefix .agents/skills/cad/explorer test
 npm --prefix .agents/skills/cad/explorer run build
 uv run python tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/mounting_plate.step' --output .local/viewer-check
@@ -119,7 +128,7 @@ uv run python tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/m
 
 The browser check requires the sample plate to be generated and served; use the URL printed by `ensure-dev.mjs`. It captures desktop/mobile screenshots and checks canvas pixels, camera changes, face-reference copying, and entry into draw mode.
 
-The workbench tests cover sample geometry, direct imported CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, and skill provenance. Run them after relevant changes; previous passing runs do not establish the state of a new environment. Audit viewer dependencies when reviewing updates; a clean audit is not a security certification.
+Python checks cover sample geometry, direct imported CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit viewer dependencies when reviewing updates; a clean audit is not a security certification.
 
 For the pinned viewer, prefer desktop: resizing to mobile can retain excessive zoom, and the isometric reset control can overlap the top-view control (keyboard activation is available). Recheck these limitations when updating the viewer. The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
 

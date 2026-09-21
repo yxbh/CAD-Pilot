@@ -4,11 +4,7 @@ import { createExplorerServer, inspectReference } from "../server/server.mjs";
 import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { createViewRegistry } from "../server/view-registry.mjs";
 import { pushComposerAttachment } from "../server/composer.mjs";
-import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "../shared/view-settings.mjs";
-
-const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
-const ids = { type: "array", items: { type: "string" }, maxItems: 500 };
-const revision = { type: "integer", minimum: 0 };
+import { COMMANDS, objectSchema } from "../shared/commands.mjs";
 
 export async function startCopilotExplorer({ joinSession, createCanvas, CanvasError }, {
   createService = createExplorerServer,
@@ -37,15 +33,13 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     try { return await operation(); }
     catch (error) { throw new CanvasError(error?.code || "explorer_error", error instanceof Error ? error.message : String(error)); }
   };
-  const action = (name, description, properties = {}, required = []) => ({
+  const action = ([name, { description, inputSchema, render }]) => ({
     name, description,
-    inputSchema: objectSchema({ ...properties, expectedRevision: revision }, required),
+    inputSchema,
     handler: (ctx) => translated(async () => {
       const service = registry.serviceFor(ctx.instanceId);
-      if (name === "capture_image") return service.captureImage();
-      return service.execute(name, ctx.input || {}, {
-        rendered: !["get_state", "inspect_reference", "prepare_clipboard_reference", "list_reviews", "get_review", "open_review", "close_review"].includes(name),
-      });
+      if (render === "capture") return service.captureImage();
+      return service.execute(name, ctx.input || {}, { rendered: render === "live" });
     }),
   });
   const inspectionTool = (name) => ({
@@ -68,43 +62,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
         file: { type: "string", description: "STEP path inside that root. Omit to restore this setup or load the demo." },
         viewId: { type: "string", minLength: 1, maxLength: 80, description: "Remembered setup identity, default 'default'. Reuse its existing panel rather than opening a linked copy." },
       }),
-      actions: [
-        action("get_state", "Read the model, camera, selections, saved setup and actual renderer acknowledgement."),
-        action("set_explode", "Separate parts visually without moving the camera or changing the STEP. Fit assembly separately if needed.", {
-          amount: { type: "number", minimum: 0, maximum: 1 },
-          fixedId: { type: "string", description: "Occurrence to keep fixed, or empty to clear." },
-          direction: { enum: ["radial", "x", "y", "z"] },
-        }),
-        action("select_parts", "Highlight occurrences without writing the clipboard.", { ids }, ["ids"]),
-        action("select_face", "Highlight a CAD face on the exact displayed topology, without writing the clipboard.", {
-          id: { type: "string" }, faceId: { type: "string" }, topologyRevision: { type: "string" },
-        }, ["id", "faceId", "topologyRevision"]),
-        action("select_edge", "Highlight a native CAD edge on the exact displayed topology, without writing the clipboard.", {
-          id: { type: "string" }, edgeId: { type: "string" }, topologyRevision: { type: "string" },
-        }, ["id", "edgeId", "topologyRevision"]),
-        action("set_selection_mode", "Choose face, edge or whole-part picking.", { mode: { enum: ["face", "edge", "part"] } }, ["mode"]),
-        action("set_auto_copy", "Enable clipboard copying for future user selections. Selection never inserts or sends a chat message.", { enabled: { type: "boolean" } }, ["enabled"]),
-        action("prepare_clipboard_reference", "Prepare a local exact-selection descriptor and native file-reference markup. Does not alter clipboard or chat.", { reference: { type: "string", maxLength: 16384 } }, ["reference"]),
-        action("inspect_reference", "Resolve a copied cadproto reference from the retained exact cache.", { reference: { type: "string", maxLength: 16384 } }, ["reference"]),
-        action("add_reference_to_chat", "Explicit alternative: add the current selection as a draft attachment without sending it. This is not the user-click clipboard workflow.", {}, ["expectedRevision"]),
-        action("set_visibility", "Show or hide occurrences without moving the camera.", { ids, visible: { type: "boolean" } }, ["ids", "visible"]),
-        action("isolate", "Show only one occurrence and fit it.", { id: { type: "string" } }, ["id"]),
-        action("show_all", "Show all occurrences and fit the visible assembly."),
-        action("set_view", "Fit an isometric or exact axis view: right +X, left -X, back +Y, front -Y, top +Z, bottom -Z.", { preset: { enum: VIEW_PRESETS } }, ["preset"]),
-        action("set_projection", "Switch perspective or orthographic projection while retaining viewing direction and target-plane scale.", { projection: { enum: PROJECTIONS } }, ["projection"]),
-        action("set_appearance", "Choose Inspect or Studio and a visual finish. Source CAD colors and geometry stay unchanged.", {
-          mode: { enum: ["inspect", "studio"] }, finish: { enum: MATERIAL_FINISHES }, showEdges: { type: "boolean" },
-        }),
-        action("fit_view", "Explicitly frame visible parts, including their exploded positions."),
-        action("reset_view", "Reassemble without moving the camera or changing STEP geometry."),
-        action("load_file", "Load a STEP snapshot inside the configured project root.", { file: { type: "string" } }, ["file"]),
-        action("load_demo", "Load the synthetic demonstration assembly."),
-        action("capture_image", "Save an image of the settled live view or annotated drawing, with source and pose metadata."),
-        action("list_reviews", "List saved drawing review summaries."),
-        action("get_review", "Read a review's source, captured pose and mark count without image bytes.", { id: { type: "string" } }, ["id"]),
-        action("open_review", "Open a saved drawing review; its captured camera and model pose do not move.", { id: { type: "string" } }, ["id"]),
-        action("close_review", "Return to the live model."),
-      ],
+      actions: Object.entries(COMMANDS).filter(([, definition]) => definition.canvas).map(action),
       open: (ctx) => translated(async () => {
         try { await checkBuild(); }
         catch (error) {
