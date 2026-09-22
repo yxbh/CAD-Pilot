@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectReference } from "../server/server.mjs";
 import { parseReference } from "../shared/references.mjs";
 import { runBrowser, withBrowserView } from "./browser-fixture.mjs";
 
@@ -14,7 +13,7 @@ test("CAD edges can be hovered, picked and copied through the live renderer", { 
     assert.equal(report.faceAndPartPickingPreserved, true);
     const copied = parseReference(report.edgeReference);
     assert.ok(copied.edgeId, "The browser must return an exact CAD edge reference");
-    const inspected = await inspectReference(report.edgeReference);
+    const inspected = await service.execute("inspect_reference", { reference: report.edgeReference });
     assert.equal(inspected.reference, report.edgeReference);
     assert.equal(inspected.topologyRevision, copied.topologyRevision);
     assert.equal(inspected.occurrence.id, copied.nodeId);

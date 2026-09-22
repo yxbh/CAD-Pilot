@@ -11,7 +11,7 @@ test("command revision, render and review policies remain explicit", () => {
   ]);
   assert.deepEqual(matching("render", "none"), [
     "add_reference_to_chat", "close_review", "get_review", "get_state", "inspect_reference", "list_reviews",
-    "open_review", "prepare_clipboard_reference", "save_camera",
+    "open_review", "prepare_clipboard_reference", "save_camera", "set_auto_copy",
   ]);
   assert.deepEqual(matching("duringReview", true), [
     "add_reference_to_chat", "capture_image", "close_review", "get_review", "get_state", "inspect_reference",

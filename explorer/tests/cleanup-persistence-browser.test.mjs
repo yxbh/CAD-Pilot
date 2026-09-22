@@ -5,18 +5,19 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { createExplorerServer, explorerRoot, runtimeRoot, workbenchRoot } from "../server/server.mjs";
-import { workbenchPython } from "../server/paths.mjs";
+import { explorerRoot, workbenchRoot, workbenchPython } from "../server/paths.mjs";
 import { initialState } from "../server/protocol.mjs";
 import { createReference } from "../shared/references.mjs";
+import { createTestRuntime } from "./service-fixture.mjs";
 
 const execute = promisify(execFile);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const viewKey = (id) => digest(`${workbenchRoot}\n${id}`).slice(0, 24);
-const viewFile = (id) => path.join(runtimeRoot, "views", `${viewKey(id)}.json`);
 const getModel = async (service) => (await fetch(service.url + "api/model")).json();
 
 test("fresh cleanup measurements survive an immutable legacy cache, failed loads and provider/browser reopen", { timeout: 120_000 }, async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
+  const viewFile = (id) => path.join(runtimeRoot, "views", `${viewKey(id)}.json`);
   const viewId = `cleanup-persistence-${randomUUID()}`;
   const otherView = `${viewId}-other`;
   const output = path.join(explorerRoot, ".local", viewId);

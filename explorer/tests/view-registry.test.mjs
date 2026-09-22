@@ -8,8 +8,8 @@ import path from "node:path";
 import test from "node:test";
 import { createViewRegistry } from "../server/view-registry.mjs";
 import { acquireViewOwner } from "../server/view-owner.mjs";
-import { canonicalProjectRoot, explorerRoot, runtimeRoot, workbenchRoot } from "../server/paths.mjs";
-import { createExplorerServer } from "../server/server.mjs";
+import { canonicalProjectRoot, explorerRoot, workbenchRoot } from "../server/paths.mjs";
+import { createTestRuntime } from "./service-fixture.mjs";
 
 function deferred() {
   let resolve;
@@ -126,7 +126,8 @@ test("shutdown waits for in-flight creation and rejects new opens", async () => 
   await assert.rejects(registry.open("b", options), /stopping/);
 });
 
-test("filesystem canonicalization and an OS-owned lease prevent duplicate durable writers", async () => {
+test("filesystem canonicalization and an OS-owned lease prevent duplicate durable writers", async (t) => {
+  const { createService: createExplorerServer } = await createTestRuntime(t);
   const root = await canonicalProjectRoot(workbenchRoot);
   const alternate = process.platform === "win32" ? workbenchRoot.toLowerCase() : path.join(workbenchRoot, ".");
   assert.equal(await canonicalProjectRoot(alternate), root);
@@ -140,7 +141,8 @@ test("filesystem canonicalization and an OS-owned lease prevent duplicate durabl
   await reopened.close();
 });
 
-test("view ownership tolerates temporary directories longer than Unix socket limits", { skip: process.platform === "win32" }, async () => {
+test("view ownership tolerates temporary directories longer than Unix socket limits", { skip: process.platform === "win32" }, async (t) => {
+  const { runtimeRoot } = await createTestRuntime(t);
   const deepTemporaryRoot = path.join(runtimeRoot, "temporary-directory-segment".repeat(6));
   await mkdir(deepTemporaryRoot, { recursive: true });
   const viewKey = `long-temp-${randomUUID()}`;
@@ -155,7 +157,8 @@ test("view ownership tolerates temporary directories longer than Unix socket lim
   assert.equal(Buffer.concat(output).toString(), "released");
 });
 
-test("Windows releases view ownership after the owning process is terminated", { skip: process.platform !== "win32" }, async () => {
+test("Windows releases view ownership after the owning process is terminated", { skip: process.platform !== "win32" }, async (t) => {
+  const { runtimeRoot } = await createTestRuntime(t);
   const viewKey = `crash-${randomUUID()}`;
   const moduleUrl = pathToFileURL(path.join(explorerRoot, "server", "view-owner.mjs")).href;
   const child = spawn(process.execPath, ["--input-type=module", "-e",

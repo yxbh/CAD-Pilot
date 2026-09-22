@@ -34,7 +34,7 @@ export const COMMANDS = Object.freeze({
   }, ["id", "edgeId", "topologyRevision"]),
   set_selection_mode: command("Choose face, edge or whole-part picking.", { mode: { enum: ["face", "edge", "part"] } }, ["mode"]),
   set_auto_copy: command("Enable clipboard copying for future user selections. Selection never inserts or sends a chat message.",
-    { enabled: { type: "boolean" } }, ["enabled"], { duringReview: true }),
+    { enabled: { type: "boolean" } }, ["enabled"], { duringReview: true, render: "none" }),
   prepare_clipboard_reference: read("Prepare a local exact-selection descriptor and native file-reference markup. Does not alter clipboard or chat.", { reference }, ["reference"]),
   inspect_reference: read("Resolve a copied cadproto reference from the retained exact cache.", { reference }, ["reference"]),
   add_reference_to_chat: command("Explicit alternative: add the current selection as a draft attachment without sending it. This is not the user-click clipboard workflow.",

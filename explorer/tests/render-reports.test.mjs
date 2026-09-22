@@ -12,7 +12,7 @@ const post = (service, endpoint, body) => fetch(service.url + `api/${endpoint}`,
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
-test("superseded render reports cannot write current state or acknowledge render/capture waiters", { timeout: 90_000 }, () => renderReportFixture(async ({ service, stateFile, files }) => {
+test("superseded render reports cannot write current state or acknowledge render/capture waiters", { timeout: 90_000 }, () => renderReportFixture(async ({ service, stateFile }) => {
   const original = service.getState();
   const reportA = reportFor(original);
   const oldView = service.execute("fit_view", {}, { rendered: true });
@@ -102,8 +102,6 @@ test("superseded render reports cannot write current state or acknowledge render
     });
     assert.equal(result.status, 200);
     const captured = await capture;
-    files.add(captured.path);
-    files.add(`${captured.path}.json`);
     assert.equal(captured.documentRevision, current.documentRevision);
     assert.equal(captured.topologyRevision, current.topologyRevision);
     assert.deepEqual(captured.selectedEdge, current.selectedEdge);

@@ -180,7 +180,9 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
   const controls = useRef<OrbitControls | null>(null);
   const fitted = useRef("");
   const contextLost = useRef(false);
-  const { latest, lastReported } = useRenderReports({
+  const activeView = useRef(active);
+  activeView.current = active;
+  const { invalidateReport, assertCaptureReady } = useRenderReports({
     model, state, amount, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
   });
   const cameraChanged = useRef(onCameraChange);
@@ -191,10 +193,9 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
     onError("Graphics context lost. Reload the canvas to restore the view.");
   }, () => {
     contextLost.current = false;
-    if (controls.current) controls.current.enabled = latest.current.active;
-    lastReported.current = -1;
-    invalidate();
-  }), [gl, invalidate, onError]);
+    if (controls.current) controls.current.enabled = activeView.current;
+    invalidateReport();
+  }), [gl, invalidateReport, onError]);
   useEffect(() => {
     if (controls.current) controls.current.enabled = active && !contextLost.current;
     if (active) invalidate();
@@ -203,9 +204,8 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
   useLayoutEffect(() => {
     controller.resize(size.width, size.height);
     // A viewport change needs a fresh projection report even at the same revision.
-    lastReported.current = -1;
-    invalidate();
-  }, [size.width, size.height, dpr, controller, invalidate]);
+    invalidateReport();
+  }, [size.width, size.height, dpr, controller, invalidateReport]);
 
   useLayoutEffect(() => {
     const committed = placeParts(model, state.explode, state.direction, state.fixedId);
@@ -227,7 +227,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
     orbit.target.copy(controller.target);
     orbit.enableDamping = false;
     orbit.zoomToCursor = true;
-    orbit.enabled = latest.current.active && !contextLost.current;
+    orbit.enabled = activeView.current && !contextLost.current;
     orbit.minDistance = camera.near * 10;
     orbit.maxDistance = camera.far * 0.4;
     orbit.minZoom = 0.02;
@@ -242,7 +242,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
     const ended = () => {
       controller.target.copy(orbit.target);
       const current = controller.snapshot();
-      if (latest.current.active && orbitStarted !== JSON.stringify(current)) cameraChanged.current(current);
+      if (activeView.current && orbitStarted !== JSON.stringify(current)) cameraChanged.current(current);
       orbitStarted = null;
     };
     orbit.addEventListener("change", changed);
@@ -264,12 +264,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
 
   useEffect(() => {
     registerCapture(() => {
-      if (!latest.current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
-      if (latest.current.amount !== latest.current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
-      if (lastReported.current !== latest.current.state.revision ||
-          fitted.current !== `${latest.current.state.topologyRevision}:${latest.current.state.fitNonce}`) {
-        throw new Error("The view is still updating. Capture it again once it has settled.");
-      }
+      assertCaptureReady();
       gl.render(scene, controller.camera);
       return {
         dataUrl: gl.domElement.toDataURL("image/png"), width: gl.domElement.width, height: gl.domElement.height,
@@ -277,7 +272,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
       };
     });
     return () => registerCapture(null);
-  }, [controller, gl, scene, registerCapture]);
+  }, [controller, gl, scene, registerCapture, assertCaptureReady]);
 
   return null;
 }

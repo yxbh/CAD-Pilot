@@ -55,6 +55,8 @@ Use the Faces, Edges or Parts toolbar buttons to choose what to select. Faces pr
 
 Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
 
+Changing the auto-copy preference through a canvas action acknowledges the saved preference without waiting for a render, including while a drawing review pauses the live scene. It still checks a supplied view revision and does not copy anything by itself.
+
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
 `cad_explorer_inspect` resolves these references. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
@@ -85,7 +87,7 @@ To relocate a runtime directory within this checkout, stop its Explorer processe
 
 ## Validation
 
-The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Test** task. It covers both the workbench and maintained Explorer, not the imported viewer's independent npm package. Python discovery includes `explorer/tests/test_converter.py`.
+The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Check all** task. It covers both the workbench and maintained Explorer, not the imported viewer's independent npm package. **Test Python** and **Test Explorer core** provide narrower editor tasks without launching Chromium. Python discovery includes `explorer/tests/test_converter.py`.
 
 Use these commands from the workbench root for narrower checks:
 
@@ -106,7 +108,7 @@ node --test explorer/tests/commands.test.mjs explorer/tests/protocol.test.mjs ex
 node --test --test-concurrency=1 explorer/tests/render-reports.test.mjs explorer/tests/render-reports-browser.test.mjs
 ```
 
-Name browser suites `*-browser.test.mjs` so the runner discovers them in the correct group. Shared Node fixtures own service startup/shutdown and per-view cleanup; `browser_session.py` owns state polling and settled-command checks. Scenario-specific pointer actions, assertions and delayed-response injection stay in the individual scripts. Browser evidence is written under `explorer/.local/`; retained shared model/reference snapshots follow the runtime retention policy, not blanket test cleanup.
+Name browser suites `*-browser.test.mjs` so the runner discovers them in the correct group. Shared Node fixtures own service startup/shutdown and a disposable runtime root for models, inputs, references, captures, reviews and view leases; test services and inspection use the same root. These stores are removed on success or failure, never merged with the user's durable runtime. `browser_session.py` owns state polling and settled-command checks. Scenario-specific pointer actions, assertions and delayed-response injection stay in the individual scripts. Browser evidence may be retained under `explorer/.local/`, separately from disposable runtime data.
 
 Preserve these contracts when changing their owners:
 
@@ -119,6 +121,7 @@ Preserve these contracts when changing their owners:
 | Review conflicts preserve unsaved local marks and other writers' data | `reviews.test.mjs`, `review-recovery-browser.test.mjs` |
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
 | View ownership, file-cache invalidation and runtime relocation | `view-registry.test.mjs`, `inspection-cache.test.mjs`, `runtime-relocation.test.mjs` |
+| Test storage/inspection isolation and preference-only action acknowledgement | `runtime-isolation.test.mjs`, `copilot-host.test.mjs` |
 
 The service reports the actual rendered camera and topology revision, not just requested parameters. Browser clipboard behavior, native host chip presentation and delivery to the next user message remain separate acceptance checks. Synthetic scenarios do not certify large-assembly responsiveness, physical fit or manufacturing suitability.
 
@@ -126,9 +129,11 @@ The service reports the actual rendered camera and topology revision, not just r
 
 `shared/commands.mjs` owns canvas action schemas and revision/render/review policies. The host adapter projects those definitions into SDK actions; server handlers still validate model identity, geometry, cameras and stored data in context. HTTP inputs and canvas schemas are deliberately not interchangeable. Reads and snapshot loads retain their existing revision semantics; explicit draft attachment and camera persistence require a current revision.
 
-`server/model-import.mjs` prepares a validated source snapshot and immutable geometry cache without mutating the live view. `server.mjs` publishes the new model only after saving its view metadata. Failed conversion leaves the prior snapshot available; transient conversion JSON is removed without deleting retained caches.
+`server/model-import.mjs` stages each import privately, validates it, then atomically publishes complete immutable source/cache files with same-filesystem hard links. Existing files, including a concurrent import's winner, are verified rather than overwritten. Conversion/validation failures remove only private staging data. Once published, shared artifacts are retained even if later cleanup or view-metadata persistence fails: another view may already depend on them. The local runtime filesystem must support hard links; unsupported publication fails explicitly. `server.mjs` publishes the live model only after saving its view metadata. If cleanup also fails, the original import error/code/status remains primary and the cleanup diagnostic remains visible.
 
-Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, and `useRenderReports` scopes queued sends and failures to the active model/view. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
+Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, and `useRenderReports` scopes queued sends and failures to the active model/view. Its revision bookkeeping is private; `Rig` uses named invalidation and capture-readiness operations instead of mutating report refs. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
+
+Services default to the durable runtime described above. Internal callers can supply a `runtimeRoot`; all service-owned storage, leases and reference inspection are scoped together. This is a test/service boundary, not a new canvas input or a change to existing saved paths.
 
 ## Limits
 

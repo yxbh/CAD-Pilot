@@ -17,6 +17,8 @@ Run setup from the workbench root. Playwright Chromium is needed for browser che
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled with dependency versions and integrity hashes preserved; a documented local patch omits private registry URLs and prevents registry-resolved URLs from being written back.
 
+The supported CAD API family is build123d 0.12 with OCP 7.9, declared as compatible ranges in `pyproject.toml`. The maintained converter and pinned imported CLI use APIs absent from OCP 8; adopting that family requires an explicit compatibility update rather than unconstrained resolution. When changing these ranges, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `uv run pytest -q` to cover both CAD workflows. Do not substitute a committed lock for supported API ranges.
+
 For the first-party Copilot desktop canvas, build its separate package:
 
 ```powershell
@@ -32,7 +34,7 @@ Prepare source releases from tracked files, such as a Git archive, rather than z
 
 Reload project extensions and open **CAD Explorer**. Its [README](explorer/README.md) owns build/open, viewer behavior and local-data guidance. Preserve useful saved references and drawings before moving or removing runtime data.
 
-Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Test** task runs the same command. The imported browser viewer is independent: install it with `npm --prefix .agents/skills/cad/explorer ci` when using that fallback, and use its separate checks below.
+Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Check all** task runs the same command. **Test Python** runs `uv`/pytest only, and **Test Explorer core** runs the non-browser Node checks. No default test task is imposed. The imported browser viewer is independent: install it with `npm --prefix .agents/skills/cad/explorer ci` when using that fallback, and use its separate checks below.
 
 `AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
 

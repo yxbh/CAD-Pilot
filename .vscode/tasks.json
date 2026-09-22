@@ -2,7 +2,23 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "CAD-Pilot: Test",
+      "label": "CAD-Pilot: Test Python",
+      "type": "process",
+      "command": "uv",
+      "args": ["run", "--project", "${workspaceFolder}", "pytest", "${workspaceFolder}/tests", "${workspaceFolder}/explorer/tests", "-q"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "CAD-Pilot: Test Explorer core",
+      "type": "shell",
+      "command": "npm",
+      "args": ["--prefix", "${workspaceFolder}/explorer", "run", "test:core"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "CAD-Pilot: Check all",
       "type": "process",
       "command": "node",
       "args": ["${workspaceFolder}/tools/check.mjs"],

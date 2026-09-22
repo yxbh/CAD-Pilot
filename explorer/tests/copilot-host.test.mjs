@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { startCopilotExplorer } from "../hosts/copilot.mjs";
 import { workbenchRoot } from "../server/paths.mjs";
 import { COMMANDS } from "../shared/commands.mjs";
+import { createTestRuntime, viewStateFile } from "./service-fixture.mjs";
 
 class CanvasError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -80,5 +82,48 @@ test("missing built assets give the maintained build command and do not create a
   try {
     await assert.rejects(canvas.open({ instanceId: "a", input: {} }), (error) => error.code === "not_built" && error.message.includes("npm --prefix explorer run build"));
     assert.deepEqual(calls, []);
+  } finally { await provider.shutdown(); }
+});
+
+test("auto-copy canvas actions acknowledge persisted preferences during a review without rendering", { timeout: 30_000 }, async (t) => {
+  const runtime = await createTestRuntime(t);
+  let canvas, service;
+  const viewId = "auto-copy-review";
+  const provider = await startCopilotExplorer({
+    joinSession: async (config) => { canvas = config.canvases[0]; return { log: async () => {} }; },
+    createCanvas: (value) => value,
+    CanvasError,
+  }, {
+    checkBuild: async () => {},
+    createService: async (options) => { service = await runtime.createService(options); return service; },
+  });
+  try {
+    await canvas.open({ instanceId: "review", input: { projectRoot: workbenchRoot, viewId } });
+    assert.equal(service.getState().error, "");
+    const response = await fetch(service.url + "api/reviews", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: service.getState().revision, capture: {
+        dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jM1sAAAAASUVORK5CYII=",
+        width: 1, height: 1, camera: { position: [10, -10, 10], target: [0, 0, 0], up: [0, 0, 1], fov: 42 },
+      } }),
+    });
+    assert.equal(response.status, 200);
+    const review = await response.json();
+    const change = canvas.actions.find((action) => action.name === "set_auto_copy");
+    const before = service.getState();
+    const started = performance.now();
+    const state = await change.handler({ instanceId: "review", input: { enabled: false, expectedRevision: before.revision } });
+    assert.ok(performance.now() - started < 2000, "A preference-only command must not wait for rendering");
+    assert.equal(state.autoCopy, false);
+    assert.equal(state.activeReviewId, review.id);
+    assert.equal(state.rendered, null);
+    const saved = JSON.parse(await readFile(viewStateFile(runtime.runtimeRoot, service.projectRoot, viewId), "utf8"));
+    assert.equal(saved.state.autoCopy, false);
+    await assert.rejects(change.handler({ instanceId: "review", input: { enabled: true, expectedRevision: before.revision } }),
+      (error) => error.code === "stale_view");
+    // The server also protects direct clients that unnecessarily ask for a rendered acknowledgement.
+    const direct = await service.execute("set_auto_copy", { enabled: true }, { rendered: true });
+    assert.equal(direct.autoCopy, true);
+    assert.equal(direct.activeReviewId, review.id);
   } finally { await provider.shutdown(); }
 });

@@ -11,7 +11,7 @@ import { importDiagnostics } from "../shared/diagnostics.mjs";
 import { ReviewStore, validateCamera } from "./reviews.mjs";
 import { atomicJson } from "./storage.mjs";
 import { createInspectionService } from "./inspection.mjs";
-import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
+import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot as defaultRuntimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
 import { maxStepBytes, prepareModelSnapshot, validateStepPath } from "./model-import.mjs";
 
@@ -20,7 +20,8 @@ const maxImageBytes = 12 * 1024 * 1024;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const publicError = (error) => error instanceof Error ? error.message : String(error);
 
-export const { inspectReference, prepareClipboardReference } = createInspectionService({ runtimeRoot, workbenchRoot });
+const defaultInspection = createInspectionService({ runtimeRoot: defaultRuntimeRoot, workbenchRoot });
+export const { inspectReference, prepareClipboardReference } = defaultInspection;
 
 async function readOptionalJson(file) {
   try { return JSON.parse(await readFile(file, "utf8")); }
@@ -49,19 +50,28 @@ async function jsonBody(req, limit = 100_000) {
   }
 }
 
-export async function createExplorerServer({ projectRoot = workbenchRoot, viewId = "default", file, addReferenceToChat, log = (message) => process.stderr.write(`${message}\n`) } = {}) {
+export async function createExplorerServer({
+  projectRoot = workbenchRoot, viewId = "default", file, runtimeRoot = defaultRuntimeRoot,
+  addReferenceToChat, log = (message) => process.stderr.write(`${message}\n`),
+} = {}) {
   const project = await canonicalProjectRoot(projectRoot);
   if (typeof viewId !== "string" || !viewId.length || viewId.length > 80) throw new PrototypeError("bad_view_id", "viewId must contain 1 to 80 characters");
+  const usesDefaultStorage = runtimeRoot === defaultRuntimeRoot;
+  await mkdir(runtimeRoot, { recursive: true });
+  runtimeRoot = await realpath(runtimeRoot);
+  const inspection = usesDefaultStorage
+    ? defaultInspection : createInspectionService({ runtimeRoot, workbenchRoot });
   const viewKey = hash(`${project}\n${viewId}`).slice(0, 24);
   const releaseOwner = await acquireViewOwner(runtimeRoot, viewKey);
-  try { return await startOwnedService({ project, viewKey, file, addReferenceToChat, log, releaseOwner }); }
+  try { return await startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner }); }
   catch (error) {
     await releaseOwner();
     throw error;
   }
 }
 
-async function startOwnedService({ project, viewKey, file, addReferenceToChat, log, releaseOwner }) {
+async function startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner }) {
+  const { inspectReference, prepareClipboardReference } = inspection;
   const viewDir = path.join(runtimeRoot, "views");
   const modelDir = path.join(runtimeRoot, "models");
   const uploadDir = path.join(runtimeRoot, "inputs");
@@ -165,9 +175,14 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
   async function loadFile(target, displayName, internal = false) {
     if (closed) throw new PrototypeError("closed", "Prototype has closed", 410);
     const resolved = await validateStepPath(target, internal ? await realpath(runtimeRoot) : project);
+    return loadSnapshot({ resolved, displayName });
+  }
+
+  async function loadSnapshot(source) {
+    if (closed) throw new PrototypeError("closed", "Prototype has closed", 410);
     await commit({ loading: true, error: "" });
     try {
-      const imported = await prepareModelSnapshot({ resolved, displayName, uploadDir, modelDir, python });
+      const imported = await prepareModelSnapshot({ ...source, uploadDir, modelDir, python });
       await commit({
         ...initialState(), autoCopy: state.autoCopy, documentRevision: imported.model.source.sha256,
         topologyRevision: imported.model.topologyRevision, modelName: imported.inputName, fitNonce: state.fitNonce + 1,
@@ -293,11 +308,9 @@ async function startOwnedService({ project, viewKey, file, addReferenceToChat, l
         const filename = decodeURIComponent(String(req.headers["x-file-name"] || ""));
         if (![".step", ".stp"].includes(path.extname(filename).toLowerCase())) throw new PrototypeError("not_step", "Choose a STEP file");
         const bytes = await body(req, maxStepBytes);
-        const target = path.join(uploadDir, `${hash(bytes)}.step`);
-        await writeFile(target, bytes);
         const loaded = await enqueue(() => {
           if (state.activeReviewId) throw new PrototypeError("review_active", "Return to the model before opening another STEP", 409);
-          return loadFile(target, path.basename(filename), true);
+          return loadSnapshot({ bytes, displayName: path.basename(filename) });
         });
         return respond(200, loaded);
       }

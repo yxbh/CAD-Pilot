@@ -1,5 +1,5 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { Matrix4, Vector3 } from "three";
 import { center, mergeBounds, type Model, type Placement, type ViewState } from "./model.ts";
 import type { RenderReport } from "./host.ts";
@@ -31,6 +31,19 @@ export function useRenderReports({ model, state, amount, active, placements, res
     return () => { lifetime.active = false; };
   }, [model, state.revision, active]);
   useEffect(() => { if (active) invalidate(); }, [state.revision, placements, active, invalidate]);
+  const invalidateReport = useCallback(() => {
+    lastReported.current = -1;
+    invalidate();
+  }, [invalidate]);
+  const assertCaptureReady = useCallback(() => {
+    const current = latest.current;
+    if (!current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
+    if (current.amount !== current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
+    if (lastReported.current !== current.state.revision ||
+        fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) {
+      throw new Error("The view is still updating. Capture it again once it has settled.");
+    }
+  }, [contextLost, fitted]);
 
   useFrame(() => {
     const current = latest.current;
@@ -90,5 +103,5 @@ export function useRenderReports({ model, state, amount, active, placements, res
       void onRendered(report).catch((error: Error) => { if (lifetime.active) onError(error.message); });
     });
   });
-  return { latest, lastReported };
+  return { invalidateReport, assertCaptureReady };
 }

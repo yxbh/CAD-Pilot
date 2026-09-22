@@ -3,9 +3,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createExplorerServer, runtimeRoot, workbenchRoot } from "../server/server.mjs";
+import { workbenchRoot } from "../server/paths.mjs";
+import { createTestRuntime } from "./service-fixture.mjs";
 
-test("rendered projection and appearance persist across provider restart without changing the view revision", async () => {
+test("rendered projection and appearance persist across provider restart without changing the view revision", async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
   const viewId = `presentation-${randomUUID()}`;
   const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
   const stateFile = path.join(runtimeRoot, "views", `${key}.json`);
