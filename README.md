@@ -17,7 +17,7 @@ Run setup from the workbench root. Playwright Chromium is needed for browser che
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled with dependency versions and integrity hashes preserved; a documented local patch omits private registry URLs and prevents registry-resolved URLs from being written back.
 
-The supported CAD API family is build123d 0.12 with OCP 7.9, declared as compatible ranges in `pyproject.toml`. The maintained converter and pinned imported CLI use APIs absent from OCP 8; adopting that family requires an explicit compatibility update rather than unconstrained resolution. When changing these ranges, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `uv run pytest -q` to cover both CAD workflows. Do not substitute a committed lock for supported API ranges.
+The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The pinned imported CLI has a provenance-recorded local API patch, not a silent upstream refresh. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes the imported common/export tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
 
 For the first-party Copilot desktop canvas, build its separate package:
 
@@ -92,6 +92,8 @@ The imported `ensure-dev.mjs` command prints a loopback URL scoped to the select
 3. Ask the agent to confirm the region or show rough alternatives before an ambiguous edit. State what must remain unchanged.
 4. Keep useful decisions and feedback with the project's existing notes. Include the model revision and relevant screenshot/reference so a later session can interpret them. No separate review form is required; re-resolve selections after geometry changes.
 
+Regenerating STEP and sidecars with a different exporter or CAD kernel can change assembly hierarchy and imported `@cad` occurrence selectors even when physical geometry remains equivalent. Keep the artifact revision with a copied reference and re-inspect the regenerated artifact; do not translate old selector paths by adding or removing an assumed hierarchy level.
+
 There is no automatic chat-selection bridge. Your live browser selection or drawing is not visible to the agent until you send a reference or screenshot. Check that annotations appear in the shared image. Confirm printer, nozzle, material, loads, and fit allowances when they affect the design.
 
 ## FDM Design Guidance
@@ -130,7 +132,7 @@ uv run python tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/m
 
 The browser check requires the sample plate to be generated and served; use the URL printed by `ensure-dev.mjs`. It captures desktop/mobile screenshots and checks canvas pixels, camera changes, face-reference copying, and entry into draw mode.
 
-Python checks cover sample geometry, direct imported CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit viewer dependencies when reviewing updates; a clean audit is not a security certification.
+Python checks cover sample geometry, direct imported CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, imported common/export behavior and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit viewer dependencies when reviewing updates; a clean audit is not a security certification.
 
 For the pinned viewer, prefer desktop: resizing to mobile can retain excessive zoom, and the isometric reset control can overlap the top-view control (keyboard activation is available). Recheck these limitations when updating the viewer. The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
 

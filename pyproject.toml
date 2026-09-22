@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Personal agentic CAD workbench with visual review and geometric checks"
 requires-python = ">=3.12"
 dependencies = [
-    "build123d>=0.12,<0.13",
-    "cadquery-ocp-novtk>=7.9,<8",
+    "build123d>=0.13",
+    "cadquery-ocp-novtk>=8",
     "ezdxf",
     "lxml",
     "networkx",
@@ -23,4 +23,5 @@ dev = ["pytest", "pyyaml"]
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "explorer/tests"]
+pythonpath = [".agents/skills/cad/scripts"]
+testpaths = ["tests", "explorer/tests", ".agents/skills/cad/scripts/common/tests"]

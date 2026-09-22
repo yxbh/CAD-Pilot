@@ -15,6 +15,7 @@ from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher, Sequence_TDF_Label
 from OCP.GCPnts import GCPnts_QuasiUniformDeflection
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
@@ -23,7 +24,7 @@ from OCP.STEPControl import STEPControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.Quantity import Quantity_ColorRGBA
-from OCP.TDF import TDF_ChildIterator, TDF_Label, TDF_LabelSequence
+from OCP.TDF import TDF_ChildIterator, TDF_Label
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import (
     TopAbs_EDGE,
@@ -35,7 +36,6 @@ from OCP.TopAbs import (
 )
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.TopoDS import TopoDS, TopoDS_Compound
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import (
@@ -203,11 +203,10 @@ def _bbox_from_shape(shape: Any) -> dict[str, Any]:
     BRepBndLib.AddOptimal_s(shape, box, False, False)
     if box.IsVoid():
         return _bbox_from_points([])
-    min_x, min_y, min_z, max_x, max_y, max_z = box.Get()
     return _bbox_from_points(
         [
-            [min_x, min_y, min_z],
-            [max_x, max_y, max_z],
+            list(box.CornerMin().Coord()),
+            list(box.CornerMax().Coord()),
         ]
     )
 
@@ -517,7 +516,7 @@ def _extract_edge_points_from_curve(edge: Any, deflection: float, max_points: in
         vertex_points = []
         explorer = TopExp_Explorer(edge, TopAbs_VERTEX)
         while explorer.More():
-            vertex = TopoDS.Vertex_s(explorer.Current())
+            vertex = TopoDS.Vertex(explorer.Current())
             vertex_points.append(_point_from_occ(BRep_Tool.Pnt_s(vertex)))
             explorer.Next()
         points = vertex_points
@@ -717,7 +716,7 @@ def _face_color_map_from_label(shape_tool: Any, color_tool: Any, label: object) 
             if shape is not None and not shape.IsNull():
                 explorer = TopExp_Explorer(shape, TopAbs_FACE)
                 while explorer.More():
-                    face_colors[_shape_hash(TopoDS.Face_s(explorer.Current()))] = label_color
+                    face_colors[_shape_hash(TopoDS.Face(explorer.Current()))] = label_color
                     explorer.Next()
         iterator = TDF_ChildIterator(colored_label, False)
         while iterator.More():
@@ -729,10 +728,10 @@ def _face_color_map_from_label(shape_tool: Any, color_tool: Any, label: object) 
 
 
 def _xcaf_children(shape_tool: Any, label: object, resolved_label: object) -> list[object]:
-    children = TDF_LabelSequence()
+    children = Sequence_TDF_Label()
     has_children = XCAFDoc_ShapeTool.GetComponents_s(label, children, False)
     if (not has_children or children.Length() <= 0) and resolved_label != label:
-        children = TDF_LabelSequence()
+        children = Sequence_TDF_Label()
         has_children = XCAFDoc_ShapeTool.GetComponents_s(resolved_label, children, False)
     if not has_children or children.Length() <= 0:
         return []
@@ -786,7 +785,7 @@ def _load_occurrence_tree_from_xcaf_doc(
 
     shape_tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     color_tool = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
-    free_labels = TDF_LabelSequence()
+    free_labels = Sequence_TDF_Label()
     shape_tool.GetFreeShapes(free_labels)
     if free_labels.Length() <= 0:
         return None
@@ -1056,8 +1055,8 @@ def _edge_ordinals_from_shape(shape: Any, edge_ord_by_hash: dict[int, int]) -> l
 
 
 def _prototype_shape_entries(root_shape: Any) -> tuple[str, list[dict[str, Any]], dict[int, int], dict[int, int]]:
-    solid_map = TopTools_IndexedMapOfShape()
-    shell_map = TopTools_IndexedMapOfShape()
+    solid_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    shell_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapes_s(root_shape, TopAbs_SOLID, solid_map)
     TopExp.MapShapes_s(root_shape, TopAbs_SHELL, shell_map)
 
@@ -1085,8 +1084,8 @@ def _prototype_shape_entries(root_shape: Any) -> tuple[str, list[dict[str, Any]]
 
 
 def _extract_summary_prototype(root_shape: Any, options: SelectorOptions) -> dict[str, Any]:
-    face_map = TopTools_IndexedMapOfShape()
-    edge_map = TopTools_IndexedMapOfShape()
+    face_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    edge_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapes_s(root_shape, TopAbs_FACE, face_map)
     TopExp.MapShapes_s(root_shape, TopAbs_EDGE, edge_map)
     kind, shape_entries, _face_to_shape, _edge_to_shape = _prototype_shape_entries(root_shape)
@@ -1115,8 +1114,8 @@ def _extract_refs_prototype(
             True,
         )
 
-    face_map = TopTools_IndexedMapOfShape()
-    edge_map = TopTools_IndexedMapOfShape()
+    face_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    edge_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapes_s(root_shape, TopAbs_FACE, face_map)
     TopExp.MapShapes_s(root_shape, TopAbs_EDGE, edge_map)
     face_ord_by_hash = {_shape_hash(face_map.FindKey(index)): index for index in range(1, face_map.Extent() + 1)}
@@ -1141,7 +1140,7 @@ def _extract_refs_prototype(
     face_edge_ordinals: dict[int, list[int]] = {}
     edge_face_ordinals: dict[int, list[int]] = {}
     for face_ordinal in range(1, face_map.Extent() + 1):
-        face = TopoDS.Face_s(face_map.FindKey(face_ordinal))
+        face = TopoDS.Face(face_map.FindKey(face_ordinal))
         edge_ordinals = _edge_ordinals_from_shape(face, edge_ord_by_hash)
         face_edge_ordinals[face_ordinal] = edge_ordinals
         for edge_ordinal in edge_ordinals:
@@ -1152,7 +1151,7 @@ def _extract_refs_prototype(
     total_face_area = 0.0
     faces: list[dict[str, Any]] = []
     for face_ordinal in range(1, face_map.Extent() + 1):
-        face = TopoDS.Face_s(face_map.FindKey(face_ordinal))
+        face = TopoDS.Face(face_map.FindKey(face_ordinal))
         surface = BRepAdaptor_Surface(face)
         geometry = _extract_face_geometry(face)
         face_boxes[face_ordinal] = geometry["bbox"]
@@ -1188,7 +1187,7 @@ def _extract_refs_prototype(
     edge_boxes: dict[int, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
     for edge_ordinal in range(1, edge_map.Extent() + 1):
-        edge = TopoDS.Edge_s(edge_map.FindKey(edge_ordinal))
+        edge = TopoDS.Edge(edge_map.FindKey(edge_ordinal))
         curve = BRepAdaptor_Curve(edge)
         points: list[list[float]] = []
         for face_ordinal in edge_face_ordinals.get(edge_ordinal, []):
@@ -1202,7 +1201,7 @@ def _extract_refs_prototype(
         total_edge_length += length
         bbox = _bbox_from_points(points)
         edge_boxes[edge_ordinal] = bbox
-        seam = any(BRep_Tool.IsClosed_s(edge, TopoDS.Face_s(face_map.FindKey(face_ordinal))) for face_ordinal in edge_face_ordinals.get(edge_ordinal, []))
+        seam = any(BRep_Tool.IsClosed_s(edge, TopoDS.Face(face_map.FindKey(face_ordinal))) for face_ordinal in edge_face_ordinals.get(edge_ordinal, []))
         degenerated = bool(BRep_Tool.Degenerated_s(edge))
         edge_data = {
             "ordinal": edge_ordinal,

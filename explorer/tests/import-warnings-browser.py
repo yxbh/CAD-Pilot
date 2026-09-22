@@ -20,7 +20,7 @@ def rounded_fixture(path):
     fillet = BRepFilletAPI_MakeFillet(box)
     edges = TopExp_Explorer(box, TopAbs_EDGE)
     while edges.More():
-        fillet.Add(2, TopoDS.Edge_s(edges.Current()))
+        fillet.Add(2, TopoDS.Edge(edges.Current()))
         edges.Next()
     fillet.Build()
     assert fillet.IsDone()
