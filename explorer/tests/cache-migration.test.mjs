@@ -4,15 +4,17 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createExplorerServer, explorerRoot, workbenchRoot, runtimeRoot } from "../server/server.mjs";
-import { workbenchPython } from "../server/paths.mjs";
+import { explorerRoot, workbenchRoot, workbenchPython } from "../server/paths.mjs";
 import { initialState, topologyRevision } from "../server/protocol.mjs";
 import { createReference } from "../shared/references.mjs";
+import { createTestRuntime } from "./service-fixture.mjs";
 
-test("saved part-only snapshots regenerate with face maps and clear stale selection", async () => {
+test("saved part-only snapshots regenerate with face maps and clear stale selection", async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
+  const projectRoot = runtimeRoot;
   const runtime = runtimeRoot;
   const viewId = `migration-${randomUUID()}`;
-  const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
+  const key = createHash("sha256").update(`${projectRoot}\n${viewId}`).digest("hex").slice(0, 24);
   const legacyKey = createHash("sha256").update(viewId).digest("hex");
   const stateFile = path.join(runtime, "views", `${key}.json`);
   const legacyFile = path.join(runtime, "models", `${legacyKey}.json`);
@@ -34,7 +36,7 @@ test("saved part-only snapshots regenerate with face maps and clear stale select
   const logs = [];
   const added = [];
   let service = await createExplorerServer({
-    projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message),
+    projectRoot, viewId, log: (message) => logs.push(message),
     addReferenceToChat: async (attachment) => { added.push(attachment); },
   });
 
@@ -88,7 +90,7 @@ test("saved part-only snapshots regenerate with face maps and clear stale select
     model.source.name = "Same bytes opened under a different filename.step";
     await writeFile(path.join(runtime, "models", `${model.topologyRevision}.json`), JSON.stringify(model));
     await service.close();
-    service = await createExplorerServer({ projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message) });
+    service = await createExplorerServer({ projectRoot, viewId, log: (message) => logs.push(message) });
     await service.initialize();
     const restored = await (await fetch(service.url + "api/model")).json();
     assert.equal(restored.source.name, retainedName);
@@ -100,7 +102,8 @@ test("saved part-only snapshots regenerate with face maps and clear stale select
   }
 });
 
-test("face-only schema-2 caches regenerate edges without changing retained references, then persist exact edge selection", async () => {
+test("face-only schema-2 caches regenerate edges without changing retained references, then persist exact edge selection", async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
   const viewId = `edges-migration-${randomUUID()}`;
   const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
   const stateFile = path.join(runtimeRoot, "views", `${key}.json`);
@@ -199,7 +202,8 @@ test("face-only schema-2 caches regenerate edges without changing retained refer
   }
 });
 
-test("legacy cleanup normalizes on reopen without rewriting topology, descriptors or saved reviews", async () => {
+test("legacy cleanup normalizes on reopen without rewriting topology, descriptors or saved reviews", async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
   const viewId = `cleanup-migration-${randomUUID()}`;
   const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
   const stateFile = path.join(runtimeRoot, "views", `${key}.json`);

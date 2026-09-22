@@ -138,7 +138,7 @@ def _format_number(value: float) -> str:
 def _iter_shape_face_meshes(shape: object):
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     while explorer.More():
-        face = TopoDS.Face_s(explorer.Current())
+        face = TopoDS.Face(explorer.Current())
         location = TopLoc_Location()
         triangulation = BRep_Tool.Triangulation_s(face, location)
         if triangulation is not None:

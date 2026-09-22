@@ -2,13 +2,13 @@ import argparse
 import hashlib
 import io
 import json
-import time
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
 from PIL import Image, ImageChops
 from playwright.sync_api import expect, sync_playwright
+from browser_session import BrowserSession
 
 
 class ReferenceMarkup(HTMLParser):
@@ -34,25 +34,8 @@ def run(url, output):
             page.on("request", lambda request: draft_requests.append(request.url) if any(endpoint in request.url for endpoint in ("/add-reference", "/send-selection")) else None)
             page.goto(url)
 
-            def state():
-                return page.request.get(url + "api/state").json()
-
-            def wait_state(predicate, timeout=30):
-                deadline = time.monotonic() + timeout
-                while True:
-                    current = state()
-                    if predicate(current):
-                        return current
-                    assert time.monotonic() < deadline, f"State did not settle: {current}"
-                    page.wait_for_timeout(50)
-
-            def settled():
-                return wait_state(lambda current: current.get("rendered") and current["rendered"]["revision"] == current["revision"])
-
-            def api_command(name, value=None):
-                response = page.request.post(url + "api/command", data={"name": name, "input": value or {}})
-                assert response.status == 200, response.text()
-                return settled()
+            session = BrowserSession(page, url, errors)
+            state, wait_state, settled, api_command = session.state, session.wait, session.settled, session.command
 
             def copied():
                 expect(page.locator(".reference-bar")).to_have_attribute("data-copy-status", "copied")
@@ -190,7 +173,7 @@ def run(url, output):
             page.get_by_role("button", name="Reassemble", exact=True).click()
             wait_state(lambda current: current["explode"] == 0)
             assert settled()["rendered"]["positions"] == original["rendered"]["positions"]
-            page.set_viewport_size({"width": 390, "height": 850})
+            session.resize(390, 850)
             api_command("fit_view")
             assert settled()["rendered"]["inFrame"]
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

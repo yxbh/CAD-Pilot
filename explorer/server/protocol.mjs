@@ -1,4 +1,5 @@
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "../shared/view-settings.mjs";
+import { commandDefinition } from "../shared/commands.mjs";
 
 export class PrototypeError extends Error {
   constructor(code, message, status = 400) {
@@ -21,9 +22,7 @@ export function initialState() {
 
 export function changeView(state, model, name, input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PrototypeError("bad_input", "Command input must be an object");
-  if (input.expectedRevision !== undefined && input.expectedRevision !== state.revision) {
-    throw new PrototypeError("stale_view", "The view changed. Refresh state and retry.", 409);
-  }
+  validateCommandRevision(state, name, input.expectedRevision);
   if (input.topologyRevision !== undefined && input.topologyRevision !== model?.topologyRevision) {
     throw new PrototypeError("stale_topology", "This reference belongs to an older model. Select the geometry again.", 409);
   }
@@ -155,6 +154,15 @@ export function changeView(state, model, name, input = {}) {
       throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
   }
   return next;
+}
+
+export function validateCommandRevision(state, name, expectedRevision, message = "The view changed. Refresh state and retry.") {
+  const definition = commandDefinition(name);
+  if (!definition) throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
+  if (definition.revision !== "unchecked" && (definition.revision === "required" || expectedRevision !== undefined) &&
+      expectedRevision !== state.revision) {
+    throw new PrototypeError("stale_view", message, 409);
+  }
 }
 
 function topologyDigest(model, conversionVersion) {

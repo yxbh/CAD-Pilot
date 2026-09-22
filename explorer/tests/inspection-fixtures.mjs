@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInspectionService } from "../server/inspection.mjs";
@@ -31,7 +32,7 @@ export function inspectionModel(sha256, triangles = 2) {
 }
 
 export async function inspectionFixture(t, { triangles = 2, sourceBytes = 512, cacheLimits, io } = {}) {
-  const runtimeRoot = path.join(workbenchRoot, ".local", "inspection-tests", randomUUID());
+  const runtimeRoot = await mkdtemp(path.join(os.tmpdir(), "cad-inspection-test-"));
   await mkdir(path.join(runtimeRoot, "inputs"), { recursive: true });
   await mkdir(path.join(runtimeRoot, "models"), { recursive: true });
   t.after(() => rm(runtimeRoot, { recursive: true, force: true }));

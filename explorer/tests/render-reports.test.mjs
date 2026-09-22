@@ -1,17 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 import test from "node:test";
-import { createExplorerServer, explorerRoot, runtimeRoot } from "../server/server.mjs";
-import { workbenchPython } from "../server/paths.mjs";
+import { renderReportFixture } from "./render-report-fixture.mjs";
 
-const execute = promisify(execFile);
-const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const script = path.join(explorerRoot, "tests", "render-reports-browser.py");
 const camera = { position: [40, -50, 60], target: [1, 2, 3], up: [0, 0, 1], fov: 42 };
 const reportFor = (state) => ({
   revision: state.revision, modelHash: state.documentRevision, topologyRevision: state.topologyRevision, camera,
@@ -20,40 +12,7 @@ const post = (service, endpoint, body) => fetch(service.url + `api/${endpoint}`,
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
 });
 
-async function fixture(run) {
-  const local = path.join(explorerRoot, ".local");
-  await mkdir(local, { recursive: true });
-  const root = await mkdtemp(path.join(local, "render-reports-"));
-  let service;
-  const files = new Set();
-  try {
-    await execute(workbenchPython, ["-B", script, "--output", root, "--fixtures-only"], { timeout: 60_000, cwd: root });
-    service = await createExplorerServer({ projectRoot: root, file: "a.step", log: () => {} });
-    const key = digest(`${service.projectRoot}\ndefault`).slice(0, 24);
-    const stateFile = path.join(runtimeRoot, "views", `${key}.json`);
-    files.add(stateFile);
-    // Import both fixtures once so every test-owned cache/snapshot is known for cleanup.
-    await service.initialize();
-    assert.equal(service.getState().error, "");
-    const remember = () => {
-      const state = service.getState();
-      files.add(path.join(runtimeRoot, "models", `${state.topologyRevision}.json`));
-      files.add(path.join(runtimeRoot, "inputs", `${state.documentRevision}.step`));
-    };
-    remember();
-    await service.execute("load_file", { file: "b.step" });
-    remember();
-    await service.execute("load_file", { file: "a.step" });
-    files.add(path.join(runtimeRoot, "inputs", `${digest(await readFile(path.join(root, "broken.step")))}.step`));
-    await run({ service, root, stateFile, files });
-  } finally {
-    await service?.close();
-    await Promise.all([...files].map((file) => rm(file, { force: true })));
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
-test("superseded render reports cannot write current state or acknowledge render/capture waiters", { timeout: 90_000 }, () => fixture(async ({ service, stateFile, files }) => {
+test("superseded render reports cannot write current state or acknowledge render/capture waiters", { timeout: 90_000 }, () => renderReportFixture(async ({ service, stateFile }) => {
   const original = service.getState();
   const reportA = reportFor(original);
   const oldView = service.execute("fit_view", {}, { rendered: true });
@@ -143,8 +102,6 @@ test("superseded render reports cannot write current state or acknowledge render
     });
     assert.equal(result.status, 200);
     const captured = await capture;
-    files.add(captured.path);
-    files.add(`${captured.path}.json`);
     assert.equal(captured.documentRevision, current.documentRevision);
     assert.equal(captured.topologyRevision, current.topologyRevision);
     assert.deepEqual(captured.selectedEdge, current.selectedEdge);
@@ -166,12 +123,4 @@ test("superseded render reports cannot write current state or acknowledge render
     await service.close();
     await Promise.allSettled([view, oldViewRejected, capture]);
   }
-}));
-
-test("late renderer requests and failures stay scoped to the mounted model/view in a real browser", { timeout: 120_000 }, () => fixture(async ({ service, root }) => {
-  const result = await execute(workbenchPython, ["-B", script, "--url", service.url, "--output", root], {
-    timeout: 90_000, maxBuffer: 2 * 1024 * 1024,
-  });
-  console.log(result.stdout.trim());
-  if (result.stderr) console.error(result.stderr.trim());
 }));

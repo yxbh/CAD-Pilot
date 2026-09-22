@@ -1,6 +1,6 @@
-import { Canvas, events, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, events, useThree, type ThreeEvent } from "@react-three/fiber";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, EdgesGeometry, Matrix4, Vector3 } from "three";
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, EdgesGeometry, Matrix4 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
@@ -8,7 +8,8 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, mergeBounds, placeParts, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type ViewState } from "./model.ts";
 import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
 import { edgeAtSegment, GeometryResources, type EdgeRange, type PartResources } from "./resources.ts";
-import { edgeScreenPoint, prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
+import { prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
+import { useRenderReports } from "./useRenderReports.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
 import { CameraController, type ViewPreset } from "./camera.ts";
 import { AxisIndicator, createAxisStore, type AxisStore } from "./AxisIndicator.tsx";
@@ -177,29 +178,24 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
-  const lastReported = useRef(-1);
   const fitted = useRef("");
   const contextLost = useRef(false);
-  const reportLifetime = useRef({ active: false });
-  const latest = useRef({ model, state, amount, active, placements });
-  latest.current = { model, state, amount, active, placements };
+  const activeView = useRef(active);
+  activeView.current = active;
+  const { invalidateReport, assertCaptureReady } = useRenderReports({
+    model, state, amount, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
+  });
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
-  useLayoutEffect(() => {
-    const lifetime = { active };
-    reportLifetime.current = lifetime;
-    return () => { lifetime.active = false; };
-  }, [model, state.revision, active]);
   useLayoutEffect(() => observeGraphicsContext(gl.domElement, () => {
     contextLost.current = true;
     if (controls.current) controls.current.enabled = false;
     onError("Graphics context lost. Reload the canvas to restore the view.");
   }, () => {
     contextLost.current = false;
-    if (controls.current) controls.current.enabled = latest.current.active;
-    lastReported.current = -1;
-    invalidate();
-  }), [gl, invalidate, onError]);
+    if (controls.current) controls.current.enabled = activeView.current;
+    invalidateReport();
+  }), [gl, invalidateReport, onError]);
   useEffect(() => {
     if (controls.current) controls.current.enabled = active && !contextLost.current;
     if (active) invalidate();
@@ -208,9 +204,8 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
   useLayoutEffect(() => {
     controller.resize(size.width, size.height);
     // A viewport change needs a fresh projection report even at the same revision.
-    lastReported.current = -1;
-    invalidate();
-  }, [size.width, size.height, dpr, controller, invalidate]);
+    invalidateReport();
+  }, [size.width, size.height, dpr, controller, invalidateReport]);
 
   useLayoutEffect(() => {
     const committed = placeParts(model, state.explode, state.direction, state.fixedId);
@@ -232,7 +227,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
     orbit.target.copy(controller.target);
     orbit.enableDamping = false;
     orbit.zoomToCursor = true;
-    orbit.enabled = latest.current.active && !contextLost.current;
+    orbit.enabled = activeView.current && !contextLost.current;
     orbit.minDistance = camera.near * 10;
     orbit.maxDistance = camera.far * 0.4;
     orbit.minZoom = 0.02;
@@ -247,7 +242,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
     const ended = () => {
       controller.target.copy(orbit.target);
       const current = controller.snapshot();
-      if (latest.current.active && orbitStarted !== JSON.stringify(current)) cameraChanged.current(current);
+      if (activeView.current && orbitStarted !== JSON.stringify(current)) cameraChanged.current(current);
       orbitStarted = null;
     };
     orbit.addEventListener("change", changed);
@@ -269,12 +264,7 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
 
   useEffect(() => {
     registerCapture(() => {
-      if (!latest.current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
-      if (latest.current.amount !== latest.current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
-      if (lastReported.current !== latest.current.state.revision ||
-          fitted.current !== `${latest.current.state.topologyRevision}:${latest.current.state.fitNonce}`) {
-        throw new Error("The view is still updating. Capture it again once it has settled.");
-      }
+      assertCaptureReady();
       gl.render(scene, controller.camera);
       return {
         dataUrl: gl.domElement.toDataURL("image/png"), width: gl.domElement.width, height: gl.domElement.height,
@@ -282,67 +272,8 @@ function Rig({ model, state, amount, active, placements, resources, axes, onErro
       };
     });
     return () => registerCapture(null);
-  }, [controller, gl, scene, registerCapture]);
+  }, [controller, gl, scene, registerCapture, assertCaptureReady]);
 
-  useEffect(() => { if (active) invalidate(); }, [state.revision, placements, active, invalidate]);
-  useFrame(() => {
-    const current = latest.current;
-    if (!current.active || contextLost.current || lastReported.current === current.state.revision || current.model.topologyRevision !== current.state.topologyRevision ||
-        current.amount !== current.state.explode ||
-        fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) return;
-    lastReported.current = current.state.revision;
-    const camera = controller.camera;
-    const visible = current.placements.filter((part) => !current.state.hiddenIds.includes(part.node.id));
-    camera.updateMatrixWorld();
-    const origin = center(current.model.bounds);
-    const projected = visible.flatMap(({ bounds }) => Array.from({ length: 8 }, (_, corner) => {
-      const point = [0, 1, 2].map((axis) => ((corner & (1 << axis) ? bounds.max : bounds.min)[axis]) - origin[axis]);
-      const screen = new Vector3(...point as [number, number, number]).project(camera);
-      return screen.toArray();
-    }));
-    const inFrame = projected.every(([x, y, z]) => Math.abs(x) <= 1.01 && Math.abs(y) <= 1.01 && Math.abs(z) <= 1);
-    const selectedPlacement = visible.find((item) => item.node.id === current.state.selectedFace?.nodeId);
-    const selectedFace = selectedPlacement?.part.faces.find((face) => face.id === current.state.selectedFace?.faceId);
-    let selectedFaceScreen: number[] | null = null;
-    if (selectedFace && selectedPlacement) {
-      const point = new Vector3(...selectedFace.center).applyMatrix4(new Matrix4().fromArray(selectedPlacement.matrix));
-      point.sub(new Vector3(...origin)).project(camera);
-      selectedFaceScreen = [(point.x + 1) * size.width / 2, (1 - point.y) * size.height / 2];
-    }
-    const edgePlacement = visible.find((item) => item.node.id === current.state.selectedEdge?.nodeId);
-    const selectedEdge = edgePlacement?.part.edges?.find((edge) => edge.id === current.state.selectedEdge?.edgeId);
-    const report: RenderReport = {
-      revision: current.state.revision,
-      modelHash: current.model.source.sha256,
-      topologyRevision: current.model.topologyRevision,
-      visibleParts: visible.length,
-      selectedIds: current.state.selectedIds,
-      selectedFace: current.state.selectedFace,
-      highlightedTriangles: selectedFace?.triangleCount ?? 0,
-      selectedFaceScreen,
-      selectedEdge: current.state.selectedEdge,
-      highlightedSegments: selectedEdge ? selectedEdge.positions.length / 3 - 1 : 0,
-      selectedEdgeScreen: selectedEdge && edgePlacement
-        ? edgeScreenPoint(selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
-      bounds: mergeBounds(visible.map((part) => part.bounds)),
-      positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
-      renderer: "React Three Fiber / WebGL2",
-      inFrame,
-      geometryDefinitions: resources.size,
-      geometryIds: visible.map((part) => ({ id: part.node.id, geometry: resources.get(part.part).geometry.uuid })),
-      camera: controller.snapshot(), appearance: current.state.appearance, materialFinish: current.state.materialFinish,
-      projectedBounds: projected.length ? {
-        min: [0, 1, 2].map((axis) => Math.min(...projected.map((point) => point[axis]))),
-        max: [0, 1, 2].map((axis) => Math.max(...projected.map((point) => point[axis]))),
-      } : null,
-    };
-    // Requests can finish after a view change or after this renderer has unmounted.
-    const lifetime = reportLifetime.current;
-    queueMicrotask(() => {
-      if (!lifetime.active) return;
-      void onRendered(report).catch((error: Error) => { if (lifetime.active) onError(error.message); });
-    });
-  });
   return null;
 }
 

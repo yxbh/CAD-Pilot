@@ -19,6 +19,7 @@ from common.step_scene import (
     extract_selectors_from_scene,
     mesh_step_scene,
     occurrence_selector_id,
+    scene_leaf_occurrences,
     scene_occurrence_shape,
 )
 from common.tests.cad_test_roots import IsolatedCadRoots
@@ -135,6 +136,17 @@ class AssemblyExportTests(unittest.TestCase):
         for key in ("min", "max"):
             for actual_value, expected_value in zip(actual[key], expected[key], strict=True):
                 self.assertAlmostEqual(actual_value, expected_value, places=3)
+
+    def _named_occurrence(self, scene, name: str):
+        pending = list(scene.roots)
+        matches = []
+        while pending:
+            node = pending.pop()
+            if node.name == name:
+                matches.append(node)
+            pending.extend(node.children)
+        self.assertEqual(1, len(matches), f"Expected exactly one occurrence named {name!r}")
+        return matches[0]
 
     def test_imported_part_does_not_read_persistent_source_color(self) -> None:
         self._write_part()
@@ -257,7 +269,8 @@ class AssemblyExportTests(unittest.TestCase):
         )
 
         scene = export_assembly_step_scene(assembly_spec, assembly_spec.assembly_path.with_suffix(".step"))
-        native_root = scene.roots[0].children[0].children[0]
+        native_root = self._named_occurrence(scene, "native_module")
+        self.assertCountEqual(["left", "right"], [child.name for child in native_root.children])
         child_x_offsets = sorted(round(float(child.local_transform[3]), 3) for child in native_root.children)
 
         self.assertEqual([0.0, 10.0], child_x_offsets)
@@ -276,15 +289,15 @@ class AssemblyExportTests(unittest.TestCase):
 
         scene = export_assembly_step_scene(assembly_spec, assembly_spec.assembly_path.with_suffix(".step"))
         mesh_step_scene(scene, linear_deflection=0.006, angular_deflection=0.6, relative=True)
-        right_box_leaf = next(
-            node
-            for node in scene.roots[0].children[0].children[0].children[1].children
-            if node.prototype_key is not None
-        )
+        leaves = scene_leaf_occurrences(scene)
+        self.assertCountEqual(["left", "right"], [node.name for node in leaves])
+        selectors = [occurrence_selector_id(node) for node in leaves]
+        self.assertEqual(len(selectors), len(set(selectors)))
+        right_box_leaf = next(node for node in leaves if node.name == "right")
         expected_bbox = _bbox_from_shape(scene_occurrence_shape(scene, right_box_leaf))
         payload_bbox = self._transformed_payload_bbox(scene, right_box_leaf)
 
-        self.assertEqual("o1.1.1.2.1", occurrence_selector_id(right_box_leaf))
+        self._assert_bbox_close(expected_bbox, {"min": [9.5, -0.5, -0.5], "max": [10.5, 0.5, 0.5]})
         self._assert_bbox_close(payload_bbox, {"min": expected_bbox["min"], "max": expected_bbox["max"]})
 
     def test_cached_compound_copy_preserves_parent_transform(self) -> None:

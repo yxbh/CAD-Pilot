@@ -11,10 +11,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from OCP.Bnd import Bnd_Box
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
 from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+from OCP.collections import Array1_gp_Pnt, IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Geom import Geom_BezierCurve
 from OCP.Quantity import Quantity_Color, Quantity_TOC_RGB
@@ -23,12 +25,10 @@ from OCP.STEPCAFControl import STEPCAFControl_Writer
 from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
-from OCP.TColgp import TColgp_Array1OfPnt
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_ColorSurf, XCAFDoc_DocumentTool
 from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
@@ -45,6 +45,13 @@ def _module(name):
 
 converter = _module("convert")
 demo = _module("create_demo")
+
+
+def test_native_box_extent_includes_tolerance_gap():
+    box = Bnd_Box()
+    box.Update(1, 2, 3, 4, 5, 6)
+    box.SetGap(0.25)
+    assert converter._box_extent(box) == pytest.approx((0.75, 1.75, 2.75, 4.25, 5.25, 6.25))
 
 
 @pytest.fixture
@@ -244,7 +251,7 @@ def test_edges_deduplicate_shared_topology_not_coincident_or_located_geometry():
 
 
 def test_spline_edge_sampling_preserves_order_and_uses_native_curve_length():
-    poles = TColgp_Array1OfPnt(1, 3)
+    poles = Array1_gp_Pnt(1, 3)
     for index, point in enumerate([(0, 0, 0), (5, 10, 0), (10, 0, 0)], start=1):
         poles.SetValue(index, gp_Pnt(*point))
     shape = BRepBuilderAPI_MakeEdge(Geom_BezierCurve(poles)).Shape()
@@ -373,11 +380,11 @@ def _budget():
 
 
 def _assert_native_retention(shape, mesh, cleanup):
-    native_edges = TopTools_IndexedMapOfShape()
+    native_edges = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapes_s(shape, TopAbs_EDGE, native_edges)
     expected_ids = [
         f"e{i}" for i in range(1, native_edges.Extent() + 1)
-        if not BRep_Tool.Degenerated_s(TopoDS.Edge_s(native_edges.FindKey(i)))
+        if not BRep_Tool.Degenerated_s(TopoDS.Edge(native_edges.FindKey(i)))
     ]
     assert [edge["id"] for edge in mesh["edges"]] == expected_ids
     assert cleanup["degenerateEdges"] == native_edges.Extent() - len(expected_ids)
@@ -387,7 +394,7 @@ def _assert_native_retention(shape, mesh, cleanup):
     collapsed = 0
     expected_indices = []
     while faces.More():
-        face = TopoDS.Face_s(faces.Current())
+        face = TopoDS.Face(faces.Current())
         location = TopLoc_Location()
         triangulation = BRep_Tool.Triangulation_s(face, location)
         matrix = converter._matrix(location)
@@ -415,7 +422,7 @@ def _rounded_box():
     fillet = BRepFilletAPI_MakeFillet(box)
     edges = TopExp_Explorer(box, TopAbs_EDGE)
     while edges.More():
-        fillet.Add(2, TopoDS.Edge_s(edges.Current()))
+        fillet.Add(2, TopoDS.Edge(edges.Current()))
         edges.Next()
     fillet.Build()
     assert fillet.IsDone()

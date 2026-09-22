@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createExplorerServer } from "../server/server.mjs";
+import { createTestRuntime, viewStateFile } from "./service-fixture.mjs";
 
-test("local server rejects missing capability and cross-origin writes", async () => {
+test("local server rejects missing capability and cross-origin writes", async (t) => {
+  const { createService: createExplorerServer } = await createTestRuntime(t);
   const root = await mkdtemp(path.join(os.tmpdir(), "cad-prototype-http-"));
   const service = await createExplorerServer({ projectRoot: root, viewId: "http-test", log: () => {} });
   try {
@@ -27,7 +28,8 @@ test("local server rejects missing capability and cross-origin writes", async ()
   }
 });
 
-test("file actions cannot read outside the configured root or execute source", async () => {
+test("file actions cannot read outside the configured root or execute source", async (t) => {
+  const { createService: createExplorerServer } = await createTestRuntime(t);
   const root = await mkdtemp(path.join(os.tmpdir(), "cad-prototype-files-"));
   const service = await createExplorerServer({ projectRoot: root, viewId: "files-test", log: () => {} });
   try {
@@ -37,6 +39,31 @@ test("file actions cannot read outside the configured root or execute source", a
     await assert.rejects(service.execute("load_file", { file: import.meta.filename }), /inside the selected project root/);
     const upload = await fetch(service.url + "api/upload", {
       method: "POST", headers: { "x-file-name": "generator.py" }, body: "print('not allowed')",
+    });
+
+    test("failed uploads preserve the prior model and leave no durable failed-attempt input", async (t) => {
+      const runtime = await createTestRuntime(t);
+      const service = await runtime.createService({ viewId: "failed-upload", log: () => {} });
+      await service.initialize();
+      assert.equal(service.getState().error, "");
+      const previous = service.getState();
+      const inputs = await readdir(path.join(runtime.runtimeRoot, "inputs"));
+      const models = await readdir(path.join(runtime.runtimeRoot, "models"));
+      const response = await fetch(service.url + "api/upload", {
+        method: "POST", headers: { "x-file-name": "broken.step" }, body: "not a STEP",
+      });
+      assert.equal(response.status, 422);
+      assert.equal((await response.json()).code, "conversion_failed");
+      assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "inputs")), inputs);
+      assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "models")), models);
+      const current = service.getState();
+      assert.equal(current.loading, false);
+      assert.equal(current.documentRevision, previous.documentRevision);
+      assert.equal(current.topologyRevision, previous.topologyRevision);
+      assert.match(current.error, /STEP conversion failed/);
+      const saved = JSON.parse(await readFile(viewStateFile(runtime.runtimeRoot, service.projectRoot, "failed-upload"), "utf8"));
+      assert.equal(saved.modelCache, `${previous.topologyRevision}.json`);
+      assert.equal(path.basename(saved.inputFile), `${previous.documentRevision}.step`);
     });
     assert.equal(upload.status, 400);
   } finally {

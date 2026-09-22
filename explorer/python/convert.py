@@ -26,6 +26,7 @@ from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher, Sequence_TDF_Label
 from OCP.GProp import GProp_GProps
 from OCP.GCPnts import GCPnts_AbscissaPoint, GCPnts_TangentialDeflection
 from OCP.IFSelect import IFSelect_RetDone
@@ -34,12 +35,11 @@ from OCP.Standard import Standard_Failure
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_AsciiString, TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
-from OCP.TDF import TDF_Label, TDF_LabelSequence, TDF_Tool
+from OCP.TDF import TDF_Label, TDF_Tool
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopTools import TopTools_IndexedMapOfShape
 from OCP.TopoDS import TopoDS
 from OCP.gp import gp_Trsf
 from OCP.XCAFDoc import (
@@ -101,7 +101,7 @@ def _name(label: TDF_Label) -> str | None:
     return None
 
 
-def _labels(sequence: TDF_LabelSequence):
+def _labels(sequence: Sequence_TDF_Label):
     for index in range(1, sequence.Length() + 1):
         yield sequence.Value(index)
 
@@ -194,7 +194,7 @@ def _color(label: TDF_Label, warnings: WarningLog) -> list[float] | None:
 
 def _part_color(label: TDF_Label, warnings: WarningLog) -> list[float] | None:
     direct = _color(label, warnings)
-    subs = TDF_LabelSequence()
+    subs = Sequence_TDF_Label()
     XCAFDoc_ShapeTool.GetSubShapes_s(label, subs)
     colors = []
     for sub in _labels(subs):
@@ -233,23 +233,27 @@ def _corners(bounds: dict) -> np.ndarray:
     ])
 
 
+def _box_extent(box: Bnd_Box) -> tuple[float, ...]:
+    return (*box.CornerMin().Coord(), *box.CornerMax().Coord())
+
+
 def _edges(shape, budget: dict, warnings: WarningLog) -> list[dict]:
     # An indexed native map deduplicates shared/seam edges by topology and location,
     # not by coincident coordinates or a triangulation's artificial diagonals.
-    edges = TopTools_IndexedMapOfShape()
+    edges = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapes_s(shape, TopAbs_EDGE, edges)
     budget["edges"] += edges.Extent()
     if budget["edges"] > MAX_EDGES:
         raise ConversionError("CAD edge limit exceeded.")
     records = []
     for index in range(1, edges.Extent() + 1):
-        edge = TopoDS.Edge_s(edges.FindKey(index))
+        edge = TopoDS.Edge(edges.FindKey(index))
         edge_id = f"e{index}"
         if BRep_Tool.Degenerated_s(edge):
-            vertices = TopTools_IndexedMapOfShape()
+            vertices = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
             TopExp.MapShapes_s(edge, TopAbs_VERTEX, vertices)
             points = np.asarray([
-                BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertices.FindKey(i))).Coord()
+                BRep_Tool.Pnt_s(TopoDS.Vertex(vertices.FindKey(i))).Coord()
                 for i in range(1, vertices.Extent() + 1)
             ])
             if not len(points) or not np.isfinite(points).all() or np.any(points != points[0]):
@@ -285,7 +289,7 @@ def _edges(shape, budget: dict, warnings: WarningLog) -> list[dict]:
         BRepBndLib.AddOptimal_s(edge, box, False, True)
         if box.IsVoid() or box.IsOpen():
             raise ConversionError(f"CAD edge {edge_id} has unbounded native geometry.")
-        extent = box.Get()
+        extent = _box_extent(box)
         if not all(map(math.isfinite, extent)):
             raise ConversionError(f"CAD edge {edge_id} has non-finite native bounds.")
         records.append({
@@ -314,7 +318,7 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
         budget["faces"] += 1
         if budget["faces"] > MAX_FACES:
             raise ConversionError("Face limit exceeded.")
-        face = TopoDS.Face_s(faces.Current())
+        face = TopoDS.Face(faces.Current())
         location = TopLoc_Location()
         mesh = BRep_Tool.Triangulation_s(face, location)
         if mesh is None or mesh.NbNodes() == 0 or mesh.NbTriangles() == 0:
@@ -371,7 +375,7 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
         BRepBndLib.AddOptimal_s(face, face_box, False, True)
         if face_box.IsVoid() or face_box.IsOpen():
             raise ConversionError("A face has unbounded native geometry.")
-        extent = face_box.Get()
+        extent = _box_extent(face_box)
         face_bounds = {"min": list(extent[:3]), "max": list(extent[3:])}
         if not all(math.isfinite(value) for value in extent):
             raise ConversionError("A face has non-finite native geometry bounds.")
@@ -395,7 +399,7 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
     if box.IsVoid() or box.IsOpen():
         raise ConversionError("Part has empty or unbounded native geometry.")
     bounds = _bounds(np.asarray(positions).reshape(-1, 3))
-    native = box.Get()
+    native = _box_extent(box)
     bounds["min"] = [min(bounds["min"][i], native[i]) for i in range(3)]
     bounds["max"] = [max(bounds["max"][i], native[i + 3]) for i in range(3)]
     if not all(math.isfinite(v) for v in bounds["min"] + bounds["max"]):
@@ -412,7 +416,7 @@ def convert_step(input_path: str | Path) -> dict:
     document = _read_document(data, warnings)
     shapes = XCAFDoc_DocumentTool.ShapeTool_s(document.Main())
     colors = XCAFDoc_DocumentTool.ColorTool_s(document.Main())
-    roots = TDF_LabelSequence()
+    roots = Sequence_TDF_Label()
     shapes.GetFreeShapes(roots)
     if not roots.Length():
         raise ConversionError("STEP transfer produced no root parts or assemblies.")
@@ -482,7 +486,7 @@ def convert_step(input_path: str | Path) -> dict:
             "partId": part_id, "matrix": local.ravel(order="F").tolist(), "color": color,
         })
         if assembly:
-            children = TDF_LabelSequence()
+            children = Sequence_TDF_Label()
             shapes.GetComponents_s(definition, children, False)
             if not children.Length():
                 raise ConversionError("Assembly contains no components.")
