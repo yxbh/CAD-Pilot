@@ -118,7 +118,8 @@ def _assert_contract(model):
     assert len(part_map) == len(model["parts"])
     all_ids = list(part_map)
     for part in model["parts"]:
-        assert set(part) == {"id", "label", "color", "positions", "normals", "indices", "bounds", "faces", "edges"}
+        assert set(part) == {"id", "label", "color", "positions", "normals", "indices", "bounds", "faces", "edges", "sectionCaps"}
+        assert part["sectionCaps"] is True
         assert isinstance(part["label"], str) and part["label"]
         points = np.array(part["positions"]).reshape(-1, 3)
         normals = np.array(part["normals"]).reshape(-1, 3)
@@ -207,6 +208,16 @@ def test_direct_step_exact_bytes_and_finite_contract(workdir):
     for edge in edges:
         points = np.asarray(edge["positions"]).reshape(-1, 3)
         np.testing.assert_allclose(edge["center"], points.mean(axis=0), atol=1e-9)
+
+
+def test_surface_preview_is_explicitly_ineligible_for_solid_section_caps(workdir):
+    faces = TopExp_Explorer(BRepPrimAPI_MakeBox(10, 20, 30).Shape(), TopAbs_FACE)
+    path = workdir / "surface.step"
+    _write_direct(path, TopoDS.Face(faces.Current()))
+    model = converter.convert_step(path)
+    assert len(model["parts"]) == 1
+    assert model["parts"][0]["faces"]
+    assert model["parts"][0]["sectionCaps"] is False
 
 
 def test_circular_edges_are_native_unique_closed_curves_with_exact_length(workdir):

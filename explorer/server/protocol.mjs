@@ -1,5 +1,9 @@
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "../shared/view-settings.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
+import {
+  pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
+} from "../shared/section.mjs";
+import { displayedWorldBounds } from "../shared/placement.mjs";
 
 export class PrototypeError extends Error {
   constructor(code, message, status = 400) {
@@ -17,6 +21,7 @@ export function initialState() {
     loading: false, error: "",
     activeReviewId: null, camera: null,
     projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true,
+    section: { enabled: false, axis: "x", position: 0, flipped: false },
   };
 }
 
@@ -41,6 +46,8 @@ export function changeView(state, model, name, input = {}) {
     return [...new Set(input.ids.map(requireId))];
   };
   const next = { ...state, revision: state.revision + 1, error: "" };
+  // Display changes keep the plane inside the visible pose and drop selections left wholly outside it.
+  const followDisplay = () => Object.assign(next, pruneSectionSelection(reconcileSectionWithDisplay(next, model), model));
   switch (name) {
     case "select_parts":
       next.selectedIds = ids();
@@ -54,6 +61,7 @@ export function changeView(state, model, name, input = {}) {
       const node = model.nodes.find((item) => item.id === nodeId);
       const part = model.parts.find((item) => item.id === node.partId);
       if (!part.faces.some((face) => face.id === input.faceId)) throw new PrototypeError("unknown_face", "Unknown CAD face on this occurrence");
+      if (!sectionEntityVisible(model, state, nodeId, input.faceId)) throw new PrototypeError("section_hidden", "This CAD face is outside the retained section. Move or flip the section plane before selecting it.", 409);
       next.selectedIds = [nodeId];
       next.selectedFace = { nodeId, faceId: input.faceId };
       next.selectedEdge = null;
@@ -67,6 +75,7 @@ export function changeView(state, model, name, input = {}) {
       const node = model.nodes.find((item) => item.id === nodeId);
       const part = model.parts.find((item) => item.id === node.partId);
       if (!part.edges?.some((edge) => edge.id === input.edgeId)) throw new PrototypeError("unknown_edge", "Unknown CAD edge on this occurrence");
+      if (!sectionEntityVisible(model, state, nodeId, null, input.edgeId)) throw new PrototypeError("section_hidden", "This CAD edge is outside the retained section. Move or flip the section plane before selecting it.", 409);
       next.selectedIds = [nodeId];
       next.selectedFace = null;
       next.selectedEdge = { nodeId, edgeId: input.edgeId };
@@ -95,6 +104,7 @@ export function changeView(state, model, name, input = {}) {
         next.direction = input.direction;
       }
       if (input.fixedId !== undefined) next.fixedId = input.fixedId === "" ? "" : requireId(input.fixedId);
+      followDisplay();
       break;
     case "set_visibility": {
       if (typeof input.visible !== "boolean") throw new PrototypeError("bad_visibility", "visible must be true or false");
@@ -102,17 +112,20 @@ export function changeView(state, model, name, input = {}) {
       next.hiddenIds = input.visible ? state.hiddenIds.filter((id) => !selected.includes(id)) : [...new Set([...state.hiddenIds, ...selected])];
       if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
       if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      followDisplay();
       break;
     }
     case "isolate":
       next.hiddenIds = [...valid].filter((id) => id !== requireId(input.id));
       if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
       if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      followDisplay();
       next.fitNonce++;
       next.camera = null;
       break;
     case "show_all":
       next.hiddenIds = [];
+      followDisplay();
       next.fitNonce++;
       next.camera = null;
       break;
@@ -141,6 +154,41 @@ export function changeView(state, model, name, input = {}) {
         next.showEdges = input.showEdges;
       } else if (input.mode !== undefined && input.mode !== state.appearance) next.showEdges = input.mode === "inspect";
       break;
+    case "set_section": {
+      if (input.enabled === undefined && input.axis === undefined && input.position === undefined && input.flipped === undefined) {
+        throw new PrototypeError("bad_section", "Supply an enabled flag, X/Y/Z axis, model-world position or flipped side");
+      }
+      if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw new PrototypeError("bad_section", "Section enabled must be true or false");
+      if (input.axis !== undefined && !SECTION_AXES.includes(input.axis)) throw new PrototypeError("bad_section", "Section axis must be X, Y or Z");
+      if (input.flipped !== undefined && typeof input.flipped !== "boolean") throw new PrototypeError("bad_section", "Section flipped must be true or false");
+      if (input.position !== undefined && (typeof input.position !== "number" || !Number.isFinite(input.position))) {
+        throw new PrototypeError("bad_section_position", "Section position must be a finite model-world millimeter value");
+      }
+      const displayBounds = displayedWorldBounds(model, state);
+      if (!displayBounds && (input.axis !== undefined || input.position !== undefined)) {
+        throw new PrototypeError("section_no_visible_parts", "Show a part before changing the section plane axis or position", 409);
+      }
+      const axis = input.axis ?? state.section.axis;
+      const axisNumber = sectionAxisIndex(axis);
+      const position = input.position ?? (input.axis !== undefined && input.axis !== state.section.axis
+        ? (displayBounds.min[axisNumber] + displayBounds.max[axisNumber]) / 2
+        : state.section.position);
+      const section = {
+        enabled: input.enabled ?? state.section.enabled,
+        axis,
+        position,
+        flipped: input.flipped ?? state.section.flipped,
+      };
+      try { validateSection(section, displayBounds ?? undefined); }
+      catch (error) {
+        throw new PrototypeError(error instanceof RangeError ? "bad_section_position" : "bad_section", error.message);
+      }
+      const support = sectionSupport(model);
+      if (section.enabled && !support.supported) throw new PrototypeError("section_unsupported", support.message, 422);
+      next.section = section;
+      Object.assign(next, pruneSectionSelection(next, model));
+      break;
+    }
     case "fit_view":
       next.fitNonce++;
       next.camera = null;
@@ -149,6 +197,7 @@ export function changeView(state, model, name, input = {}) {
       next.explode = 0;
       next.fixedId = "";
       next.direction = "radial";
+      followDisplay();
       break;
     default:
       throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
@@ -175,6 +224,7 @@ function topologyDigest(model, conversionVersion) {
 
 export function topologyRevision(model) {
   // Preserve face-only addresses; new edge caches have an independent converter version.
+  // Closed-solid metadata belongs to each part record: caches without it keep their identity; newer imports differ.
   return topologyDigest(model, model.parts.some((part) => part.edges !== undefined) ? "native-edges-v1" : undefined);
 }
 
@@ -209,6 +259,7 @@ export function validateModel(model, { requireRevision = true } = {}) {
     if (!Array.isArray(part.indices) || !part.indices.length || part.indices.length % 3 ||
         !part.indices.every((index) => Number.isInteger(index) && index >= 0 && index < part.positions.length / 3)) fail("Invalid triangle indices");
     if (!Array.isArray(part.faces) || !part.faces.length) fail("Missing CAD face map");
+    if (part.sectionCaps !== undefined && typeof part.sectionCaps !== "boolean") fail("Invalid section-cap support metadata");
     let nextTriangle = 0;
     const faceIds = new Set();
     for (const face of part.faces) {

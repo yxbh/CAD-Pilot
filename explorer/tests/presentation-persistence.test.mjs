@@ -16,13 +16,28 @@ test("rendered projection and appearance persist across provider restart without
   try {
     await service.initialize();
     await service.execute("set_projection", { projection: "orthographic" });
+    await service.execute("set_section", { enabled: true, axis: "y", position: 0, flipped: true });
     const current = await service.execute("set_appearance", { mode: "studio", finish: "satin", showEdges: false });
     const response = await fetch(service.url + "api/rendered", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ revision: current.revision, modelHash: current.documentRevision, topologyRevision: current.topologyRevision, camera }),
+      body: JSON.stringify({ revision: current.revision, modelHash: current.documentRevision, topologyRevision: current.topologyRevision,
+        camera, section: current.section }),
     });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).accepted, true);
+    const wrongSection = await fetch(service.url + "api/rendered", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: current.revision, modelHash: current.documentRevision, topologyRevision: current.topologyRevision,
+        camera, section: { ...current.section, position: 1 } }),
+    });
+    assert.equal(wrongSection.status, 409);
+    assert.match((await wrongSection.json()).error, /section/);
+    const recovered = await fetch(service.url + "api/rendered", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ revision: current.revision, modelHash: current.documentRevision, topologyRevision: current.topologyRevision,
+        camera, section: current.section }),
+    });
+    assert.equal(recovered.status, 200);
     assert.equal(service.getState().revision, current.revision);
     await service.close();
     service = await createExplorerServer({ projectRoot: workbenchRoot, viewId });
@@ -32,6 +47,7 @@ test("rendered projection and appearance persist across provider restart without
     assert.equal(restored.appearance, "studio");
     assert.equal(restored.materialFinish, "satin");
     assert.equal(restored.showEdges, false);
+    assert.deepEqual(restored.section, { enabled: true, axis: "y", position: 0, flipped: true });
     assert.deepEqual(restored.camera, camera);
     const newer = await service.execute("set_projection", { projection: "perspective" });
     const rejected = await fetch(service.url + "api/rendered", {
@@ -41,7 +57,7 @@ test("rendered projection and appearance persist across provider restart without
     assert.equal((await rejected.json()).accepted, false);
     await service.close();
     const legacy = JSON.parse(await readFile(stateFile, "utf8"));
-    for (const field of ["projection", "appearance", "materialFinish", "showEdges"]) delete legacy.state[field];
+    for (const field of ["projection", "appearance", "materialFinish", "showEdges", "section"]) delete legacy.state[field];
     legacy.state.camera = { position: [10, -20, 10], target: [0, 0, 0], up: [0, 0, 1], fov: 42 };
     await writeFile(stateFile, JSON.stringify(legacy));
     service = await createExplorerServer({ projectRoot: workbenchRoot, viewId });
@@ -49,6 +65,7 @@ test("rendered projection and appearance persist across provider restart without
     assert.equal(service.getState().projection, "perspective");
     assert.equal(service.getState().appearance, "inspect");
     assert.equal(service.getState().showEdges, true);
+    assert.deepEqual(service.getState().section, { enabled: false, axis: "x", position: 0, flipped: false });
     assert.deepEqual(service.getState().camera, legacy.state.camera);
   } finally {
     await service.close();

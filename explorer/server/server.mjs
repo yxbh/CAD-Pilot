@@ -14,6 +14,8 @@ import { createInspectionService } from "./inspection.mjs";
 import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot as defaultRuntimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
 import { maxStepBytes, prepareModelSnapshot, validateStepPath } from "./model-import.mjs";
+import { defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, sameSection, sectionSupport, validateSection } from "../shared/section.mjs";
+import { displayedWorldBounds } from "../shared/placement.mjs";
 
 export { explorerRoot, workbenchRoot, runtimeRoot } from "./paths.mjs";
 const maxImageBytes = 12 * 1024 * 1024;
@@ -81,6 +83,11 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
   const reviews = new ReviewStore(path.join(runtimeRoot, "reviews", viewKey));
   const saved = await readOptionalJson(stateFile);
   let measuredCleanup = saved?.measuredCleanup === undefined ? undefined : validateMeasuredCleanup(saved.measuredCleanup);
+  const savedSection = saved?.state?.section;
+  if (savedSection !== undefined) {
+    try { validateSection(savedSection); }
+    catch (error) { throw new PrototypeError("invalid_saved_section", `Invalid saved section settings: ${error.message}`, 422); }
+  }
   let state = { ...initialState(), ...saved?.state };
   delete state.autoAdd;
   let model = null;
@@ -137,7 +144,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
       reference: createReference(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
       text: formatSelection(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
     })) : [],
-    limitations: ["Snapshot loading; no file watcher", "Visual spacing, not a disassembly simulation"],
+    limitations: ["Snapshot loading; no file watcher", "Visual spacing, not a disassembly simulation", "Section caps are display-derived and do not modify or measure the STEP"],
   });
 
   async function python(script, args) {
@@ -186,6 +193,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
       await commit({
         ...initialState(), autoCopy: state.autoCopy, documentRevision: imported.model.source.sha256,
         topologyRevision: imported.model.topologyRevision, modelName: imported.inputName, fitNonce: state.fitNonce + 1,
+        section: defaultSection(imported.model.bounds),
       }, imported);
       return state;
     } catch (error) {
@@ -327,6 +335,9 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
           if (report.revision < state.revision) return { accepted: false, reason: "superseded_view" };
           if (report.revision > state.revision) throw new PrototypeError("bad_render_report", "Renderer revision is ahead of the view", 409);
           if (report.modelHash !== state.documentRevision || report.topologyRevision !== state.topologyRevision) throw new PrototypeError("bad_render_report", "Renderer revision does not match the model", 409);
+          if ((state.section.enabled || report.section !== undefined) && !sameSection(report.section, state.section)) {
+            throw new PrototypeError("bad_render_report", "Rendered section does not match the saved view", 409);
+          }
           if (report.camera && !state.activeReviewId) {
             if ((report.camera.projection ?? "perspective") !== state.projection) throw new PrototypeError("bad_render_report", "Rendered projection does not match the view", 409);
             const next = { ...state, camera: report.camera };
@@ -408,6 +419,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
           exploded: state.explode, selectedIds: state.selectedIds, selectedFace: state.selectedFace,
           selectedEdge: state.selectedEdge,
           camera: payload.camera ?? state.camera, appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
+          section: state.section,
         };
         await writeFile(imagePath, bytes);
         await atomicJson(`${imagePath}.json`, result);
@@ -465,7 +477,14 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
           inputFile = saved.inputFile;
           inputName = saved.inputName || state.modelName || model.source.name;
           model.source = { ...model.source, name: inputName };
-          await commit({ loading: false, error: "", modelName: inputName, topologyRevision: model.topologyRevision });
+          let section = savedSection ?? defaultSection(displayedWorldBounds(model, state) ?? model.bounds);
+          const support = sectionSupport(model);
+          if (section.enabled && !support.supported) {
+            log(`Section view was turned off: ${support.message}`);
+            section = { ...section, enabled: false };
+          }
+          const restored = pruneSectionSelection(reconcileSectionWithDisplay({ ...state, section }, model), model);
+          await commit({ ...restored, loading: false, error: "", modelName: inputName, topologyRevision: model.topologyRevision });
         }
       } else await execute("load_demo");
     } catch (error) {

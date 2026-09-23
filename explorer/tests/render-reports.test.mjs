@@ -105,6 +105,7 @@ test("superseded render reports cannot write current state or acknowledge render
     assert.equal(captured.documentRevision, current.documentRevision);
     assert.equal(captured.topologyRevision, current.topologyRevision);
     assert.deepEqual(captured.selectedEdge, current.selectedEdge);
+    assert.deepEqual(captured.section, current.section);
     assert.deepEqual(captured.camera, reportB.camera);
     const savedCurrent = await readFile(stateFile, "utf8");
     await post(service, "rendered", reportA);

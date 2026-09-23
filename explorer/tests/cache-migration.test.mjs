@@ -294,3 +294,59 @@ test("legacy cleanup normalizes on reopen without rewriting topology, descriptor
     await rm(path.join(runtimeRoot, "reviews", key), { recursive: true, force: true });
   }
 });
+
+test("caches without closed-solid metadata stay immutable and enable section view only after the STEP is reopened", async (t) => {
+  const { runtimeRoot, createService: createExplorerServer } = await createTestRuntime(t);
+  const viewId = `section-migration-${randomUUID()}`;
+  const key = createHash("sha256").update(`${workbenchRoot}\n${viewId}`).digest("hex").slice(0, 24);
+  const stateFile = path.join(runtimeRoot, "views", `${key}.json`);
+  const logs = [];
+  const open = () => createExplorerServer({ projectRoot: workbenchRoot, viewId, log: (message) => logs.push(message) });
+  let service = await open();
+  await service.initialize();
+  const original = await (await fetch(service.url + "api/model")).json();
+  assert.ok(original.parts.every((part) => part.sectionCaps === true));
+  const legacy = structuredClone(original);
+  for (const part of legacy.parts) delete part.sectionCaps;
+  legacy.topologyRevision = topologyRevision(legacy);
+  assert.notEqual(legacy.topologyRevision, original.topologyRevision);
+  const oldFile = path.join(runtimeRoot, "models", `${legacy.topologyRevision}.json`);
+  const oldBytes = JSON.stringify(legacy);
+  await writeFile(oldFile, oldBytes);
+  const occurrence = legacy.nodes.find((node) => node.partId);
+  const part = legacy.parts.find((item) => item.id === occurrence.partId);
+  const oldReference = createReference(legacy, occurrence.id, null, part.edges[0].id);
+  const camera = { position: [120, -90, 70], target: [0, 0, 0], up: [0, 0, 1], fov: 42 };
+  await service.close();
+  const saved = JSON.parse(await readFile(stateFile, "utf8"));
+  saved.modelCache = path.basename(oldFile);
+  saved.state.topologyRevision = legacy.topologyRevision;
+  saved.state.camera = camera;
+  saved.state.section = { enabled: true, axis: "x", position: 0, flipped: false };
+  await writeFile(stateFile, JSON.stringify(saved));
+
+  service = await open();
+  await service.initialize();
+  let state = service.getState();
+  assert.equal(state.error, "");
+  assert.equal(state.topologyRevision, legacy.topologyRevision, "Restoring does not rebuild or re-identify the cache");
+  assert.deepEqual(state.section, { enabled: false, axis: "x", position: 0, flipped: false });
+  assert.deepEqual(state.camera, camera);
+  assert.ok(logs.some((message) => /Section view was turned off: .*Reopen the STEP/.test(message)));
+  await assert.rejects(service.execute("set_section", { enabled: true }), { code: "section_unsupported", message: /Reopen the STEP/ });
+  assert.equal((await service.execute("inspect_reference", { reference: oldReference })).edge.id, part.edges[0].id);
+
+  state = await service.execute("load_demo");
+  assert.equal(state.topologyRevision, original.topologyRevision);
+  assert.equal((await service.execute("set_section", { enabled: true })).section.enabled, true);
+  assert.equal(await readFile(oldFile, "utf8"), oldBytes, "Published caches are never rewritten with new metadata");
+  assert.equal((await service.execute("inspect_reference", { reference: oldReference })).topologyRevision, legacy.topologyRevision);
+  await service.close();
+
+  const malformed = JSON.parse(await readFile(stateFile, "utf8"));
+  malformed.state.section = { ...malformed.state.section, axis: "w" };
+  const bytes = JSON.stringify(malformed);
+  await writeFile(stateFile, bytes);
+  await assert.rejects(open(), { code: "invalid_saved_section" });
+  assert.equal(await readFile(stateFile, "utf8"), bytes, "Malformed saved section settings must not overwrite the view");
+});

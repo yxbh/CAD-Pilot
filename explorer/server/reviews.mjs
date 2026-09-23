@@ -5,6 +5,7 @@ import { emptyDrawing, validateDrawing } from "../shared/drawing.mjs";
 import { PrototypeError } from "./protocol.mjs";
 import { atomicJson } from "./storage.mjs";
 import { validateCamera as validateViewCamera } from "../shared/view-settings.mjs";
+import { validateSection } from "../shared/section.mjs";
 
 const reviewId = /^[a-f0-9-]{36}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -75,6 +76,10 @@ export class ReviewStore {
         typeof result.title !== "string" || typeof result.createdAt !== "string" ||
         typeof result.source?.name !== "string") fail("Saved review identity is invalid");
     validateCamera(result.pose?.camera);
+    if (result.pose?.section !== undefined) {
+      try { validateSection(result.pose.section); }
+      catch (error) { fail(`Saved review section is invalid: ${error.message}`); }
+    }
     validateDrawing(result.drawing);
     this.remember(result, signature);
     return result;
@@ -119,6 +124,7 @@ export class ReviewStore {
         selectedEdge: state.selectedEdge ?? null,
         camera: capture.camera,
         appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
+        section: { ...state.section },
       },
       image: { dataUrl: capture.dataUrl, width, height },
       drawing: emptyDrawing(),

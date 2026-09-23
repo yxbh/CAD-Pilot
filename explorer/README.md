@@ -20,7 +20,7 @@ Reload project extensions, then open **CAD Explorer**. Build output and dependen
 
 The canvas accepts an explicit authorized `projectRoot`, a STEP `file` inside it, and an optional `viewId` for its remembered setup. Without a file it restores that setup, or creates the synthetic demo when none exists. The default project is the workbench checkout. Use Open STEP to import another local snapshot; the source file is not modified and its Python generator is never executed.
 
-A remembered setup includes the active model, camera, hidden/exploded parts and drawing reviews. Reopen its existing panel rather than creating a linked duplicate. Explorer keeps one live panel per setup; independent `viewId` values allow side-by-side setups. Equivalent Windows path spellings resolve to the same owner. An exclusive OS lease also prevents another Explorer process from writing that setup simultaneously; on Windows, ownership is released if the process terminates.
+A remembered setup includes the active model, camera, hidden/exploded parts, section settings and drawing reviews. Reopen its existing panel rather than creating a linked duplicate. Explorer keeps one live panel per setup; independent `viewId` values allow side-by-side setups. Equivalent Windows path spellings resolve to the same owner. An exclusive OS lease also prevents another Explorer process from writing that setup simultaneously; on Windows, ownership is released if the process terminates.
 
 For a standalone browser, capture the workbench path before switching to the intended design directory:
 
@@ -47,11 +47,19 @@ Perspective and orthographic (parallel) projection share the same camera directi
 
 Explosion percentage, direction, fixed-part selection and Reassemble move only the parts, retaining the current camera, pan and zoom. Use Fit assembly if separation moves parts off-screen. Hide/show a specific part also retains the camera. Isolate and Show all retain their existing explicit-action behavior of fitting the resulting visible parts.
 
+Section view is a visual cutaway for closed solids. Open Section view from the model toolbar, enable the cut, choose X, Y or Z, slide or enter the plane coordinate on the model's world axes, and flip which half is hidden. The slider and number limits span the actual visible displayed occurrences, including nested transforms, repeated parts, fixed parts and the current explosion preview. Axis changes and Reset use the relevant displayed midpoint. Exploded offsets extend this visual range but are not physical CAD measurements. Expanding the display preserves the plane; reassembly, hiding an outlier or changing the pose clamps it only when it falls outside the remaining visible bounds, without moving the camera. Hiding every part preserves the last plane and disables position changes until a part is shown. Opening a different STEP resets section view off at the new assembled model's midpoint.
+
+Cut surfaces use per-part display-derived caps and outlines so closed solids read as solid while bores, voids and gaps remain open. Caps are not CAD faces, cannot be selected or copied, and block pointer selection through the artificial cut surface. Faces, native CAD edges, highlights, Studio shadows and exploded occurrences use the same world-aligned cut; the cap plane also expands and recenters over the displayed assembly. The `set_section` canvas action accepts optional `enabled`, `axis`, `position` and `flipped` fields with the normal `expectedRevision` contract, validating position against the committed visible displayed pose. False `flipped` keeps coordinates at or below the plane and true keeps coordinates at or above it.
+
+The converter records whether each preview part is composed entirely of native closed solids. Section view is rejected for surface/open-shell parts rather than drawing a misleading cap. This metadata is part of the converted model's topology identity. Caches created before it existed remain immutable and restore with their original references, but Section view stays unavailable, and a remembered enabled cut is turned off, until the STEP is reopened. Reopening creates a new topology revision with the metadata; references copied from the older revision still resolve against its retained cache.
+
 Inspect uses a grid and readable outlines. Studio uses local reflection and area lighting, soft-edged shadow lighting and a floor. Plastic, satin metal, polished metal and rubber are visual finishes over the original colors, not measured materials or changes to STEP. Outlines can be switched independently; changing modes starts with them on for Inspect and off for Studio. No remote environment images or conversion services are used.
 
 ## Face, edge and part references
 
 Use the Faces, Edges or Parts toolbar buttons to choose what to select. Faces previews and selects a whole CAD face; Edges previews and selects a whole straight or curved CAD edge; Parts selects an occurrence. The parts list also selects an occurrence. Edge picking uses a six-CSS-pixel radius at any zoom, ignores edges behind opaque geometry and follows each part's exploded placement. Edge mode shows the selectable outlines even when Studio's Outlines setting is off. Selected edges have a stronger highlight, with their curve type and exact CAD length in millimeters in the selection panel. These are STEP topology edges, including seams, not triangle boundaries or view-dependent silhouettes.
+
+Section clipping does not mint topology. A retained face or edge keeps its exact original `cadproto:v2` identity, partially cut native edge polylines are trimmed before screen-space hit testing, and entities wholly outside the retained half are not pickable. Moving a section plane clears a selected entity only when the displayed pose leaves none of it on the retained side.
 
 Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
 
@@ -77,7 +85,7 @@ Drawing saves are versioned. Recovery must preserve unsaved local marks and othe
 
 A failed or uncertain save can be reconciled with the saved version. Conflicting local marks can be kept as a separate review without replacing the other version; loading the server's version or discarding local changes is explicit. Copy/download the marked image if the service is unavailable. Do not reload or close a tab with unsaved marks before saving, exporting or explicitly discarding them. When opening a review, live rendering pauses before the load starts so cold Studio rendering cannot delay the transition.
 
-Copy marked image and Save marked image include annotations. The saved metadata records the original source revision, pose and visual appearance. A review remains tied to its captured snapshot even after a different STEP is opened. The current limits are 20 reviews per setup, bounded image sizes and bounded stroke/history counts.
+Copy marked image and Save marked image include annotations. The saved metadata records the original source revision, pose, visual appearance and section settings. A review remains tied to its captured snapshot even after the live section or a different STEP is changed. The current limits are 20 reviews per setup, bounded image sizes and bounded stroke/history counts.
 
 ## Local data
 
@@ -96,8 +104,8 @@ Use these commands from the workbench root for narrower checks:
 | Scope | Command | Coverage |
 | --- | --- | --- |
 | Complete Explorer | `npm --prefix explorer test` | Core checks, then a fresh build and the browser suite |
-| Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, commands, HTTP, references, persistence, cache compatibility and ownership |
-| Browser | `npm --prefix explorer run test:browser` | Build/type-check, real selection/clipboard, camera matrices, Studio, drawing recovery, diagnostics and delayed render reports |
+| Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, section planes, commands, HTTP, references, persistence, cache compatibility and ownership |
+| Browser | `npm --prefix explorer run test:browser` | Build/type-check, real selection/clipboard, camera matrices, Studio, section caps, drawing recovery, diagnostics and delayed render reports |
 | Build only | `npm --prefix explorer run build` | TypeScript and production assets |
 | Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
 
@@ -120,6 +128,7 @@ Preserve these contracts when changing their owners:
 | Fresh measured cleanup versus unknown historical counts; immutable caches and failed-import recovery | `model-import.test.mjs`, `diagnostics.test.mjs`, `cache-migration.test.mjs`, `cleanup-persistence-browser.test.mjs`, `test_converter.py` |
 | Warning/info panels do not obscure controls or alter camera and drawings | `import-warnings-browser.test.mjs` |
 | Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `viewer-browser.test.mjs` |
+| Section planes in model-world coordinates across nested, repeated, fixed, hidden and exploded occurrences; caps that keep holes and gaps open; trimmed edge picking with unchanged references; persisted, captured and reviewed section poses; closed-solid identity for immutable caches | `section.test.ts`, `protocol.test.mjs`, `section-browser.test.mjs`, `cache-migration.test.mjs`, `test_converter.py` |
 | Review conflicts preserve unsaved local marks and other writers' data | `reviews.test.mjs`, `review-recovery-browser.test.mjs` |
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
 | View ownership, file-cache invalidation and runtime relocation | `view-registry.test.mjs`, `inspection-cache.test.mjs`, `runtime-relocation.test.mjs` |
@@ -133,12 +142,12 @@ The service reports the actual rendered camera and topology revision, not just r
 
 `server/model-import.mjs` stages each import privately, validates it, then atomically publishes complete immutable source/cache files with same-filesystem hard links. Existing files, including a concurrent import's winner, are verified rather than overwritten. Conversion/validation failures remove only private staging data. Once published, shared artifacts are retained even if later cleanup or view-metadata persistence fails: another view may already depend on them. The local runtime filesystem must support hard links; unsupported publication fails explicitly. `server.mjs` publishes the live model only after saving its view metadata. If cleanup also fails, the original import error/code/status remains primary and the cleanup diagnostic remains visible.
 
-Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, and `useRenderReports` scopes queued sends and failures to the active model/view. Its revision bookkeeping is private; `Rig` uses named invalidation and capture-readiness operations instead of mutating report refs. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
+Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, `useSectionControl` owns the uncommitted section-plane draft and its displayed range, and `useRenderReports` scopes queued sends and failures to the active model/view. Its revision bookkeeping is private; `Rig` uses named invalidation and capture-readiness operations instead of mutating report refs. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
 
 Services default to the durable runtime described above. Internal callers can supply a `runtimeRoot`; all service-owned storage, leases and reference inspection are scoped together. This is a test/service boundary, not a new canvas input or a change to existing saved paths.
 
 ## Limits
 
-CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
+CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Section caps are a tessellated display aid, not precise geometric measurements, new B-rep faces, a cut STEP, a minimum-wall check or exported print geometry. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
 
 See the repository's [ownership and provenance guidance](../README.md#provenance).

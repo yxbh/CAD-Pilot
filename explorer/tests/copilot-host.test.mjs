@@ -48,6 +48,7 @@ test("maintained host registers one inspection tool for exact references", async
     assert.equal(new Set(canvas.actions.map((action) => action.name)).size, canvas.actions.length);
     assert.deepEqual(canvas.actions.find((action) => action.name === "select_edge").inputSchema.required, ["id", "edgeId", "topologyRevision"]);
     assert.deepEqual(canvas.actions.find((action) => action.name === "set_selection_mode").inputSchema.properties.mode.enum, ["face", "edge", "part"]);
+    assert.deepEqual(canvas.actions.find((action) => action.name === "set_section").inputSchema.properties.axis.enum, ["x", "y", "z"]);
     assert.deepEqual(canvas.actions.map((action) => action.name), Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas));
     for (const action of canvas.actions) assert.deepEqual(action.inputSchema, COMMANDS[action.name].inputSchema);
   } finally { await provider.shutdown(); }
