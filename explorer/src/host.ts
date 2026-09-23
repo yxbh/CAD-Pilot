@@ -16,6 +16,7 @@ export type RenderReport = {
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
   camera: CameraState; appearance: ViewState["appearance"]; materialFinish: ViewState["materialFinish"];
+  section: ViewState["section"];
   projectedBounds: { min: number[]; max: number[] } | null;
 };
 export type CaptureRequest = { id: string; revision: number; reviewId?: string | null; reviewVersion?: number };

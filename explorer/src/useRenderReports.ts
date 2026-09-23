@@ -6,11 +6,13 @@ import type { RenderReport } from "./host.ts";
 import type { CameraController } from "./camera.ts";
 import type { GeometryResources } from "./resources.ts";
 import { edgeScreenPoint } from "./edgePicking.ts";
+import { clipCadEdges, visibleFacePoint, visibleFaceTriangleCount } from "./section.ts";
 
-export function useRenderReports({ model, state, amount, active, placements, resources, controller, fitted, contextLost, onRendered, onError }: {
+export function useRenderReports({ model, state, amount, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError }: {
   model: Model;
   state: ViewState;
   amount: number;
+  sectionPosition: number;
   active: boolean;
   placements: Placement[];
   resources: GeometryResources;
@@ -23,14 +25,14 @@ export function useRenderReports({ model, state, amount, active, placements, res
   const { size, invalidate } = useThree();
   const lastReported = useRef(-1);
   const reportLifetime = useRef({ active: false });
-  const latest = useRef({ model, state, amount, active, placements });
-  latest.current = { model, state, amount, active, placements };
+  const latest = useRef({ model, state, amount, sectionPosition, active, placements });
+  latest.current = { model, state, amount, sectionPosition, active, placements };
   useLayoutEffect(() => {
     const lifetime = { active };
     reportLifetime.current = lifetime;
     return () => { lifetime.active = false; };
   }, [model, state.revision, active]);
-  useEffect(() => { if (active) invalidate(); }, [state.revision, placements, active, invalidate]);
+  useEffect(() => { if (active) invalidate(); }, [state.revision, placements, sectionPosition, active, invalidate]);
   const invalidateReport = useCallback(() => {
     lastReported.current = -1;
     invalidate();
@@ -39,6 +41,7 @@ export function useRenderReports({ model, state, amount, active, placements, res
     const current = latest.current;
     if (!current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
     if (current.amount !== current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
+    if (current.sectionPosition !== current.state.section.position) throw new Error("Finish adjusting the section plane before capturing");
     if (lastReported.current !== current.state.revision ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) {
       throw new Error("The view is still updating. Capture it again once it has settled.");
@@ -48,7 +51,7 @@ export function useRenderReports({ model, state, amount, active, placements, res
   useFrame(() => {
     const current = latest.current;
     if (!current.active || contextLost.current || lastReported.current === current.state.revision || current.model.topologyRevision !== current.state.topologyRevision ||
-        current.amount !== current.state.explode ||
+        current.amount !== current.state.explode || current.sectionPosition !== current.state.section.position ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) return;
     lastReported.current = current.state.revision;
     const camera = controller.camera;
@@ -64,13 +67,18 @@ export function useRenderReports({ model, state, amount, active, placements, res
     const selectedPlacement = visible.find((item) => item.node.id === current.state.selectedFace?.nodeId);
     const selectedFace = selectedPlacement?.part.faces.find((face) => face.id === current.state.selectedFace?.faceId);
     let selectedFaceScreen: number[] | null = null;
-    if (selectedFace && selectedPlacement) {
-      const point = new Vector3(...selectedFace.center).applyMatrix4(new Matrix4().fromArray(selectedPlacement.matrix));
+    const visibleFace = selectedFace && selectedPlacement
+      ? visibleFacePoint(selectedPlacement.part, selectedFace, selectedPlacement.matrix, current.state.section) : null;
+    if (visibleFace && selectedPlacement) {
+      const point = new Vector3(...visibleFace).applyMatrix4(new Matrix4().fromArray(selectedPlacement.matrix));
       point.sub(new Vector3(...origin)).project(camera);
       selectedFaceScreen = [(point.x + 1) * size.width / 2, (1 - point.y) * size.height / 2];
     }
     const edgePlacement = visible.find((item) => item.node.id === current.state.selectedEdge?.nodeId);
     const selectedEdge = edgePlacement?.part.edges?.find((edge) => edge.id === current.state.selectedEdge?.edgeId);
+    // Report only the retained portion of a partially cut native edge.
+    const clippedEdge = selectedEdge && edgePlacement && current.state.section.enabled
+      ? clipCadEdges([selectedEdge], edgePlacement.matrix, current.state.section).positions : null;
     const report: RenderReport = {
       revision: current.state.revision,
       modelHash: current.model.source.sha256,
@@ -78,12 +86,13 @@ export function useRenderReports({ model, state, amount, active, placements, res
       visibleParts: visible.length,
       selectedIds: current.state.selectedIds,
       selectedFace: current.state.selectedFace,
-      highlightedTriangles: selectedFace?.triangleCount ?? 0,
+      highlightedTriangles: selectedFace && selectedPlacement
+        ? visibleFaceTriangleCount(selectedPlacement.part, selectedFace, selectedPlacement.matrix, current.state.section) : 0,
       selectedFaceScreen,
       selectedEdge: current.state.selectedEdge,
-      highlightedSegments: selectedEdge ? selectedEdge.positions.length / 3 - 1 : 0,
+      highlightedSegments: clippedEdge ? clippedEdge.length / 6 : selectedEdge ? selectedEdge.positions.length / 3 - 1 : 0,
       selectedEdgeScreen: selectedEdge && edgePlacement
-        ? edgeScreenPoint(selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
+        ? edgeScreenPoint(clippedEdge ?? selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
       bounds: mergeBounds(visible.map((part) => part.bounds)),
       positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
       renderer: "React Three Fiber / WebGL2",
@@ -91,6 +100,7 @@ export function useRenderReports({ model, state, amount, active, placements, res
       geometryDefinitions: resources.size,
       geometryIds: visible.map((part) => ({ id: part.node.id, geometry: resources.get(part.part).geometry.uuid })),
       camera: controller.snapshot(), appearance: current.state.appearance, materialFinish: current.state.materialFinish,
+      section: { ...current.state.section },
       projectedBounds: projected.length ? {
         min: [0, 1, 2].map((axis) => Math.min(...projected.map((point) => point[axis]))),
         max: [0, 1, 2].map((axis) => Math.max(...projected.map((point) => point[axis]))),

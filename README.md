@@ -83,7 +83,7 @@ For Copilot CLI, start in the design folder, allow access to the workbench when 
 
 ## Visual Review
 
-The first-party desktop canvas opens ordinary STEP snapshots, supports exploded views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
+The first-party desktop canvas opens ordinary STEP snapshots, supports exploded views, section views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. Section view looks inside an assembly: choose an X, Y or Z cutting plane, adjust its position and flip the visible side. This is a display-only cutaway, not a change to the STEP or print geometry. Cut surfaces are visual aids, not newly created CAD faces or evidence of measured clearance. Use geometric inspection for dimensions, and include the section settings when discussing a captured gap or internal feature. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
 
 The imported `ensure-dev.mjs` command prints a loopback URL scoped to the selected project. It reuses a matching viewer or chooses a free port in 4178-4198; open the printed URL in your browser. Keep it open while regenerating. No global viewer configuration is changed.
 

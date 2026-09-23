@@ -56,7 +56,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     canvases: [createCanvas({
       id: "cad-explorer",
       displayName: "CAD Explorer",
-      description: "Local STEP assemblies with exact face and edge references, exploded views, Studio appearance and saved drawing reviews.",
+      description: "Local STEP assemblies with exact face and edge references, visual section cutaways, exploded views, Studio appearance and saved drawing reviews.",
       inputSchema: objectSchema({
         projectRoot: { type: "string", description: "Authorized CAD project root; defaults to this workbench checkout." },
         file: { type: "string", description: "STEP path inside that root. Omit to restore this setup or load the demo." },

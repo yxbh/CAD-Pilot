@@ -1,4 +1,5 @@
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mjs";
+import { SECTION_AXES } from "./section.mjs";
 
 export const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const ids = { type: "array", items: { type: "string" }, maxItems: 500 };
@@ -46,6 +47,12 @@ export const COMMANDS = Object.freeze({
   set_projection: command("Switch perspective or orthographic projection while retaining viewing direction and target-plane scale.", { projection: { enum: PROJECTIONS } }, ["projection"]),
   set_appearance: command("Choose Inspect or Studio and a visual finish. Source CAD colors and geometry stay unchanged.", {
     mode: { enum: ["inspect", "studio"] }, finish: { enum: MATERIAL_FINISHES }, showEdges: { type: "boolean" },
+  }),
+  set_section: command("Set one visual cutaway plane in original model-world millimeters. Display-derived caps do not modify, export or measure CAD geometry.", {
+    enabled: { type: "boolean" },
+    axis: { enum: SECTION_AXES },
+    position: { type: "number", description: "Plane coordinate on the model's world axes, within the committed visible displayed bounds. Exploded offsets are visual, not physical measurements." },
+    flipped: { type: "boolean", description: "False keeps coordinates at or below the plane; true keeps coordinates at or above it." },
   }),
   fit_view: command("Explicitly frame visible parts, including their exploded positions."),
   reset_view: command("Reassemble without moving the camera or changing STEP geometry."),

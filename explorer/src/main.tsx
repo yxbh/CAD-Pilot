@@ -6,14 +6,17 @@ import { createDesktopHost, type CameraState, type ViewerHost } from "./host.ts"
 import { useReviews } from "./useReviews.ts";
 import { useSelection } from "./useSelection.ts";
 import { useViewCapture } from "./useViewCapture.ts";
+import { useSectionControl } from "./useSectionControl.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
 import {
   Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen,
   Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
+  Slice,
 } from "lucide-react";
 import { axisViews, type ViewPreset } from "./camera.ts";
 import { IconButton } from "./ui/IconButton";
 import { ImportWarnings } from "./ui/ImportWarnings.tsx";
+import { SectionPanel } from "./ui/SectionPanel.tsx";
 import "./style.css";
 
 class ViewerBoundary extends React.Component<{ children: React.ReactNode }, { error: string }> {
@@ -67,6 +70,7 @@ export function App({ host }: { host: ViewerHost }) {
   const { select, copySelection, setAutoCopy, copyStatus, autoCopyEnabled, autoCopyPending, dismissCopyStatus } = useSelection({
     host, model, state, latest, run, onError: reportError,
   });
+  const section = useSectionControl({ model, state, amount, latest, queue, run, onError: reportError });
 
   useEffect(() => {
     let active = true;
@@ -173,7 +177,13 @@ export function App({ host }: { host: ViewerHost }) {
                 onClick={() => run("set_appearance", { mode: "inspect" })} />
               <IconButton label="Studio appearance" icon={Sun} aria-pressed={state?.appearance === "studio"}
                 onClick={() => run("set_appearance", { mode: "studio" })} />
-              <IconButton label="Appearance settings" icon={SlidersHorizontal} aria-expanded={appearanceOpen} onClick={() => setAppearanceOpen(!appearanceOpen)} />
+              <IconButton label="Appearance settings" icon={SlidersHorizontal} aria-expanded={appearanceOpen}
+                onClick={() => { setAppearanceOpen(!appearanceOpen); section.setOpen(false); }} />
+            </div>
+            <div className="tool-group" role="group" aria-label="Section view">
+              <IconButton label="Section view" icon={Slice} aria-expanded={section.open}
+                className={state?.section.enabled ? "section-active" : ""}
+                onClick={() => { section.setOpen(!section.open); setAppearanceOpen(false); }} />
             </div>
             <div className="tool-group" role="group" aria-label="Selection mode">
               <IconButton label="Faces" icon={ScanFace} aria-pressed={state?.selectionMode === "face"} onClick={() => run("set_selection_mode", { mode: "face" })} />
@@ -198,13 +208,14 @@ export function App({ host }: { host: ViewerHost }) {
         <label><input type="checkbox" checked={state?.showEdges ?? true} onChange={(event) => run("set_appearance", { showEdges: event.target.checked })} /> Outlines</label>
         <p>Visual finish only. STEP colors and geometry are unchanged.</p>
       </div>}
+      {section.open && !drawingActive && <SectionPanel control={section} busy={busy} />}
       <section className={`workspace${treeOpen ? "" : " panel-closed"}`}>
         <div className="import-warnings-layer" ref={setWarningsTarget} />
         <div className="viewport">
           <div className="live-scene" aria-hidden={drawingActive} inert={drawingActive}>
           {ready ? (
             <ViewerBoundary key={state.topologyRevision}>
-              <Scene model={model} state={state} amount={amount} active={!drawingActive} onSelect={select}
+              <Scene model={model} state={state} amount={amount} sectionPosition={section.position} active={!drawingActive} onSelect={select}
                 onError={reportError} registerCapture={registerCapture} onRendered={rendered} onCameraChange={saveCamera} onView={chooseView} />
             </ViewerBoundary>
           ) : <div className="empty">{state?.error ? "No model to display. Open a STEP file to retry." : "Preparing the model..."}</div>}
@@ -227,6 +238,9 @@ export function App({ host }: { host: ViewerHost }) {
             <span>{activeReview ? `${Math.round(activeReview.pose.explode * 100)}% exploded` : ""}</span>
             <span>{activeReview?.pose.camera.projection === "orthographic" ? "Orthographic (parallel)" : "Perspective"}</span>
             <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "plastic"}` : "Inspect"}</span>
+            <span>{activeReview?.pose.section?.enabled
+              ? `${activeReview.pose.section.axis.toUpperCase()} section at ${activeReview.pose.section.position.toFixed(2)} mm${activeReview.pose.section.flipped ? " / flipped" : ""}`
+              : "Section off"}</span>
             <p>Captured view</p>
             <span>Confirmed saves are stored on this computer. Unconfirmed marks stay only in this panel and will not survive reload. Download or copy preserves an image, not editable drawing history.</span>
           </div> : <>

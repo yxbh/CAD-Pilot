@@ -37,7 +37,7 @@ from OCP.TCollection import TCollection_AsciiString, TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TDF import TDF_Label, TDF_Tool
 from OCP.TDocStd import TDocStd_Document
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_VERTEX
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_SOLID, TopAbs_VERTEX
 from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
@@ -404,8 +404,18 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
     bounds["max"] = [max(bounds["max"][i], native[i + 3]) for i in range(3)]
     if not all(math.isfinite(v) for v in bounds["min"] + bounds["max"]):
         raise ConversionError("Part has non-finite native geometry bounds.")
+    # Display caps are only meaningful when every face bounds a native solid; loose faces or shells stay uncapped.
+    all_faces = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    solid_faces = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    solids = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+    TopExp.MapShapes_s(shape, TopAbs_FACE, all_faces)
+    TopExp.MapShapes_s(shape, TopAbs_SOLID, solids)
+    for index in range(1, solids.Extent() + 1):
+        TopExp.MapShapes_s(solids.FindKey(index), TopAbs_FACE, solid_faces)
+    section_caps = solids.Extent() > 0 and solid_faces.Extent() == all_faces.Extent()
     return {"positions": positions, "normals": normals, "indices": indices, "bounds": bounds,
-            "faces": face_records, "edges": _edges(shape, budget, warnings)}
+            "faces": face_records, "edges": _edges(shape, budget, warnings),
+            "sectionCaps": section_caps}
 
 
 def convert_step(input_path: str | Path) -> dict:
