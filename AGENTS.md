@@ -25,4 +25,3 @@ This repository owns reusable tooling and guidance, not every design project. Re
 - Treat screenshots and geometry selections as revision-specific. Confirm the highlighted target before an ambiguous edit; preserve unaffected dimensions.
 - Do not send G-code to a printer or publish models without explicit approval.
 - Do not change global Git identity, switch GitHub accounts, commit, or push unless requested. This checkout uses a repository-local personal identity.
-- Use tools/gh-personal.ps1 for GitHub CLI operations on CAD-Pilot, and its -Git switch for authenticated Git operations such as push. It scopes personal credentials to that process without switching global accounts. Bare gh or Git credential helpers may otherwise use the work account.

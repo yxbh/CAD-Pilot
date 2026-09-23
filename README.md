@@ -38,8 +38,6 @@ Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the
 
 `AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
 
-For this personal repository, `tools\gh-personal.ps1` runs GitHub CLI commands with the configured personal account. Its `-Git` switch also scopes Git authentication to that command, for example `.\tools\gh-personal.ps1 -Git push -u origin <branch>`, without changing global Git identity or switching the machine's active GitHub account.
-
 ## Start a Design
 
 The project template is a proposed convention, not a mandatory structure. Use it for new projects unless another layout is preferred. For existing projects, respect their layout and instructions; do not reorganize them merely to match the template.
