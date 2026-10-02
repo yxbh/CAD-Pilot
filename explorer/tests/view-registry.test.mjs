@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { connect, createServer } from "node:net";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import test from "node:test";
 import { createViewRegistry } from "../server/view-registry.mjs";
-import { acquireViewOwner } from "../server/view-owner.mjs";
+import { acquireViewOwner, reclaimStaleEndpoint } from "../server/view-owner.mjs";
 import { canonicalProjectRoot, explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
@@ -157,7 +159,7 @@ test("view ownership tolerates temporary directories longer than Unix socket lim
   assert.equal(Buffer.concat(output).toString(), "released");
 });
 
-test("Windows releases view ownership after the owning process is terminated", { skip: process.platform !== "win32" }, async (t) => {
+test("view ownership is released after the owning process is terminated", async (t) => {
   const { runtimeRoot } = await createTestRuntime(t);
   const viewKey = `crash-${randomUUID()}`;
   const moduleUrl = pathToFileURL(path.join(explorerRoot, "server", "view-owner.mjs")).href;
@@ -168,15 +170,38 @@ test("Windows releases view ownership after the owning process is terminated", {
     await once(child.stdout, "data");
     await assert.rejects(acquireViewOwner(runtimeRoot, viewKey), (error) => error.code === "view_in_use");
     const stopped = once(child, "exit");
-    child.kill();
+    // A forced kill skips cleanup, leaving a Unix socket file behind as a crash would.
+    child.kill("SIGKILL");
     await stopped;
     const release = await acquireViewOwner(runtimeRoot, viewKey);
+    await assert.rejects(acquireViewOwner(runtimeRoot, viewKey), (error) => error.code === "view_in_use");
     await release();
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       const stopped = once(child, "exit");
-      child.kill();
+      child.kill("SIGKILL");
       await stopped;
     }
   }
+});
+
+test("reclaiming a stale endpoint restores one that a live owner bound concurrently", { skip: process.platform === "win32" }, async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cpv-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const address = path.join(directory, "owner.sock");
+  const owner = createServer((socket) => socket.destroy());
+  await new Promise((resolve) => owner.listen(address, resolve));
+  t.after(() => new Promise((resolve) => owner.close(resolve)));
+  const connects = (target) => new Promise((resolve) => {
+    const socket = connect(target);
+    socket.once("connect", () => { socket.destroy(); resolve(true); });
+    socket.once("error", () => resolve(false));
+  });
+  let probes = 0;
+  // The first probe reports the endpoint stale, as if the live owner bound it just afterwards.
+  const isLive = async (target) => ++probes > 1 && connects(target);
+  assert.equal(await reclaimStaleEndpoint(address, { isLive }), false);
+  assert.equal(probes, 2);
+  assert.ok(await connects(address));
+  assert.deepEqual(await readdir(directory), ["owner.sock"]);
 });
