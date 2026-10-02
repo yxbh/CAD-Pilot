@@ -90,7 +90,7 @@ test("a pasted reference resolves from immutable cache without its original canv
 });
 
 test("chip descriptors use the maintained runtime and remain inspectable after service restart", async (t) => {
-  assert.equal(runtimeRoot, path.join(workbenchRoot, ".github", "extensions", "cad-explorer", ".runtime"));
+  assert.equal(runtimeRoot, path.join(workbenchRoot, "explorer", ".runtime"));
   const fixture = await inspectionFixture(t);
   const { service, reference, model } = fixture;
   const prepared = await service.prepareClipboardReference(reference);

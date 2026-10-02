@@ -13,7 +13,8 @@ export function workbenchPythonPath(root, platform = process.platform) {
 }
 
 export const workbenchPython = workbenchPythonPath(workbenchRoot);
-export const runtimeRoot = path.join(workbenchRoot, ".github", "extensions", "cad-explorer", ".runtime");
+// Kept outside .github/extensions: the Copilot app's repository-trust check counts every file there, including ignored data.
+export const runtimeRoot = path.join(explorerRoot, ".runtime");
 
 export function isInside(root, target) {
   const relative = path.relative(root, target);

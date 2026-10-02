@@ -89,7 +89,9 @@ Copy marked image and Save marked image include annotations. The saved metadata 
 
 ## Local data
 
-Saved models, source snapshots, references, view setups, drawing reviews and captures live in `.github/extensions/cad-explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data.
+Saved models, source snapshots, references, view setups, drawing reviews and captures live in `explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data.
+
+Keep `.github/extensions/cad-explorer/` limited to the entry point. The Copilot app's repository-trust check counts every file under `.github/extensions/`, including Git-ignored data, against its size, entry-count and depth limits, and refuses to accept the extension when they are exceeded.
 
 The runtime directory is local and Git-ignored. It is not a backup of a design project. Preserve useful references, snapshots, drawings and images before deliberately deleting runtime data or moving the checkout to another absolute path.
 
