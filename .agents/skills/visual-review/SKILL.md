@@ -7,11 +7,15 @@ description: 'Choose and open a STEP viewer and co-design CAD with a non-CAD use
 
 ## Choose the Viewer
 
-Prefer the maintained `cad-explorer` canvas whenever it is available in the current host, even when the imported cad skill describes starting its browser viewer. Keep using that skill for build123d generation and the appropriate geometric inspection; choosing our viewer does not replace the modeling skill.
+Prefer the maintained CAD Explorer whenever it can run, even when the imported cad skill describes starting its browser viewer. Keep using that skill for build123d generation and the appropriate geometric inspection; choosing our viewer does not replace the modeling skill.
 
-Check the available canvas types, inspect `cad-explorer` capabilities, and pass the selected design directory as `projectRoot` and its actual STEP as `file`. Reuse an existing panel for the same setup. Do not omit the file and accidentally show the demo, move the model into the workbench, or regenerate geometry merely to view an existing STEP. Build and reload the maintained extension when needed using the [Explorer instructions](../../../explorer/README.md); a failed build/connection is an explicit error, not a reason to silently show another viewer.
+In the Copilot desktop, use the `cad-explorer` canvas: check the available canvas types, inspect its capabilities, and pass the selected design directory as `projectRoot` and its actual STEP as `file`. Reuse an existing panel for the same setup.
 
-When the maintained canvas is unavailable in the current host, use the imported browser viewer and CLI workflow described by the cad skill. This includes hosts without the canvas integration; access to an external workbench path does not register its project extension. Do not imply a separate VS Code extension exists or that desktop native reference chips work in another chat host.
+In other hosts that can show a local web page, such as Claude Code, run `node <workbench>/explorer/scripts/explorer.mjs open <project-relative STEP>` from the design project's root. Show the returned URL to the user; in the Claude desktop app, open it in the built-in browser pane and keep reusing that tab. After regenerating, run the same `open` again: it reloads the running viewer and keeps its URL and camera. Do not start, kill or restart viewers yourself, and do not hand out a new link while the old one works; the viewer outlives the chat session, and `stop` is only for when the user is finished. Drive the view with `do <action> key=value ...`, for example `do set_view preset=top` (list actions with `actions`), and use `capture <project-relative .png>` while the page is open when you need an image.
+
+Do not omit the file and accidentally show the demo, move the model into the workbench, or regenerate geometry merely to view an existing STEP. Build the Explorer (and reload the Copilot extension) when needed using the [Explorer instructions](../../../explorer/README.md); a failed build, start or connection is an explicit error, not a reason to silently show another viewer.
+
+Use the imported browser viewer and CLI workflow described by the cad skill only when the user asks for it or the maintained Explorer cannot run. Access to an external workbench path does not register its Copilot project extension. Do not imply a separate VS Code extension exists or that Copilot's native reference chips work in another chat host.
 
 ## Co-Design Workflow
 
@@ -25,9 +29,9 @@ When the maintained canvas is unavailable in the current host, use the imported 
 
 ## References and Tool Boundaries
 
-Maintained-viewer references use `cadproto:v2` topology/occurrence/face, edge or whole-part identities. Use Faces, Edges or Parts in the toolbar; edge references identify actual STEP edges, not tessellation outlines. Inspect the token in a pasted JSON descriptor with `cad_explorer_inspect` or the canvas's `inspect_reference` action. Do not feed these IDs into the imported inspector. Imported `@cad[...]` references belong to that viewer's CLI inspection workflow and must be resolved there.
+Maintained-viewer references use `cadproto:v2` topology/occurrence/face, edge or whole-part identities. Use Faces, Edges or Parts in the toolbar; edge references identify actual STEP edges, not tessellation outlines. Resolve a pasted reference with `cad_explorer_inspect` or the canvas's `inspect_reference` action in Copilot, or with `explorer.mjs inspect '<pasted text>'` elsewhere. Outside Copilot, a copied reference is a readable summary line followed by its `cadproto:v2` address. Do not feed these IDs into the imported inspector. Imported `@cad[...]` references belong to that viewer's CLI inspection workflow and must be resolved there.
 
-The maintained canvas exposes explicit state, selection, view, explosion and capture actions. Read their returned state before claiming to know what is selected or visible. User clicks can copy references to the clipboard, but do not insert or send chat messages. The imported browser viewer does not gain these canvas actions merely because both viewers are called CAD Explorer.
+The maintained Explorer exposes explicit state, selection, view, explosion, section and capture actions: canvas actions in Copilot, and `explorer.mjs` commands elsewhere. Read their returned state before claiming to know what is selected or visible. User clicks can copy references to the clipboard, but do not insert or send chat messages. The imported browser viewer does not gain these canvas actions merely because both viewers are called CAD Explorer.
 
 Use the maintained Explorer's section view when a bridge, cover or surrounding body hides a feature the user wants to inspect. A cutting plane changes the display only; it does not cut the source STEP. Preserve the view direction and record the axis, plane position, visible side and any exploded placement with feedback. Artificial cut surfaces are not selectable native CAD faces or edges. A visible gap is useful context, but dimensional clearance still requires geometry measurement and printed fit still requires physical evidence.
 

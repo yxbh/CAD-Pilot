@@ -4,7 +4,7 @@ Personal workbench for conversational CAD design and 3D-print preparation with G
 
 ## Stack and Setup
 
-The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
+The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas and a design-project browser viewer that Claude Code and other hosts can open and drive; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
 
 Prerequisites: Windows or macOS, Git, uv, and Node.js 22.18+ or 24+. Node's built-in TypeScript support is used by Explorer tests. PowerShell 7 is needed for the PowerShell examples. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
 
@@ -19,7 +19,7 @@ Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` 
 
 The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The pinned imported CLI has a provenance-recorded local API patch, not a silent upstream refresh. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes the imported common/export tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
 
-For the first-party Copilot desktop canvas, build its separate package:
+For the first-party CAD Explorer, build its separate package:
 
 ```powershell
 Push-Location explorer
@@ -36,7 +36,7 @@ Reload project extensions and open **CAD Explorer**. Its [README](explorer/READM
 
 Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Check all** task runs the same command. **Test Python** runs `uv`/pytest only, and **Test Explorer core** runs the non-browser Node checks. No default test task is imposed. The imported browser viewer is independent: install it with `npm --prefix .agents/skills/cad/explorer ci` when using that fallback, and use its separate checks below.
 
-`AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained canvas when available, with the imported browser/CLI workflow as the fallback for other hosts. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
+`AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained Explorer (the Copilot canvas, or the design-project viewer in other hosts), with the imported browser/CLI workflow as the fallback. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
 
 ## Start a Design
 
@@ -54,7 +54,7 @@ Push-Location ../first-part
 New-Item -ItemType Directory -Path outputs -Force | Out-Null
 & $Python "$Cad/scripts/step" source/mounting_plate.py -o outputs/mounting_plate.step --stl mounting_plate.stl --3mf mounting_plate.3mf
 & $Python "$Cad/scripts/inspect" refs outputs/mounting_plate.step --facts --planes --positioning
-node "$Cad/explorer/scripts/ensure-dev.mjs" --workspace-root "$PWD" --root-dir "$PWD" --file outputs/mounting_plate.step --json
+node "$Workbench/explorer/scripts/explorer.mjs" open outputs/mounting_plate.step
 Pop-Location
 ```
 
@@ -69,7 +69,7 @@ Push-Location ../existing-part
 New-Item -ItemType Directory -Path 'artifacts/print files' -Force | Out-Null
 & $Python "$Cad/scripts/step" models/part.py -o 'artifacts/print files/part.step' --stl part.stl --3mf part.3mf
 & $Python "$Cad/scripts/inspect" refs 'artifacts/print files/part.step' --facts --planes --positioning
-node "$Cad/explorer/scripts/ensure-dev.mjs" --workspace-root "$PWD" --root-dir "$PWD" --file 'artifacts/print files/part.step' --json
+node "$Workbench/explorer/scripts/explorer.mjs" open 'artifacts/print files/part.step'
 Pop-Location
 ```
 
@@ -81,9 +81,9 @@ For Copilot CLI, start in the design folder, allow access to the workbench when 
 
 ## Visual Review
 
-The first-party desktop canvas opens ordinary STEP snapshots, supports exploded views, section views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. Section view looks inside an assembly: choose an X, Y or Z cutting plane, adjust its position and flip the visible side. This is a display-only cutaway, not a change to the STEP or print geometry. Cut surfaces are visual aids, not newly created CAD faces or evidence of measured clearance. Use geometric inspection for dimensions, and include the section settings when discussing a captured gap or internal feature. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
+The maintained Explorer, as the Copilot canvas or the design-project viewer that `explorer/scripts/explorer.mjs open` starts and reuses, opens ordinary STEP snapshots, supports exploded views, section views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. Section view looks inside an assembly: choose an X, Y or Z cutting plane, adjust its position and flip the visible side. This is a display-only cutaway, not a change to the STEP or print geometry. Cut surfaces are visual aids, not newly created CAD faces or evidence of measured clearance. Use geometric inspection for dimensions, and include the section settings when discussing a captured gap or internal feature. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
 
-The imported `ensure-dev.mjs` command prints a loopback URL scoped to the selected project. It reuses a matching viewer or chooses a free port in 4178-4198; open the printed URL in your browser. Keep it open while regenerating. No global viewer configuration is changed.
+The imported viewer is the fallback when the maintained Explorer is unavailable. Its `node "$Cad/explorer/scripts/ensure-dev.mjs" --workspace-root "$PWD" --root-dir "$PWD" --file <step> --json` command prints a loopback URL scoped to the selected project. It reuses a matching viewer or chooses a free port in 4178-4198; open the printed URL in your browser. Keep it open while regenerating. No global viewer configuration is changed.
 
 1. Select a face or edge and paste its copied `@cad[...]` reference into chat.
 2. Describe what feels wrong in plain language; attach a marked screenshot, sketch, or reference picture when easier. Draw and screenshot controls are available in the viewer.
@@ -134,4 +134,4 @@ Python checks cover sample geometry, direct imported CLI generation/inspection, 
 
 For the pinned viewer, prefer desktop: resizing to mobile can retain excessive zoom, and the isometric reset control can overlap the top-view control (keyboard activation is available). Recheck these limitations when updating the viewer. The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
 
-The viewer remains running after `ensure-dev.mjs` exits. Its JSON response includes its process ID; verify that process before stopping it with `Stop-Process -Id <pid>`. Do not stop unrelated Node processes. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.
+The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. The imported viewer remains running after `ensure-dev.mjs` exits. Its JSON response includes its process ID; verify that process before stopping it with `Stop-Process -Id <pid>`. Do not stop unrelated Node processes. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.

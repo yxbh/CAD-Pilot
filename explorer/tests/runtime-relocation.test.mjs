@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { endpointFile, readEndpoint, writeEndpoint } from "../server/endpoint.mjs";
 import path from "node:path";
 import test from "node:test";
 import { relocateRuntime } from "../scripts/relocate-runtime.mjs";
@@ -75,7 +76,13 @@ async function fixture(t) {
 test("relocation preserves exact snapshots and annotated reviews while updating view and descriptor paths", async (t) => {
   const f = await fixture(t);
   const hashes = new Map(await Promise.all(f.unchanged.map(async (name) => [name, hash(await readFile(path.join(f.source, name)))])));
+  const token = "d".repeat(48);
+  const endpoint = { url: `http://127.0.0.1:4321/${token}/`, port: 4321, token, pid: 7 };
+  await writeEndpoint(endpointFile(f.source, viewKey), endpoint);
   const result = await relocateRuntime(f);
+  // Endpoint records carry no runtime paths: they move unchanged and stay readable only by their owner.
+  assert.deepEqual(await readEndpoint(endpointFile(f.destination, viewKey)), endpoint);
+  if (process.platform !== "win32") assert.equal((await stat(endpointFile(f.destination, viewKey))).mode & 0o777, 0o600);
   assert.ok(result.files >= hashes.size + f.descriptors.length + 1);
   await assert.rejects(lstat(f.source), { code: "ENOENT" });
   for (const [name, sha] of hashes) assert.equal(hash(await readFile(path.join(f.destination, name))), sha);

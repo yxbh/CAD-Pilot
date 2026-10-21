@@ -1,6 +1,6 @@
 # CAD Explorer
 
-Maintained first-party STEP viewer for the project-scoped GitHub Copilot desktop canvas. The application lives here; `.github\extensions\cad-explorer\extension.mjs` is only the Copilot entry point. The imported CAD skill remains independent and unchanged. Python source owns a design's intent; STEP and preview meshes do not carry its parametric history.
+Maintained first-party STEP viewer for the project-scoped GitHub Copilot desktop canvas, and a local browser viewer that other agent hosts, such as Claude Code, can open and drive from a design project. The application lives here; `.github\extensions\cad-explorer\extension.mjs` is only the Copilot entry point. The imported CAD skill remains independent and unchanged. Python source owns a design's intent; STEP and preview meshes do not carry its parametric history.
 
 ## Build and open
 
@@ -22,16 +22,29 @@ The canvas accepts an explicit authorized `projectRoot`, a STEP `file` inside it
 
 A remembered setup includes the active model, camera, hidden/exploded parts, section settings and drawing reviews. Reopen its existing panel rather than creating a linked duplicate. Explorer keeps one live panel per setup; independent `viewId` values allow side-by-side setups. Equivalent Windows path spellings resolve to the same owner. An exclusive OS lease also prevents another Explorer process from writing that setup simultaneously. Ownership is released if the owning process terminates: Windows releases the named pipe, and on macOS and Linux the next Explorer to open the setup reclaims a socket file that no process is listening on.
 
-For a standalone browser, capture the workbench path before switching to the intended design directory:
+## Use from a design project
 
-```powershell
-$Workbench = $PWD.Path
-Push-Location ..\my-design
-node "$Workbench\explorer\server\standalone.mjs"
-Pop-Location
+Agent hosts without the Copilot canvas, such as Claude Code, use `scripts/explorer.mjs`. Run it from the design project's root with the project-relative STEP path; the project folder is the viewer's root. Results are JSON, and failures exit nonzero with one plain sentence. With `$Workbench` holding the workbench path, the command is the same in bash and PowerShell:
+
+```text
+node "$Workbench/explorer/scripts/explorer.mjs" open outputs/part.step
 ```
 
-The process prints a loopback URL and stays attached to the launching terminal. It does not submit Copilot messages. `CAD_EXPLORER_VIEW` selects a different remembered setup.
+`open` starts this project's viewer in the background and returns its URL. Show that URL to the user: in the Claude desktop app open it in the built-in browser pane, otherwise in a local browser. The viewer outlives the command and the chat session that started it. After regenerating the STEP, run the same `open` again: it reloads the file into the running viewer, keeps the camera, returns the same URL and never starts a competing viewer. Each project and setup keeps one address across restarts, so earlier links work again after the viewer restarts unless another program has taken its port; an open page reconnects by itself.
+
+| Command | Purpose |
+| --- | --- |
+| `open [file.step]` | Start or reuse the project's viewer and load the STEP. Without a file it restores the remembered setup. |
+| `state` | Model, camera, selection, section and the renderer's acknowledgement. `rendered` is the last view an open page drew; when it is null or older than `revision`, nobody has seen the current view yet. |
+| `actions` | The view actions accepted by `do`, with their inputs. |
+| `do <action> [key=value ...]` | Run a view action, for example `do set_view preset=top`, `do set_section enabled=true axis=x position=12` or `do set_explode amount=0.4`. Values that read as JSON keep their type. One JSON object also works where the shell preserves quotes. |
+| `capture [path.png]` | Save an image of the view, optionally copied into a `.png` path inside the project. |
+| `inspect <reference>` | Resolve pasted reference text, a `cadproto:v2` address, a descriptor JSON path or Copilot chip markup. No viewer needs to be running. |
+| `stop` | Stop the project's viewer. Its address, saved setup and reviews are kept. |
+
+`open` fails with the build command when the Explorer has not been built, rather than handing out a URL to an error page. Simultaneous `open` calls for one setup share a single viewer. View actions return the committed state immediately. `capture` waits until an open page renders the current view; with no page open it reports the URL to open. `--view <name>` (or `CAD_EXPLORER_VIEW`) selects an independent setup for side-by-side comparisons. Copilot's draft-attachment action is not available here.
+
+`server/standalone.mjs` is the same viewer attached to a terminal for manual use. It also reuses a running viewer for the project: started again with a file, it reloads that file there and exits.
 
 ## Model, views and appearance
 
@@ -61,13 +74,13 @@ Use the Faces, Edges or Parts toolbar buttons to choose what to select. Faces pr
 
 Section clipping does not mint topology. A retained face or edge keeps its exact original `cadproto:v2` identity, partially cut native edge polylines are trimmed before screen-space hit testing, and entities wholly outside the retained half are not pickable. Moving a section plane clears a selected entity only when the displayed pose leaves none of it on the retained side.
 
-Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. Paste into the desktop's rich composer to create a native file-reference chip. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
+Auto-copy copies the selected reference inside the user's click gesture; Copy reference also works explicitly. In the Copilot canvas, paste into the desktop's rich composer to create a native file-reference chip. The design-project viewer instead copies readable text for any chat: a summary line such as `CAD Explorer | part.step | Lid | Face f6 (plane, 260.00 mm^2)` followed by the exact `cadproto:v2` address. Moving over geometry never changes selection or the clipboard; clicking and copying never insert a draft attachment automatically and never send a message.
 
 Changing the auto-copy preference through a canvas action acknowledges the saved preference without waiting for a render, including while a drawing review pauses the live scene. It still checks a supplied view revision and does not copy anything by itself.
 
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
-`cad_explorer_inspect` resolves these references. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
+`cad_explorer_inspect` resolves these references in Copilot, and `explorer.mjs inspect` resolves them from a design project. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
 
 CAD kernel updates can change tessellation or topology ordering when a STEP is imported again, producing a new topology revision. Retained caches and their copied references are not rewritten to match the newer kernel; re-resolve selections against the newly generated or imported revision.
 
@@ -89,7 +102,7 @@ Copy marked image and Save marked image include annotations. The saved metadata 
 
 ## Local data
 
-Saved models, source snapshots, references, view setups, drawing reviews and captures live in `explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data.
+Saved models, source snapshots, references, view setups, drawing reviews and captures live in `explorer/.runtime/`. Pasted file-reference chips contain absolute descriptor paths; copy them again after relocating the data. Each design-project setup also keeps its address in `views/*.endpoint.json` and its background log in `views/*.log`. Both contain the viewer's access URL, so on macOS and Linux they are readable only by the current user, and relocation copies the address records unchanged. The address stays the same across restarts; to issue a new one, stop the viewer and delete its `.endpoint.json` file.
 
 Keep `.github/extensions/cad-explorer/` limited to the entry point. The Copilot app's repository-trust check counts every file under `.github/extensions/`, including Git-ignored data, against its size, entry-count and depth limits, and refuses to accept the extension when they are exceeded.
 
@@ -135,18 +148,19 @@ Preserve these contracts when changing their owners:
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
 | View ownership, file-cache invalidation and runtime relocation | `view-registry.test.mjs`, `inspection-cache.test.mjs`, `runtime-relocation.test.mjs` |
 | Test storage/inspection isolation and preference-only action acknowledgement | `runtime-isolation.test.mjs`, `copilot-host.test.mjs` |
+| Design-project viewer: one background viewer per setup, in-place reload, stable address across restarts, view actions, captures, references and gated shutdown | `launcher.test.mjs` |
 
 The service reports the actual rendered camera and topology revision, not just requested parameters. Browser clipboard behavior, native host chip presentation and delivery to the next user message remain separate acceptance checks. Synthetic scenarios do not certify large-assembly responsiveness, physical fit or manufacturing suitability.
 
 ## Maintenance boundaries
 
-`shared/commands.mjs` owns canvas action schemas and revision/render/review policies. The host adapter projects those definitions into SDK actions; server handlers still validate model identity, geometry, cameras and stored data in context. HTTP inputs and canvas schemas are deliberately not interchangeable. Reads and snapshot loads retain their existing revision semantics; explicit draft attachment and camera persistence require a current revision.
+`shared/commands.mjs` owns canvas action schemas and revision/render/review policies. The Copilot host adapter projects those definitions into SDK actions, and `scripts/explorer.mjs` offers the same canvas actions through `do`. `server/launcher.mjs` owns finding, starting, reusing and stopping a design project's viewer; `server/endpoint.mjs` owns its private address record. Only hosts that pass `onShutdown` expose the shutdown route; server handlers still validate model identity, geometry, cameras and stored data in context. HTTP inputs and canvas schemas are deliberately not interchangeable. Reads and snapshot loads retain their existing revision semantics; explicit draft attachment and camera persistence require a current revision.
 
 `server/model-import.mjs` stages each import privately, validates it, then atomically publishes complete immutable source/cache files with same-filesystem hard links. Existing files, including a concurrent import's winner, are verified rather than overwritten. Conversion/validation failures remove only private staging data. Once published, shared artifacts are retained even if later cleanup or view-metadata persistence fails: another view may already depend on them. The local runtime filesystem must support hard links; unsupported publication fails explicitly. `server.mjs` publishes the live model only after saving its view metadata. If cleanup also fails, the original import error/code/status remains primary and the cleanup diagnostic remains visible.
 
 Frontend lifetimes are feature-specific: `useSelection` handles selection/clipboard feedback, `useViewCapture` coordinates captured-review transitions, `useSectionControl` owns the uncommitted section-plane draft and its displayed range, and `useRenderReports` scopes queued sends and failures to the active model/view. Its revision bookkeeping is private; `Rig` uses named invalidation and capture-readiness operations instead of mutating report refs. Camera ownership stays in `Rig`/`CameraController`; drawing-save recovery stays in `useReviews`. Do not combine their cancellation counters or remove the model/view/unmount guards merely to share code.
 
-Services default to the durable runtime described above. Internal callers can supply a `runtimeRoot`; all service-owned storage, leases and reference inspection are scoped together. This is a test/service boundary, not a new canvas input or a change to existing saved paths.
+Services default to the durable runtime described above. Internal callers can supply a `runtimeRoot`; all service-owned storage, leases and reference inspection are scoped together. Launcher tests isolate real background viewers the same way through `CAD_EXPLORER_RUNTIME_ROOT`. This is a test/service boundary, not a new canvas input or a change to existing saved paths.
 
 ## Limits
 

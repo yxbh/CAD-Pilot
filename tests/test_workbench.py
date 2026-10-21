@@ -72,7 +72,7 @@ def test_viewer_guidance_covers_workbench_skill_and_project_template():
     ]
     for document in guidance:
         text = document.read_text(encoding="utf-8")
-        for required in ("cad-explorer", "available", "projectRoot", "file", "imported", "cadproto:v2", "@cad["):
+        for required in ("cad-explorer", "available", "projectRoot", "file", "imported", "cadproto:v2", "@cad[", "explorer.mjs"):
             assert required in text, f"{document}: missing viewer-routing contract {required}"
         assert "cad_explorer_inspect" in text
     skill = guidance[1].read_text(encoding="utf-8")
