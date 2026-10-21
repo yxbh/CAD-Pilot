@@ -8,7 +8,7 @@ Open this folder and explicitly provide the shared workbench path, or add both f
 
 Use the workbench's Python interpreter to invoke the imported `scripts/step` and `scripts/inspect` launchers from this project's root, following the direct commands in the workbench README.md. Choose the STEP destination with `-o`, using the same project-relative forward-slash path when inspecting it. Mesh sidecar paths are relative to the STEP directory. Keep review screenshots and decisions in the project's chosen review location; create `outputs/` or `reviews/` only when needed.
 
-For viewing, the shared visual-review skill prefers the maintained `cad-explorer` canvas when the current host provides it, with this project as the explicit root. Otherwise it uses the imported browser/CLI workflow. Providing a workbench path alone does not register its project-scoped extension, and the two viewers' reference formats are not interchangeable.
+For viewing, the shared visual-review skill prefers the maintained CAD Explorer with this project as the explicit root: the `cad-explorer` canvas in the Copilot desktop, or the workbench's `explorer/scripts/explorer.mjs` viewer in other hosts such as Claude Code. The imported browser/CLI workflow is the fallback. Providing a workbench path alone does not register its project-scoped extension, and the two viewers' reference formats are not interchangeable.
 
 ## Instruction Provenance
 

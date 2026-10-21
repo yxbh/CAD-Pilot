@@ -10,7 +10,7 @@ import { composerAttachment } from "./composer.mjs";
 import { importDiagnostics } from "../shared/diagnostics.mjs";
 import { ReviewStore, validateCamera } from "./reviews.mjs";
 import { atomicJson } from "./storage.mjs";
-import { createInspectionService } from "./inspection.mjs";
+import { createInspectionService, REFERENCE_FORMATS } from "./inspection.mjs";
 import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot as defaultRuntimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
 import { maxStepBytes, prepareModelSnapshot, validateStepPath } from "./model-import.mjs";
@@ -52,10 +52,17 @@ async function jsonBody(req, limit = 100_000) {
   }
 }
 
+export const viewKeyFor = (project, viewId) => hash(`${project}\n${viewId}`).slice(0, 24);
+
+// port/token let a launcher keep one address per setup across restarts; onShutdown enables POST api/shutdown for that host.
 export async function createExplorerServer({
   projectRoot = workbenchRoot, viewId = "default", file, runtimeRoot = defaultRuntimeRoot,
   addReferenceToChat, log = (message) => process.stderr.write(`${message}\n`),
+  referenceFormat = "copilot-ref", port = 0, token, onShutdown,
 } = {}) {
+  if (!REFERENCE_FORMATS.includes(referenceFormat)) throw new PrototypeError("bad_reference_format", `Unknown reference format: ${referenceFormat}`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new PrototypeError("bad_port", "port must be an integer from 0 to 65535");
+  if (token !== undefined && !/^[a-f0-9]{48}$/.test(token)) throw new PrototypeError("bad_token", "token must be 48 lowercase hexadecimal characters");
   const project = await canonicalProjectRoot(projectRoot);
   if (typeof viewId !== "string" || !viewId.length || viewId.length > 80) throw new PrototypeError("bad_view_id", "viewId must contain 1 to 80 characters");
   const usesDefaultStorage = runtimeRoot === defaultRuntimeRoot;
@@ -63,16 +70,16 @@ export async function createExplorerServer({
   runtimeRoot = await realpath(runtimeRoot);
   const inspection = usesDefaultStorage
     ? defaultInspection : createInspectionService({ runtimeRoot, workbenchRoot });
-  const viewKey = hash(`${project}\n${viewId}`).slice(0, 24);
+  const viewKey = viewKeyFor(project, viewId);
   const releaseOwner = await acquireViewOwner(runtimeRoot, viewKey);
-  try { return await startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner }); }
+  try { return await startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token, onShutdown }); }
   catch (error) {
     await releaseOwner();
     throw error;
   }
 }
 
-async function startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner }) {
+async function startOwnedService({ project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token: requestedToken, onShutdown }) {
   const { inspectReference, prepareClipboardReference } = inspection;
   const viewDir = path.join(runtimeRoot, "views");
   const modelDir = path.join(runtimeRoot, "models");
@@ -98,13 +105,14 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
   let closed = false;
   let closing;
   let initialization;
+  let initialized = false;
   let queue = Promise.resolve();
   let lastRendered = null;
   const clients = new Set();
   const children = new Set();
   const renderWaiters = new Set();
   const captures = new Map();
-  const token = randomBytes(24).toString("hex");
+  const token = requestedToken ?? randomBytes(24).toString("hex");
   let origin = "";
 
   const enqueue = (job) => {
@@ -138,6 +146,8 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
     projectRoot: project,
     runtimeRoot,
     rendered: lastRendered,
+    // False until the startup model (requested file, saved setup or demo) has been loaded or has failed.
+    initialized,
     parts: model?.nodes.filter((node) => node.partId).map(({ id, label, partId }) => ({ id, label, partId })) || [],
     selectedReferences: model ? state.selectedIds.map((id) => ({
       id,
@@ -221,7 +231,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new PrototypeError("bad_input", "Command input must be an object");
     if (name === "get_state") return getState();
     if (name === "inspect_reference") return inspectReference(input.reference);
-    if (name === "prepare_clipboard_reference") return prepareClipboardReference(input.reference);
+    if (name === "prepare_clipboard_reference") return prepareClipboardReference(input.reference, referenceFormat);
     if (name === "list_reviews") return reviews.list();
     if (name === "get_review") {
       const review = await reviews.get(input.id);
@@ -357,6 +367,11 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
         return respond(200, result);
       }
       if (route === "api/capture" && req.method === "POST") return respond(200, await captureImage());
+      if (route === "api/shutdown" && req.method === "POST" && onShutdown) {
+        respond(200, { stopping: true });
+        setImmediate(onShutdown);
+        return;
+      }
       if (route === "api/reviews" && req.method === "GET") return respond(200, await reviews.list());
       if (route === "api/reviews" && req.method === "POST") {
         const input = await jsonBody(req, 18 * 1024 * 1024);
@@ -384,7 +399,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
       }
       if (route === "api/clipboard-reference" && req.method === "POST") {
         const payload = await jsonBody(req);
-        return respond(200, await prepareClipboardReference(payload.reference));
+        return respond(200, await prepareClipboardReference(payload.reference, referenceFormat));
       }
       if (route === "api/add-reference" && req.method === "POST") {
         const payload = await jsonBody(req);
@@ -444,10 +459,18 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
   });
   server.requestTimeout = 150_000;
   server.headersTimeout = 15_000;
-  await new Promise((resolve, reject) => {
+  const listen = (candidate) => new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    server.listen(candidate, "127.0.0.1", () => { server.removeListener("error", reject); resolve(); });
   });
+  // A preferred port is only a convenience for stable links: another program may hold it, or Windows may have
+  // reserved it since the last start (EACCES), so any failure falls back to a free port.
+  try { await listen(port); }
+  catch (error) {
+    if (!port) throw error;
+    await listen(0);
+  }
+  server.on("error", (error) => log(`Explorer server: ${publicError(error)}`));
   origin = `http://127.0.0.1:${server.address().port}`;
 
   async function initialize() {
@@ -496,7 +519,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
   return {
     url: `${origin}/${token}/`,
     projectRoot: project,
-    initialize: () => initialization ??= initialize(),
+    initialize: () => initialization ??= initialize().finally(() => { initialized = true; }),
     execute,
     getState,
     captureImage,

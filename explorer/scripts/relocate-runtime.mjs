@@ -72,6 +72,8 @@ export async function relocateRuntime({ source, destination = runtimeRoot, workb
     for (const { name, directory } of before) {
       const [folder] = name.split(path.sep);
       if (directory || !name.endsWith(".json") || !["views", "references"].includes(folder)) continue;
+      // Endpoint records hold no runtime paths; copying them unchanged keeps their owner-only mode.
+      if (name.endsWith(".endpoint.json")) continue;
       const value = readObject(await readFile(path.join(source, name), "utf8"), name);
       if (folder === "views" && value.inputFile) {
         if (typeof value.inputFile !== "string" || !path.isAbsolute(value.inputFile)) throw new Error(`Invalid inputFile in ${name}`);

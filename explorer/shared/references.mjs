@@ -38,9 +38,14 @@ export function createReference(model, nodeId, faceId = null, edgeId = null) {
   return reference;
 }
 
-export function formatSelection(model, nodeId, faceId = null, edgeId = null) {
-  const { node, face, edge } = referenceEntity(model, nodeId, faceId, edgeId);
+// A readable summary line followed by the exact address; parseReference accepts the whole text.
+export function describeSelection(sourceName, partLabel, face, edge, reference) {
   const entity = face ? `Face ${face.id} (${face.surfaceType}, ${face.area.toFixed(2)} mm^2)`
     : edge ? `Edge ${edge.id} (${edge.curveType}, ${edge.length.toFixed(2)} mm)` : "Whole part";
-  return `CAD Explorer | ${oneLine(model.source.name)} | ${oneLine(node.label)} | ${entity}\n${createReference(model, nodeId, faceId, edgeId)}`;
+  return `CAD Explorer | ${oneLine(sourceName)} | ${oneLine(partLabel)} | ${entity}\n${reference}`;
+}
+
+export function formatSelection(model, nodeId, faceId = null, edgeId = null) {
+  const { node, face, edge } = referenceEntity(model, nodeId, faceId, edgeId);
+  return describeSelection(model.source.name, node.label, face, edge, createReference(model, nodeId, faceId, edgeId));
 }

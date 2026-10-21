@@ -61,7 +61,8 @@ export async function acquireViewOwner(runtimeRoot, viewKey) {
   for (let attempt = 1; !owner; attempt++) {
     try { owner = await listen(address); }
     catch (error) {
-      if (error.code !== "EADDRINUSE" && !(process.platform === "win32" && error.code === "EACCES")) throw error;
+      // EEXIST: a concurrent claimant is binding or reclaiming the same socket path.
+      if (!["EADDRINUSE", "EEXIST"].includes(error.code) && !(process.platform === "win32" && error.code === "EACCES")) throw error;
       if (process.platform === "win32" || attempt === maxListenAttempts || !(await reclaimStaleEndpoint(address))) {
         throw new PrototypeError("view_in_use", "This saved view is already open in another Explorer process. Use that panel or choose a different viewId.", 409);
       }

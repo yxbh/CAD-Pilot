@@ -44,11 +44,11 @@ From the workbench root, run the additional inspection suite with `uv run pytest
 - Reference: https://github.com/cedrickchee/text-to-cad at `2dd54cf8e27dc71c92244dc47271dcf10d302e16`.
 - Third-party text/code copied into this skill: none.
 - License: no additional license granted here; follows the repository's policy.
-- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained `cad-explorer` canvas, imported-browser fallback, separate handling of `cadproto:v2` descriptors versus imported `@cad` references, and display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances. No third-party source modifications; record future imported material explicitly.
+- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained CAD Explorer (Copilot `cad-explorer` canvas or the design-project viewer), imported-browser fallback, separate handling of `cadproto:v2` descriptors versus imported `@cad` references, and display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances. No third-party source modifications; record future imported material explicitly.
 
 ### Update Procedure
 
-Validate changes using a real model, a selected reference or marked screenshot, and an ambiguous follow-up request. Check viewer choice both with and without the maintained canvas capability, and keep the two reference formats distinct. Distinguish documented viewer capabilities from interactions actually tested with the chosen agent host.
+Validate changes using a real model, a selected reference or marked screenshot, and an ambiguous follow-up request. Check viewer choice both in the Copilot canvas and in a host using the design-project viewer, and keep the two reference formats distinct. Distinguish documented viewer capabilities from interactions actually tested with the chosen agent host.
 
 ## fdm-design
 

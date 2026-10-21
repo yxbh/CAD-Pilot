@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createReference, parseReference, referenceEntity } from "../shared/references.mjs";
+import { createReference, describeSelection, parseReference, referenceEntity } from "../shared/references.mjs";
 import { multiply } from "../shared/matrix.mjs";
 import { nativeFileReference, nativeReferenceTitle } from "../shared/native-reference.mjs";
 import { PrototypeError, validateModel } from "./protocol.mjs";
@@ -9,6 +9,7 @@ import { atomicJson } from "./storage.mjs";
 import { createVerifiedFileCache, FileChangedError } from "./verified-file-cache.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
+export const REFERENCE_FORMATS = Object.freeze(["copilot-ref", "text"]);
 const message = (error) => error instanceof Error ? error.message : String(error);
 
 const modelLimit = 160 * 1024 * 1024;
@@ -159,7 +160,9 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     };
   }
 
-  async function prepareClipboardReference(reference) {
+  // "copilot-ref" is the Copilot desktop's native file-reference chip; "text" is readable in any chat host.
+  async function prepareClipboardReference(reference, format = "copilot-ref") {
+    if (!REFERENCE_FORMATS.includes(format)) throw new PrototypeError("bad_reference_format", `Unknown reference format: ${format}`);
     const entity = await inspectReference(reference);
     const directory = path.join(runtimeRoot, "references");
     await mkdir(directory, { recursive: true });
@@ -168,7 +171,10 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     await atomicJson(filePath, {
       schemaVersion: 1, kind: "cad-prototype-selection", inspectionTool: "cad_explorer_inspect", ...entity,
     });
-    return { text: nativeFileReference(filePath, title), title, filePath, reference: entity.reference };
+    const text = format === "text"
+      ? describeSelection(entity.source.name, entity.occurrence.label, entity.face, entity.edge, entity.reference)
+      : nativeFileReference(filePath, title);
+    return { text, title, filePath, reference: entity.reference };
   }
   return {
     inspectReference,
