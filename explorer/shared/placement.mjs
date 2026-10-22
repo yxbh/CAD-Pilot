@@ -76,7 +76,16 @@ const CONCENTRIC = 0.05;
 const LAYER = 0.01;
 // The gap kept between separated siblings, as a fraction of their parent's radius.
 const MARGIN = 0.05;
-const MAX_PASSES = 10;
+// Siblings overlapping by less than this fraction of their parent's radius only touch: STEP conversion leaves boxes
+// that meet overlapping by about a micrometre.
+const CONTACT = 1e-5;
+// Separation sweeps per group. Each sweep compares only boxes that could touch.
+const MAX_PASSES = 32;
+// A pile with more overlapping pairs than this (hundreds of parts all overlapping one another) keeps the offsets it has:
+// pushing it apart pair by pair would stall the viewer.
+const MAX_OVERLAPS = 100_000;
+// A side is a part's own axis when it is at least this many times longer or shorter than both of its other sides.
+const DISTINCT = 1.25;
 // Each level's share of the slider overlaps the next level's by this fraction.
 const WINDOW_OVERLAP = 0.5;
 // Models are not changed once loaded, so a layout is measured once per model and direction, when it first explodes.
@@ -91,6 +100,60 @@ const shifted = (bounds, vector) => vector
 function overlap(a, b, axes = [0, 1, 2], slack = 0) {
   const amounts = axes.map((axis) => Math.min(a.max[axis], b.max[axis]) - Math.max(a.min[axis], b.min[axis]));
   return amounts.every((amount) => amount > slack) ? amounts : null;
+}
+
+// For each box, the indices of the boxes it overlaps on the given axes by more than slack. Boxes are binned into grid
+// cells about the size of a typical box and compared only with boxes sharing a cell, so parts laid out side by side
+// cost close to linear time; a box spanning many cells is compared with every box instead.
+function overlappingPairs(boxes, slack, axes = [0, 1, 2]) {
+  const partners = boxes.map(() => []);
+  const sizes = boxes.map((box) => Math.max(...axes.map((axis) => box.max[axis] - box.min[axis]))).sort((a, b) => a - b);
+  const cell = Math.max(sizes[sizes.length >> 1] ?? 0, EPSILON);
+  const grid = new Map();
+  const large = [];
+  const cells = boxes.map((box, index) => {
+    const spans = axes.map((axis) => [Math.floor(box.min[axis] / cell), Math.floor(box.max[axis] / cell)]);
+    if (spans.some(([low, high]) => high - low > 3)) {
+      large.push(index);
+      return [];
+    }
+    // Keys may collide; a collision only adds a candidate that the exact test then rejects.
+    let keys = [0];
+    for (const [low, high] of spans) {
+      const next = [];
+      for (const key of keys) for (let at = low; at <= high; at++) next.push(Math.imul(key ^ at, 0x9e3779b1) >>> 0);
+      keys = next;
+    }
+    for (const key of keys) {
+      const members = grid.get(key);
+      if (members) members.push(index);
+      else grid.set(key, [index]);
+    }
+    return keys;
+  });
+  const add = (index, other) => {
+    if (!overlap(boxes[index], boxes[other], axes, slack)) return;
+    partners[index].push(other);
+    partners[other].push(index);
+  };
+  // Each pair of binned boxes is tested once, from its lower index, however many cells they share.
+  const compared = new Int32Array(boxes.length).fill(-1);
+  boxes.forEach((_, index) => {
+    for (const key of cells[index]) {
+      for (const other of grid.get(key)) {
+        if (other <= index || compared[other] === index) continue;
+        compared[other] = index;
+        add(index, other);
+      }
+    }
+  });
+  const unbinned = new Set(large);
+  for (const index of large) {
+    for (let other = 0; other < boxes.length; other++) {
+      if (other !== index && !(unbinned.has(other) && other < index)) add(index, other);
+    }
+  }
+  return partners;
 }
 
 // The occurrence tree as explode groups, each with its part occurrences and their assembled bounds.
@@ -132,10 +195,20 @@ function layoutNode(group, bounds, levels) {
   return node;
 }
 
-// Each child moves straight out from its parent's centre. Children centred on the parent have no outward direction,
-// so they stack along one axis as an axis explode would: the axis their centres spread along most for the parent's
-// size (plates stacked on a turntable) or, when they share a centre, the longest side of the largest one that has to
-// come out (a shaft in a housing).
+// A part's own axis: the side unlike its other two, such as a shaft's length or a bearing's thickness, or its longest
+// side when no side stands out.
+function ownAxis(bounds) {
+  const sides = extents(bounds);
+  const logs = sides.map((side) => Math.log(Math.max(side, EPSILON)));
+  const contrast = logs.map((side, axis) => Math.min(...logs.filter((_, other) => other !== axis).map((other) => Math.abs(side - other))));
+  const axis = contrast.indexOf(Math.max(...contrast));
+  return contrast[axis] >= Math.log(DISTINCT) ? axis : sides.indexOf(Math.max(...sides));
+}
+
+// Each child moves straight out from its parent's centre. Children centred on the parent have no outward direction, so
+// they stack along an axis as an axis explode would. Centres spread along an axis (plates stacked on a turntable) stack
+// along it; when they share a centre, the largest stays and each other one slides out along its own axis (a bearing and
+// a shaft out of a housing).
 function radialVectors(node, level) {
   const falloff = LEVEL_FALLOFF ** (level - 1);
   const vectors = new Map();
@@ -143,44 +216,59 @@ function radialVectors(node, level) {
   for (const child of node.children) {
     const relative = child.center.map((value, axis) => value - node.center[axis]);
     const distance = Math.hypot(...relative);
-    if (distance <= Math.max(node.radius * CONCENTRIC, EPSILON)) {
+    // Only a child that reaches its parent's centre is centred on it; a small part merely near the centre still has a
+    // direction out.
+    if (distance <= Math.max(Math.min(node.radius * CONCENTRIC, child.radius), EPSILON)) {
       centred.push(child);
       continue;
     }
     const length = (distance * SPREAD + child.radius * CLEARANCE) * falloff;
     vectors.set(child, relative.map((value) => value / distance * length));
   }
+  const stack = (children, axis) => {
+    for (const [child, vector] of axisVectors({ ...node, children }, level, axis)) vectors.set(child, vector);
+  };
   if (centred.length > 1) {
-    const size = extents(node.bounds);
-    const spread = size.map((extent, axis) => {
+    const spread = extents(node.bounds).map((extent, axis) => {
       const positions = centred.map((child) => child.center[axis]);
       return (Math.max(...positions) - Math.min(...positions)) / Math.max(extent, EPSILON);
     });
-    let axis = spread.indexOf(Math.max(...spread));
-    if (spread[axis] <= LAYER) {
-      const sides = extents([...centred].sort((a, b) => b.radius - a.radius)[1].bounds);
-      axis = sides.indexOf(Math.max(...sides));
+    const axis = spread.indexOf(Math.max(...spread));
+    if (spread[axis] > LAYER) stack(centred, axis);
+    else {
+      const [core, ...others] = [...centred].sort((a, b) => b.radius - a.radius);
+      for (const along of [0, 1, 2]) {
+        const sliding = others.filter((child) => ownAxis(child.bounds) === along);
+        if (sliding.length) stack([core, ...sliding], along);
+      }
     }
-    for (const [child, vector] of axisVectors({ ...node, children: centred }, level, axis)) vectors.set(child, vector);
   }
   separate(node, vectors);
   return vectors;
 }
 
 // Proportional offsets alone can leave large neighbours with nearby centres intersecting, so push the outer of each
-// overlapping pair further along its own direction until every pair clears. A child that stays is never pushed.
+// overlapping pair further along its own direction until every pair clears. A child that stays is never pushed. Each
+// child is the box its own parts fill once they spread, so cousins clear each other too.
 function separate(node, vectors) {
   const gap = Math.max(node.radius * MARGIN, EPSILON);
+  const contact = Math.max(node.radius * CONTACT, EPSILON);
+  const children = node.children;
+  const box = (child) => shifted(child.envelope, vectors.get(child));
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     let pushed = false;
-    for (let i = 0; i < node.children.length; i++) {
-      for (let j = i + 1; j < node.children.length; j++) {
-        const a = node.children[i];
-        const b = node.children[j];
+    const pairs = overlappingPairs(children.map(box), contact);
+    if (pairs.reduce((sum, partners) => sum + partners.length, 0) / 2 > MAX_OVERLAPS) return;
+    pairs.forEach((partners, i) => {
+      for (const j of partners) {
+        if (j < i) continue;
+        const a = children[i];
+        const b = children[j];
         const va = vectors.get(a);
         const vb = vectors.get(b);
         if (!va && !vb) continue;
-        const amounts = overlap(shifted(a.bounds, va), shifted(b.bounds, vb));
+        // An earlier push in this sweep may already have cleared the pair.
+        const amounts = overlap(box(a), box(b), undefined, contact);
         if (!amounts) continue;
         const target = !va ? b : !vb ? a : Math.hypot(...va) >= Math.hypot(...vb) ? a : b;
         const vector = vectors.get(target);
@@ -193,69 +281,115 @@ function separate(node, vectors) {
         vectors.set(target, vector.map((value, axis) => value + unit[axis] * travel));
         pushed = true;
       }
-    }
+    });
     if (!pushed) return;
   }
 }
 
 // Children stack along the axis in the order they sit. Children at the same height form a layer that moves as one,
 // and the layer at the parent's centre stays. Each layer further out moves at least as far as the one inside it, and
-// far enough to clear anything it would meet along the axis. A child inside a larger one at the same height gets a
-// layer of its own beside it and telescopes out, alternately each way.
-function axisVectors(node, level, axis) {
+// far enough to clear anything it would meet along the axis. A child that overlaps a larger one at the same height
+// gets a layer of its own beside it and telescopes out, alternately each way. Each child is the box its own parts fill
+// once they spread. Beside lays every child out along the axis instead, when nothing would otherwise separate along
+// it: the largest stays and the others alternate either side, clear of everything already placed.
+function axisVectors(node, level, axis, beside = false) {
   const falloff = LEVEL_FALLOFF ** (level - 1);
   const tolerance = Math.max(node.radius * LAYER, EPSILON);
   const gap = Math.max(node.radius * MARGIN, EPSILON);
+  const contact = Math.max(node.radius * CONTACT, EPSILON);
   const origin = node.center[axis];
-  const across = [0, 1, 2].filter((other) => other !== axis);
+  const children = node.children;
+  const index = new Map(children.map((child, at) => [child, at]));
+  const envelopes = children.map((child) => child.envelope);
+  const touching = overlappingPairs(envelopes, contact);
+  const meeting = beside ? null : overlappingPairs(envelopes, contact, [0, 1, 2].filter((other) => other !== axis));
   const layers = [];
-  for (const child of [...node.children].sort((a, b) => a.center[axis] - b.center[axis])) {
-    const layer = layers.at(-1);
-    if (layer && child.center[axis] - layer.position <= tolerance) layer.children.push(child);
-    else layers.push({ position: child.center[axis], children: [child] });
+  if (beside) layers.push({ position: origin, children });
+  else {
+    for (const child of [...children].sort((a, b) => a.center[axis] - b.center[axis])) {
+      const layer = layers.at(-1);
+      if (layer && child.center[axis] - layer.position <= tolerance) layer.children.push(child);
+      else layers.push({ position: child.center[axis], children: [child] });
+    }
   }
   const ordered = [];
   let anchor = null;
-  for (const { position, children } of layers) {
-    const kept = [];
+  for (const { position, children: members } of layers) {
+    const kept = new Set();
     const nested = [];
-    for (const child of [...children].sort((a, b) => b.radius - a.radius)) {
-      (kept.some((other) => overlap(child.bounds, other.bounds, undefined, tolerance)) ? nested : kept).push(child);
+    for (const child of [...members].sort((a, b) => b.radius - a.radius)) {
+      const inside = beside ? kept.size > 0 : touching[index.get(child)].some((other) => kept.has(children[other]));
+      if (inside) nested.push(child);
+      else kept.add(child);
     }
-    const host = { position, children: kept };
+    const host = { position, children: [...kept] };
     const distance = Math.abs(position - origin);
     if (distance <= Math.max(node.radius * CONCENTRIC, EPSILON) && (!anchor || distance < Math.abs(anchor.position - origin))) anchor = host;
-    const below = nested.filter((_, index) => index % 2).reverse().map((child) => ({ position, children: [child] }));
-    const above = nested.filter((_, index) => index % 2 === 0).map((child) => ({ position, children: [child] }));
+    const below = nested.filter((_, at) => at % 2).reverse().map((child) => ({ position, children: [child] }));
+    const above = nested.filter((_, at) => at % 2 === 0).map((child) => ({ position, children: [child] }));
     ordered.push(...below, host, ...above);
   }
   const split = anchor ? ordered.indexOf(anchor) : ordered.findIndex((layer) => layer.position >= origin);
   const end = split < 0 ? ordered.length : split;
   const vectors = new Map();
-  const placed = anchor ? anchor.children.map((child) => [child, 0]) : [];
+  const moved = new Map();
+  let low = Infinity;
+  let high = -Infinity;
+  const place = (child, offset) => {
+    moved.set(child, offset);
+    low = Math.min(low, child.envelope.min[axis] + offset);
+    high = Math.max(high, child.envelope.max[axis] + offset);
+  };
+  for (const child of anchor?.children ?? []) place(child, 0);
   for (const [side, outward] of [[1, ordered.slice(anchor ? end + 1 : end)], [-1, ordered.slice(0, end).reverse()]]) {
     let previous = 0;
-    for (const { position, children } of outward) {
-      const radius = Math.max(...children.map((child) => child.radius));
+    for (const { position, children: members } of outward) {
+      const radius = Math.max(...members.map((child) => child.radius));
       let distance = Math.max((Math.abs(position - origin) * SPREAD + radius * CLEARANCE) * falloff, previous);
-      for (const child of children) {
-        for (const [other, moved] of placed) {
-          if (!overlap(child.bounds, other.bounds, across, tolerance)) continue;
+      for (const child of members) {
+        const own = child.envelope;
+        if (beside && moved.size) distance = Math.max(distance, side > 0 ? high - own.min[axis] + gap : own.max[axis] - low + gap);
+        for (const at of meeting?.[index.get(child)] ?? []) {
+          const other = children[at];
+          if (!moved.has(other)) continue;
+          const offset = moved.get(other);
           distance = Math.max(distance, side > 0
-            ? other.bounds.max[axis] + moved - child.bounds.min[axis] + gap
-            : child.bounds.max[axis] - other.bounds.min[axis] - moved + gap);
+            ? other.envelope.max[axis] + offset - own.min[axis] + gap
+            : own.max[axis] - other.envelope.min[axis] - offset + gap);
         }
       }
       const vector = [0, 0, 0];
       vector[axis] = side * distance;
-      for (const child of children) {
-        placed.push([child, vector[axis]]);
+      for (const child of members) {
+        place(child, vector[axis]);
         vectors.set(child, vector);
       }
       previous = distance;
     }
   }
   return vectors;
+}
+
+// Lays out a node's children from the deepest level up, so each child's clearance covers the room its own parts take
+// once they spread, and returns the box the node's parts fill at full explode.
+function layOut(node, level, axis, layout) {
+  for (const child of node.children) child.envelope = child.children.length ? layOut(child, level + 1, axis, layout) : child.bounds;
+  const vectors = axis === undefined ? radialVectors(node, level) : axisVectors(node, level, axis);
+  record(layout, node, vectors, level);
+  return mergeBounds(node.children.map((child) => shifted(child.envelope, vectors.get(child))));
+}
+
+function record(layout, node, vectors, level) {
+  for (const child of node.children) {
+    const vector = vectors.get(child);
+    if (!vector || Math.hypot(...vector) <= EPSILON) continue;
+    layout.levels.add(level);
+    for (const id of child.ids) {
+      const list = layout.moves.get(id) ?? [];
+      list.push({ vector, level });
+      layout.moves.set(id, list);
+    }
+  }
 }
 
 // For each occurrence, the offset each level adds to it. Of the n levels that move anything, the ith adds its offsets
@@ -265,30 +399,16 @@ function explodeLayout(model, direction) {
   layouts.set(model, cached);
   if (cached.has(direction)) return cached.get(direction);
   const axis = directionAxis[direction];
-  const moves = new Map();
-  const moving = new Set();
-  const queue = [{ node: layoutNode(explodeTree(model), model.bounds, MAX_LEVELS), level: 1 }];
-  for (const { node, level } of queue) {
-    const vectors = axis === undefined ? radialVectors(node, level) : axisVectors(node, level, axis);
-    for (const child of node.children) {
-      const vector = vectors.get(child);
-      if (vector && Math.hypot(...vector) > EPSILON) {
-        moving.add(level);
-        for (const id of child.ids) {
-          const list = moves.get(id) ?? [];
-          list.push({ vector, level });
-          moves.set(id, list);
-        }
-      }
-      if (child.children.length) queue.push({ node: child, level: level + 1 });
-    }
-  }
-  const span = 1 / (1 + Math.max(moving.size - 1, 0) * (1 - WINDOW_OVERLAP));
-  const windows = new Map([...moving].sort((a, b) => a - b).map((level, index) => {
+  const layout = { moves: new Map(), levels: new Set(), windows: null };
+  const root = layoutNode(explodeTree(model), model.bounds, MAX_LEVELS);
+  if (root.children.length) layOut(root, 1, axis, layout);
+  // An axis along which nothing separates lays the top level out side by side along it rather than doing nothing.
+  if (axis !== undefined && !layout.moves.size && root.children.length) record(layout, root, axisVectors(root, 1, axis, true), 1);
+  const span = 1 / (1 + Math.max(layout.levels.size - 1, 0) * (1 - WINDOW_OVERLAP));
+  layout.windows = new Map([...layout.levels].sort((a, b) => a - b).map((level, index) => {
     const start = index * span * (1 - WINDOW_OVERLAP);
     return [level, [start, Math.min(start + span, 1)]];
   }));
-  const layout = { moves, windows };
   cached.set(direction, layout);
   return layout;
 }
