@@ -38,6 +38,7 @@ from common.catalog import (
     source_from_path,
 )
 from common.cli_logging import CliLogger
+from common.geometry import GeometryError, is_sound, self_intersections
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
 from common.glb import read_step_topology_manifest_from_glb
 from common.metadata import (
@@ -1070,7 +1071,57 @@ def _generate_step_outputs(
     }
     if logger is not None:
         output_kwargs["logger"] = logger
-    return _generate_part_outputs(spec, **output_kwargs)
+    result = _generate_part_outputs(spec, **output_kwargs)
+    if preloaded_scene is not None:
+        _warn_unsound_solids(spec, preloaded_scene, logger=logger or CliLogger("cad"))
+    return result
+
+
+def _warn_unsound_solids(spec: EntrySpec, scene: LoadedStepScene, *, logger: CliLogger) -> None:
+    """Warn about generated solids that the boolean kernel's argument check rejects.
+
+    A warning, not a gate: it runs after the outputs are written. Each unique
+    solid is checked once, however many times an assembly places it. A check
+    the kernel cannot complete (for example, a face pair it fails to
+    intersect) is no verdict, so it is only reported in verbose output.
+    """
+    from build123d import Solid
+    from OCP.TopAbs import TopAbs_SOLID
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+    from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
+
+    with logger.timed(f"check solids {spec.source_ref}"):
+        for key, shape in scene.prototype_shapes.items():
+            solid_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+            TopExp.MapShapes_s(shape, TopAbs_SOLID, solid_map)
+            name = scene.prototype_names.get(key) or spec.cad_ref
+            for index in range(1, solid_map.Extent() + 1):
+                label = f'part "{name}"'
+                if solid_map.Extent() > 1:
+                    label += f" (solid {index} of {solid_map.Extent()})"
+                solid = Solid(TopoDS.Solid(solid_map.FindKey(index)))
+                try:
+                    if is_sound(solid):
+                        continue
+                except GeometryError as exc:
+                    logger.debug(f"could not check whether {label} is a sound solid: {exc}")
+                    continue
+                try:
+                    crossings = len(self_intersections(solid))
+                except (GeometryError, ValueError):
+                    crossings = 0  # e.g. invalid topology, which the kernel will not intersect
+                if crossings:
+                    reason = (
+                        f"{crossings} self-intersection{'' if crossings == 1 else 's'}, "
+                        "where its surfaces cross or fold through each other"
+                    )
+                else:
+                    reason = "the boolean kernel rejects its topology or edges"
+                logger.warning(
+                    f"{label} is not a sound solid: {reason}. "
+                    "Slicers and later booleans may fail on it; the outputs were still written."
+                )
 
 
 def _generate_step_outputs_for_cli(

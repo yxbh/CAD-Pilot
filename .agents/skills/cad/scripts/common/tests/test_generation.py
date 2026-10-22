@@ -1,14 +1,18 @@
 import hashlib
+import io
 import shutil
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from common import generation as cad_generation
 from common import render as cad_render
 from common import catalog as cad_catalog
 from common.catalog import StepImportOptions
-from common.step_scene import SelectorBundle
+from common.cli_logging import CliLogger
+from common.geometry import GeometryError
+from common.step_scene import LoadedStepScene, SelectorBundle
 from common.tests.cad_test_roots import IsolatedCadRoots
 
 
@@ -1676,6 +1680,77 @@ class CadGenerationTests(unittest.TestCase):
         self.assertIn("topology", events)
         self.assertLess(events.index("3mf"), events.index("topology"))
         self.assertTrue(three_mf_path.exists())
+
+
+class UnsoundSolidWarningTests(unittest.TestCase):
+    """Generated solids the boolean kernel rejects are reported, not refused."""
+
+    SPEC = SimpleNamespace(source_ref="cups/cup.py", cad_ref="cups/cup")
+
+    @staticmethod
+    def _scene(*shapes, names=None) -> LoadedStepScene:
+        return LoadedStepScene(
+            step_path=Path("cup.step"),
+            roots=[],
+            prototype_shapes={index: shape.wrapped for index, shape in enumerate(shapes)},
+            prototype_names=dict(enumerate(names or [])),
+        )
+
+    def _warnings(self, scene: LoadedStepScene, *, verbose: bool = False) -> list[str]:
+        stream = io.StringIO()
+        cad_generation._warn_unsound_solids(self.SPEC, scene, logger=CliLogger("cad", verbose=verbose, stream=stream))
+        return [line for line in stream.getvalue().splitlines() if "check solids" not in line]
+
+    def test_sound_solids_are_quiet(self) -> None:
+        import build123d
+
+        self.assertEqual([], self._warnings(self._scene(build123d.Box(10, 10, 10), names=["block"])))
+
+    def test_unsound_solid_is_named_and_explained(self) -> None:
+        import build123d
+
+        # A 6 mm bar bent around a 2.5 mm radius: its inner side folds through
+        # itself, and the kernel cannot even build valid topology for it.
+        with build123d.BuildPart() as bent:
+            with build123d.BuildLine(build123d.Plane.XZ) as path:
+                build123d.CenterArc((0, 0), 2.5, 0, 90)
+            with build123d.BuildSketch(path.line ^ 0):
+                build123d.Rectangle(6, 2)
+            build123d.sweep()
+
+        self.assertEqual(
+            [
+                '[cad] warning: part "cups/cup" is not a sound solid: the boolean kernel rejects its topology or edges. '
+                "Slicers and later booleans may fail on it; the outputs were still written."
+            ],
+            self._warnings(self._scene(bent.part)),
+        )
+
+    def test_each_solid_of_a_part_is_checked_and_crossings_are_counted(self) -> None:
+        import build123d
+
+        pair = build123d.Compound([build123d.Box(1, 1, 1), build123d.Pos(5, 0, 0) * build123d.Box(1, 1, 1)])
+        with mock.patch.object(cad_generation, "is_sound", side_effect=[True, False]), mock.patch.object(
+            cad_generation, "self_intersections", return_value=("a", "b", "c")
+        ):
+            warnings = self._warnings(self._scene(pair, names=["handle"]))
+
+        self.assertEqual(1, len(warnings))
+        self.assertIn('part "handle" (solid 2 of 2) is not a sound solid: 3 self-intersections, where its surfaces cross', warnings[0])
+
+    def test_inconclusive_check_is_only_reported_in_verbose_output(self) -> None:
+        import build123d
+
+        scene = self._scene(build123d.Box(1, 1, 1), names=["ring"])
+        failure = GeometryError("boolean argument check was inconclusive: BOPAlgo_OperationAborted")
+        with mock.patch.object(cad_generation, "is_sound", side_effect=failure):
+            self.assertEqual([], self._warnings(scene))
+            verbose = self._warnings(scene, verbose=True)
+
+        self.assertEqual(
+            ['[cad] could not check whether part "ring" is a sound solid: boolean argument check was inconclusive: BOPAlgo_OperationAborted'],
+            [line for line in verbose if "could not check" in line],
+        )
 
 
 if __name__ == "__main__":

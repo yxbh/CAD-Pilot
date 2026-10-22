@@ -53,6 +53,10 @@ Direct targets can use sidecar mesh flags, but generator targets remain preferre
 
 Use `rendering-and-explorer.md` to show the generated STEP in the maintained CAD Explorer.
 
+## Soundness warning
+
+After writing the outputs of a generated source, `scripts/step` checks each unique solid with the boolean kernel's argument check, `common.geometry.is_sound`, and warns when a part is not a sound solid, naming the part and counting its self-intersections when the kernel can. The STEP, hidden GLB and requested STL/3MF are still written; the warning is not a gate. A self-intersecting solid's STL and 3MF cannot be guaranteed closed, and later booleans or slicers can fail on it, so repair it as `repair-loop.md` describes before printing. A check the kernel cannot complete gives no verdict and is reported only with `--verbose`. Direct STEP/STP targets are not checked. The check runs on the kernel's worker threads and can add a few seconds to an assembly of many large parts.
+
 ## Post-generation inspection
 
 Run lightweight inspection after generation with `scripts/inspect`.
@@ -89,6 +93,7 @@ Before running the command:
 After running the command:
 
 - Confirm the process succeeded.
+- Read any warnings; treat `is not a sound solid` as a defect to repair, not noise.
 - Confirm the STEP file exists and is non-empty.
 - Run the relevant `scripts/inspect` command and parse its output.
 - Show the STEP in CAD Explorer using `rendering-and-explorer.md`, or report why it is unavailable. After a visible geometry change, capture and look at it yourself as its Self-review section describes.

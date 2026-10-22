@@ -1,6 +1,6 @@
 # Repair loop
 
-Read this file when generation, export, inspection, positioning, Explorer viewing or capture, or documentation validation fails.
+Read this file when generation, export, inspection, positioning, Explorer viewing or capture, or documentation validation fails, or when `scripts/step` warns that a part is not a sound solid.
 
 ## Loop
 
@@ -49,6 +49,22 @@ Fix:
 - make subtractive tools pass through when through-cuts are intended
 - check `is_valid`, solid count and `.volume` of each solid on intermediates around the suspect operation to find the first one that goes wrong
 - rebuild that feature on its own, then add the rest back
+
+### Self-intersecting solid
+
+`scripts/step` warns that a part `is not a sound solid`, often with a count of self-intersections, although `is_valid` can still be true. `common.geometry.is_sound(part)` returns `False`, and `self_intersections(part)` returns the faces that cross.
+
+Likely causes:
+
+- a sweep whose profile reaches farther toward the inside of a bend than the bend's radius, so the inner side folds back through itself, such as a thick handle around a tight curve
+- other surfaces that cross each other, such as a loft through a self-crossing section
+
+Fix:
+
+- check `is_sound` on intermediates to find the first operation whose result is not sound
+- for a sweep, compare the profile's reach on the inside of each bend with the path's tightest bend radius; on a planar path, a sketch on `path ^ 0` puts its local X, the first dimension of a `Rectangle`, in the bend plane
+- ease the tightest bend of the path, or turn or reshape the profile so its inner side stays within the bend radius; changing a specified dimension is a design decision, so report the limit and ask
+- regenerate and confirm the warning is gone before exporting meshes for printing
 
 ### Fillet or chamfer failure
 
