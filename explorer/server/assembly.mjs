@@ -1,0 +1,89 @@
+import { readFile, realpath, stat } from "node:fs/promises";
+import path from "node:path";
+import { isInside } from "./paths.mjs";
+import { PrototypeError } from "./protocol.mjs";
+
+export const ASSEMBLY_FORMAT = "cad-explorer-assembly";
+const maxBytes = 1024 * 1024;
+const maxSteps = 200;
+const checkStatuses = ["clear", "blocked", "interferes", "error"];
+
+// The sequence file sits beside its STEP: outputs/part.step -> outputs/part.assembly.json.
+export function sequencePath(stepPath) {
+  return path.join(path.dirname(stepPath), `${path.basename(stepPath, path.extname(stepPath))}.assembly.json`);
+}
+
+const text = (value, limit) => typeof value === "string" && value.length <= limit;
+const pattern = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+
+function validateDocument(document) {
+  const fail = (message) => { throw new PrototypeError("invalid_sequence", `Assembly sequence: ${message}`, 422); };
+  if (!document || typeof document !== "object" || Array.isArray(document)) fail("expected a JSON object");
+  if (document.format !== ASSEMBLY_FORMAT || document.version !== 1) fail(`expected format "${ASSEMBLY_FORMAT}" version 1`);
+  if (document.units !== undefined && document.units !== "mm") fail("units must be mm");
+  if (document.step !== undefined && (!document.step || typeof document.step.sha256 !== "string")) fail("step must record the STEP's sha256");
+  if (!Array.isArray(document.steps) || !document.steps.length || document.steps.length > maxSteps) fail(`expected 1 to ${maxSteps} steps`);
+  document.steps.forEach((step, index) => {
+    const label = `step ${index + 1}`;
+    if (!step || typeof step !== "object" || Array.isArray(step)) fail(`${label} must be an object`);
+    if (!text(step.title, 200) || !step.title.trim()) fail(`${label} needs a title of at most 200 characters`);
+    if (step.note !== undefined && !text(step.note, 1000)) fail(`${label} note must be at most 1000 characters`);
+    if (!Array.isArray(step.parts) || !step.parts.length || step.parts.length > 100 || !step.parts.every((part) => text(part, 200) && part)) {
+      fail(`${label} needs 1 to 100 part labels`);
+    }
+    if (!Array.isArray(step.from) || step.from.length !== 3 || !step.from.every((value) => Number.isFinite(value) && Math.abs(value) <= 1e5)) {
+      fail(`${label} from must be three finite millimetre values`);
+    }
+    if (step.check !== undefined && (!step.check || !checkStatuses.includes(step.check.status) || !text(step.check.detail ?? "", 1000))) {
+      fail(`${label} has an invalid check result`);
+    }
+  });
+  return document;
+}
+
+// Labels resolve against every node; a group label stands for all of its parts.
+export function resolveSequence(document, model, file) {
+  validateDocument(document);
+  const children = new Map();
+  for (const node of model.nodes) if (node.parentId) children.set(node.parentId, [...(children.get(node.parentId) ?? []), node]);
+  const leavesOf = (node) => node.partId ? [node.id] : (children.get(node.id) ?? []).flatMap(leavesOf);
+  const steps = document.steps.map((step) => {
+    const nodeIds = [];
+    const unresolved = [];
+    for (const part of step.parts) {
+      const matcher = pattern(part);
+      const matches = model.nodes.filter((node) => matcher.test(node.label));
+      if (!matches.length) unresolved.push(part);
+      for (const id of matches.flatMap(leavesOf)) if (!nodeIds.includes(id)) nodeIds.push(id);
+    }
+    return {
+      title: step.title.trim(), note: step.note?.trim() ?? "", parts: step.parts, nodeIds, unresolved, from: step.from,
+      ...(step.check ? { check: { status: step.check.status, detail: step.check.detail ?? "" } } : {}),
+    };
+  });
+  return {
+    file,
+    // A sequence written for different STEP bytes may still resolve by label; say so rather than guess.
+    stale: document.step !== undefined && document.step.sha256 !== model.source.sha256,
+    checked: steps.some((step) => step.check),
+    steps,
+  };
+}
+
+export async function readSequence(stepPath, model, root) {
+  let file = sequencePath(stepPath);
+  try {
+    file = await realpath(file);
+    if (!isInside(root, file)) throw new PrototypeError("outside_project", "Assembly sequence must be inside the selected project root", 403);
+    const info = await stat(file);
+    if (!info.isFile() || info.size > maxBytes) throw new PrototypeError("invalid_sequence", "Assembly sequence file must be a JSON file under 1 MB", 422);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  const relative = path.relative(root, file).split(path.sep).join("/");
+  let document;
+  try { document = JSON.parse(await readFile(file, "utf8")); }
+  catch { throw new PrototypeError("invalid_sequence", `Assembly sequence ${relative} is not valid JSON`, 422); }
+  return resolveSequence(document, model, relative);
+}

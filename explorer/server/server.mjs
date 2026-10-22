@@ -14,6 +14,7 @@ import { createInspectionService, REFERENCE_FORMATS } from "./inspection.mjs";
 import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot as defaultRuntimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
 import { maxStepBytes, prepareModelSnapshot, validateStepPath } from "./model-import.mjs";
+import { readSequence, sequencePath } from "./assembly.mjs";
 import { defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, sameSection, sectionSupport, validateSection } from "../shared/section.mjs";
 import { displayedWorldBounds } from "../shared/placement.mjs";
 
@@ -154,7 +155,11 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
       reference: createReference(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
       text: formatSelection(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
     })) : [],
-    limitations: ["Snapshot loading; no file watcher", "Visual spacing, not a disassembly simulation", "Section caps are display-derived and do not modify or measure the STEP"],
+    limitations: [
+      "Snapshot loading; no file watcher",
+      "Explosion and assembly steps are visual offsets, not a disassembly simulation; sequence check results come from the sequence file",
+      "Section caps are display-derived and do not modify or measure the STEP",
+    ],
   });
 
   async function python(script, args) {
@@ -181,7 +186,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
 
   async function demoFile() {
     const target = path.join(runtimeRoot, "demo-assembly.step");
-    try { await stat(target); }
+    try { await Promise.all([stat(target), stat(sequencePath(target))]); }
     catch (error) {
       if (error?.code !== "ENOENT") throw error;
       await python("create_demo.py", ["--output", target]);
@@ -191,8 +196,9 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
 
   async function loadFile(target, displayName, internal = false) {
     if (closed) throw new PrototypeError("closed", "Prototype has closed", 410);
-    const resolved = await validateStepPath(target, internal ? await realpath(runtimeRoot) : project);
-    return loadSnapshot({ resolved, displayName });
+    const root = internal ? await realpath(runtimeRoot) : project;
+    const resolved = await validateStepPath(target, root);
+    return loadSnapshot({ resolved, displayName, sequenceRoot: root });
   }
 
   async function loadSnapshot(source) {
@@ -200,8 +206,9 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
     await commit({ loading: true, error: "" });
     try {
       const imported = await prepareModelSnapshot({ ...source, uploadDir, modelDir, python });
+      const assembly = source.resolved ? await loadSequence(source.resolved, imported.model, source.sequenceRoot) : null;
       await commit({
-        ...initialState(), autoCopy: state.autoCopy, documentRevision: imported.model.source.sha256,
+        ...initialState(), autoCopy: state.autoCopy, assembly, documentRevision: imported.model.source.sha256,
         topologyRevision: imported.model.topologyRevision, modelName: imported.inputName, fitNonce: state.fitNonce + 1,
         section: defaultSection(imported.model.bounds),
       }, imported);
@@ -209,6 +216,16 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
     } catch (error) {
       await commit({ loading: false, error: publicError(error) });
       throw error;
+    }
+  }
+
+  // A broken sequence file must not prevent viewing the STEP; its problem is reported in state instead.
+  async function loadSequence(stepPath, loaded, root) {
+    try { return await readSequence(stepPath, loaded, root); }
+    catch (error) {
+      const file = path.relative(root, sequencePath(stepPath)).split(path.sep).join("/");
+      log(`Explorer assembly sequence: ${publicError(error)}`);
+      return { file, stale: false, checked: false, steps: [], error: publicError(error) };
     }
   }
 
@@ -431,7 +448,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
         if (payload.camera) validateCamera(payload.camera);
         const result = {
           path: imagePath, revision: state.revision, documentRevision: state.documentRevision, topologyRevision: state.topologyRevision,
-          exploded: state.explode, selectedIds: state.selectedIds, selectedFace: state.selectedFace,
+          exploded: state.explode, step: state.step, stepMode: state.stepMode, selectedIds: state.selectedIds, selectedFace: state.selectedFace,
           selectedEdge: state.selectedEdge,
           camera: payload.camera ?? state.camera, appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
           section: state.section,

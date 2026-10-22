@@ -1,4 +1,4 @@
-import { displayedWorldBounds, placeParts } from "./placement.mjs";
+import { displayedWorldBounds, placeParts, sequencePose } from "./placement.mjs";
 
 export const SECTION_AXES = ["x", "y", "z"];
 const axisIndex = { x: 0, y: 1, z: 2 };
@@ -60,7 +60,7 @@ export function sectionPointVisible(point, matrix, section, tolerance = 1e-8) {
 }
 
 export function sectionPlacements(model, state) {
-  return placeParts(model, state.explode, state.direction, state.fixedId);
+  return placeParts(model, state.explode, state.direction, state.fixedId, sequencePose(state));
 }
 
 export function reconcileSectionWithDisplay(state, model) {

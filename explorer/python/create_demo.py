@@ -1,12 +1,15 @@
 """Generate a self-contained colored STEP assembly for prototype testing.
 
 This is a synthetic visual fixture, not a manufactured or printable product.
-Geometry is in mm, with a centered XY footprint and positive Z height.
+Geometry is in mm, with a centered XY footprint and positive Z height. A two-step assembly
+sequence is written beside it as <name>.assembly.json.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from pathlib import Path
 import sys
 
@@ -94,6 +97,15 @@ def create_demo(output: str | Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     if writer.Write(str(output)) != IFSelect_RetDone:
         raise OSError(f"Native demo STEP write failed: {output}")
+    sequence = {
+        "format": "cad-explorer-assembly", "version": 1, "units": "mm",
+        "step": {"file": output.name, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()},
+        "steps": [
+            {"title": "Stand the four spacers on the base plate", "parts": ["Four spacers"], "from": [0, 0, 45]},
+            {"title": "Lay the cover plate on the spacers", "parts": ["Cover plate"], "from": [0, 0, 70]},
+        ],
+    }
+    output.with_name(f"{output.stem}.assembly.json").write_text(json.dumps(sequence, indent=2) + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:

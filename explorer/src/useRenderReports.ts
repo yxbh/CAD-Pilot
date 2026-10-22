@@ -8,10 +8,11 @@ import type { GeometryResources } from "./resources.ts";
 import { edgeScreenPoint } from "./edgePicking.ts";
 import { clipCadEdges, visibleFacePoint, visibleFaceTriangleCount } from "./section.ts";
 
-export function useRenderReports({ model, state, amount, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError }: {
+export function useRenderReports({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError }: {
   model: Model;
   state: ViewState;
   amount: number;
+  stepPosition: number | null;
   sectionPosition: number;
   active: boolean;
   placements: Placement[];
@@ -25,8 +26,8 @@ export function useRenderReports({ model, state, amount, sectionPosition, active
   const { size, invalidate } = useThree();
   const lastReported = useRef(-1);
   const reportLifetime = useRef({ active: false });
-  const latest = useRef({ model, state, amount, sectionPosition, active, placements });
-  latest.current = { model, state, amount, sectionPosition, active, placements };
+  const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements });
+  latest.current = { model, state, amount, stepPosition, sectionPosition, active, placements };
   useLayoutEffect(() => {
     const lifetime = { active };
     reportLifetime.current = lifetime;
@@ -41,6 +42,7 @@ export function useRenderReports({ model, state, amount, sectionPosition, active
     const current = latest.current;
     if (!current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
     if (current.amount !== current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
+    if (current.stepPosition !== current.state.step) throw new Error("Wait for the assembly step to finish moving before capturing");
     if (current.sectionPosition !== current.state.section.position) throw new Error("Finish adjusting the section plane before capturing");
     if (lastReported.current !== current.state.revision ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) {
@@ -51,7 +53,7 @@ export function useRenderReports({ model, state, amount, sectionPosition, active
   useFrame(() => {
     const current = latest.current;
     if (!current.active || contextLost.current || lastReported.current === current.state.revision || current.model.topologyRevision !== current.state.topologyRevision ||
-        current.amount !== current.state.explode || current.sectionPosition !== current.state.section.position ||
+        current.amount !== current.state.explode || current.stepPosition !== current.state.step || current.sectionPosition !== current.state.section.position ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) return;
     lastReported.current = current.state.revision;
     const camera = controller.camera;
@@ -101,6 +103,7 @@ export function useRenderReports({ model, state, amount, sectionPosition, active
       geometryIds: visible.map((part) => ({ id: part.node.id, geometry: resources.get(part.part).geometry.uuid })),
       camera: controller.snapshot(), appearance: current.state.appearance, materialFinish: current.state.materialFinish,
       section: { ...current.state.section },
+      step: current.state.step,
       projectedBounds: projected.length ? {
         min: [0, 1, 2].map((axis) => Math.min(...projected.map((point) => point[axis]))),
         max: [0, 1, 2].map((axis) => Math.max(...projected.map((point) => point[axis]))),

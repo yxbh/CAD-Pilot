@@ -84,6 +84,22 @@ select { color: var(--text-color-default, #c3dbe1); background: var(--background
 .review-summary > strong { font-size: 12px; overflow-wrap: anywhere; line-height: 1.5; }
 .review-summary > span { color: var(--text-color-muted, #9ab1bc); }
 .review-summary p { color: #86c9ba; }
+.assembly-panel { position: absolute; left: 12px; bottom: 12px; z-index: 12; width: min(380px, calc(100% - 24px)); padding: 6px 12px 8px; background: var(--background-color-default, #14212c); border: 1px solid var(--border-color-default, #4a606b); border-radius: 7px; box-shadow: 0 5px 18px #0006; color: #c9dde3; }
+.assembly-panel .panel-heading { padding: 0; gap: 8px; }
+.assembly-panel .panel-heading strong { flex: 1; font-size: 11px; color: #9fd8cb; letter-spacing: .02em; }
+.assembly-mode { display: flex; gap: 2px; }
+.assembly-mode button { height: 22px; padding: 2px 7px; font-size: 10px; }
+.assembly-mode button[aria-pressed=true] { background: #2a5a55; color: #e2f6f1; border-color: #4f9488; }
+.assembly-panel p { margin: 4px 0 0; font-size: 11px; line-height: 1.4; }
+.assembly-panel .assembly-title { font-size: 13px; font-weight: 600; color: #e6f2f5; }
+.assembly-panel .assembly-note { color: var(--text-color-muted, #a0b3bc); }
+.assembly-panel .assembly-check { display: flex; gap: 5px; align-items: baseline; color: #e1bb76; }
+.assembly-panel .assembly-check svg { flex-shrink: 0; transform: translateY(2px); }
+.assembly-controls { display: flex; align-items: center; gap: 2px; margin-top: 6px; }
+.assembly-controls input { flex: 1; min-width: 40px; height: 4px; margin: 0 6px; accent-color: #8adfc9; }
+.assembly-controls output { min-width: 30px; font-size: 11px; color: #b0d3ce; font-variant-numeric: tabular-nums; text-align: right; }
+.assembly-panel .assembly-footnote { font-size: 10px; color: var(--text-color-muted, #7f97a3); }
+.assembly-unavailable { opacity: .55; }
 .bottom-bar { height: 40px; flex: 0 0 40px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 10px; border-top: 1px solid var(--border-color-default, #2b3c48); background: var(--background-color-default, #12212c); }
 .explode-panel { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; color: #99b1bf; }
 .explode-panel > input { width: clamp(65px, 16vw, 220px); min-width: 0; height: 4px; padding: 0; margin: 0; accent-color: #8adfc9; cursor: pointer; }
