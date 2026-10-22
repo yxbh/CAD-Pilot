@@ -25,7 +25,7 @@ export const COMMANDS = Object.freeze({
   set_explode: command("Separate parts visually without moving the camera or changing the STEP. Fit assembly separately if needed.", {
     amount: { type: "number", minimum: 0, maximum: 1 },
     fixedId: { type: "string", description: "Occurrence to keep fixed, or empty to clear." },
-    direction: { enum: ["radial", "x", "y", "z"] },
+    direction: { enum: ["radial", "x", "y", "z"], description: "radial moves each subassembly and part out from its parent's centre; x, y and z stack them along that axis in the order they sit." },
   }),
   set_step: command("Show a step of the STEP's assembly sequence (its .assembly.json) without moving the camera or changing the STEP. Step 0 shows every sequenced part waiting at its start offset; the last step is fully assembled; off=true leaves the sequence.", {
     step: { type: "integer", minimum: 0, maximum: 200 },

@@ -221,9 +221,11 @@ def run(url, output, fixture):
                     break
             assert picked_edge is not None, "A retained portion of a crossing native edge must remain pickable"
 
+            # Every part is centred on X, so only Up / down separates them: the bars lift off the block.
+            command("set_section", {"axis": "z"})
             section_camera = settled()["rendered"]["camera"]
-            command("set_explode", {"amount": 0, "direction": "x"})
-            assembled_max = settled()["rendered"]["bounds"]["max"][0]
+            command("set_explode", {"amount": 0, "direction": "z"})
+            assembled_max = settled()["rendered"]["bounds"]["max"][2]
             explode_slider = page.get_by_role("slider", name="Explode amount")
             explode_slider.evaluate("""element => {
                 Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, '100');
@@ -244,11 +246,11 @@ def run(url, output, fixture):
             number_input.press("Tab")
             target_position = preview_max
             reached = wait(lambda current: current["explode"] == 1 and math.isclose(current["section"]["position"], target_position, abs_tol=1e-6))
-            assert math.isclose(reached["rendered"]["bounds"]["max"][0], preview_max, abs_tol=1e-6)
+            assert math.isclose(reached["rendered"]["bounds"]["max"][2], preview_max, abs_tol=1e-6)
             assert reached["rendered"]["camera"] == section_camera
             page.get_by_role("button", name="Close section view settings").click()
             reassembled = command("reset_view")
-            assert math.isclose(reassembled["section"]["position"], reassembled["rendered"]["bounds"]["max"][0], abs_tol=1e-6)
+            assert math.isclose(reassembled["section"]["position"], reassembled["rendered"]["bounds"]["max"][2], abs_tol=1e-6)
             assert reassembled["rendered"]["camera"] == section_camera
             command("set_section", {"axis": "x", "position": 0})
 
