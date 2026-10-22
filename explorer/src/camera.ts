@@ -13,6 +13,8 @@ export const axisViews: { id: ViewPreset; axis: string; label: string; color: st
   { id: "top", axis: "+Z", label: "Top view (+Z)", color: "#82b5ff", direction: [0, 0, 1], up: [0, 1, 0] },
   { id: "bottom", axis: "-Z", label: "Bottom view (-Z)", color: "#82b5ff", direction: [0, 0, -1], up: [0, 1, 0] },
 ];
+// OrbitControls keeps the camera at least 1e-6 rad from its poles; stay clear of that clamp.
+const poleTilt = 1e-5;
 
 export function viewHeight(camera: ViewCamera, target: Vector3): number {
   return camera instanceof OrthographicCamera
@@ -76,7 +78,7 @@ export class CameraController {
     this.target.set(...center(bounds));
     const distance = radius / Math.sin(Math.atan(Math.tan(this.perspective.fov * Math.PI / 360) * Math.min(this.aspect, 1))) * 1.18;
     this.camera.position.copy(this.target).addScaledVector(direction, distance);
-    this.camera.up.set(...(axis?.up ?? [0, 0, 1] as Vec3));
+    this.level(new Vector3(...(axis?.up ?? [0, 0, 1] as Vec3)));
     this.camera.near = Math.max(radius / 2000, 0.0001);
     this.camera.far = Math.max(radius * 100, distance * 4);
     this.camera.zoom = 1;
@@ -87,14 +89,27 @@ export class CameraController {
     this.perspective.fov = snapshot.fov;
     this.camera = snapshot.projection === "orthographic" ? this.orthographic : this.perspective;
     this.camera.position.set(...snapshot.position);
-    this.camera.up.set(...snapshot.up);
     this.target.set(...snapshot.target);
+    this.level(new Vector3(...snapshot.up));
     this.camera.zoom = 1;
     if (snapshot.projection === "orthographic" && snapshot.viewHeight) this.setOrthoHeight(snapshot.viewHeight);
     const distance = this.camera.position.distanceTo(this.target);
     this.camera.near = Math.max(distance / 10000, 0.0001);
     this.camera.far = Math.max(distance * 100, 2000);
     this.update();
+  }
+  // OrbitControls turns around camera.up, so world Z stays up and drags spin the model like a turntable.
+  // A view straight along Z tilts imperceptibly toward its screen bottom to keep the requested screen orientation.
+  private level(screenUp: Vector3) {
+    const offset = this.camera.position.clone().sub(this.target);
+    const distance = offset.length();
+    const horizontal = new Vector3(screenUp.x, screenUp.y, 0);
+    if (Math.hypot(offset.x, offset.y) < distance * poleTilt && horizontal.lengthSq() > 0) {
+      const side = Math.sign(offset.z);
+      offset.copy(horizontal.setLength(-side * Math.sin(poleTilt))).setZ(side * Math.cos(poleTilt));
+      this.camera.position.copy(this.target).addScaledVector(offset, distance);
+    }
+    this.camera.up.set(0, 0, 1);
   }
   update() {
     this.camera.lookAt(this.target);

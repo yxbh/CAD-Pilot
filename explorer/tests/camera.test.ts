@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Vector3 } from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CameraController, axisViews, viewHeight } from "../src/camera.ts";
 import { validateCamera } from "../shared/view-settings.mjs";
 import type { Bounds } from "../src/model.ts";
@@ -42,16 +43,46 @@ test("resizing only changes horizontal coverage for both projections, including 
     }
   }
 });
-test("all six axis views look straight at the correct signed world axis", () => {
+const screenUp = (rig: CameraController) => new Vector3().setFromMatrixColumn(rig.camera.matrixWorld, 1);
+test("all six axis views look along the correct signed world axis with world Z up and their screen orientation", () => {
   const rig = new CameraController();
   rig.resize(1000, 700);
   for (const axis of axisViews) {
     rig.fit(bounds, axis.id);
     const facing = rig.camera.position.clone().sub(rig.target).normalize();
-    close(facing.distanceTo(new Vector3(...axis.direction)), 0);
+    close(facing.distanceTo(new Vector3(...axis.direction)), 0, 1e-4);
     close(rig.camera.getWorldDirection(new Vector3()).dot(facing), -1);
-    close(rig.camera.up.dot(facing), 0);
+    assert.deepEqual(rig.camera.up.toArray(), [0, 0, 1]);
+    close(screenUp(rig).distanceTo(new Vector3(...axis.up)), 0, 1e-4);
     assert.ok(rig.camera.matrixWorld.elements.every(Number.isFinite));
+  }
+});
+test("dragging sideways from any view spins the model about world Z", () => {
+  const rig = new CameraController();
+  rig.resize(1000, 700);
+  for (const preset of ["iso", ...axisViews.map((axis) => axis.id)] as const) {
+    rig.fit(bounds, preset);
+    const offset = rig.camera.position.clone().sub(rig.target);
+    const up = screenUp(rig);
+    const orbit = new OrbitControls(rig.camera);
+    orbit.target.copy(rig.target);
+    orbit.update();
+    close(rig.camera.position.clone().sub(rig.target).distanceTo(offset), 0, 1e-9 * offset.length());
+    orbit.rotateLeft(0.5);
+    orbit.update();
+    const spin = (v: Vector3) => v.clone().applyAxisAngle(new Vector3(0, 0, 1), -0.5);
+    close(rig.camera.position.clone().sub(rig.target).distanceTo(spin(offset)), 0, 1e-9 * offset.length());
+    close(screenUp(rig).distanceTo(spin(up)), 0, 1e-4);
+  }
+});
+test("restoring a camera saved with a non-Z up keeps its view and screen orientation but orbits about Z", () => {
+  const rig = new CameraController();
+  rig.resize(1000, 700);
+  for (const [z, up] of [[180, [0, 1, 0]], [-180, [0, 1, 0]], [180, [1, 0, 0]]] as const) {
+    rig.restore({ position: [3, 4, z], target: [3, 4, 0], up: [...up], fov: 42 });
+    assert.deepEqual(rig.camera.up.toArray(), [0, 0, 1]);
+    close(rig.camera.getWorldDirection(new Vector3()).distanceTo(new Vector3(0, 0, -Math.sign(z))), 0, 1e-4);
+    close(screenUp(rig).distanceTo(new Vector3(...up)), 0, 1e-4);
   }
 });
 test("projection round trips preserve target, orientation and target-plane image size, including ortho zoom", () => {
