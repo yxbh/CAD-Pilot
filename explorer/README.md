@@ -58,6 +58,8 @@ Orbit, pan, zoom, fit and six exact axis views are available. Dragging orbits li
 
 Perspective and orthographic (parallel) projection share the same camera direction and target-plane scale when switched. The camera controller owns projection sizing so a window resize or parts-panel toggle does not replace the orthographic scale with pixel dimensions. Resizing may crop a narrower viewport; it must not silently change zoom.
 
+Explode follows the assembly's own tree. The slider first moves each top-level part or subassembly away from the assembly's centre, then the parts within each subassembly away from its centre, down to three levels; anything nested deeper moves with its third-level group. Outward moves each group in the direction it already sits from its parent's centre, further for groups that sit further out or are larger, and keeps neighbours from overlapping. Groups centred on their parent have no outward direction, so they stack instead: along the axis their centres spread along (plates on a turntable), or along the longest side of the one that has to come out when they share a centre (a shaft in a housing). Up / down, Left / right and Front / back stack the same groups along Z, X or Y in the order they sit: groups at the same height move together, the layer at the centre stays, and each layer moves far enough to clear whatever it would meet along that axis. Keep fixed holds the chosen part where it is assembled and moves everything else so it keeps the same separation from it.
+
 Explosion percentage, direction, fixed-part selection and Reassemble move only the parts, retaining the current camera, pan and zoom. Use Fit assembly if separation moves parts off-screen. Hide/show a specific part also retains the camera. Isolate and Show all retain their existing explicit-action behavior of fitting the resulting visible parts.
 
 Section view is a visual cutaway for closed solids. Open Section view from the model toolbar, enable the cut, choose X, Y or Z, slide or enter the plane coordinate on the model's world axes, and flip which half is hidden. The slider and number limits span the actual visible displayed occurrences, including nested transforms, repeated parts, fixed parts and the current explosion preview. Axis changes and Reset use the relevant displayed midpoint. Exploded offsets extend this visual range but are not physical CAD measurements. Expanding the display preserves the plane; reassembly, hiding an outlier or changing the pose clamps it only when it falls outside the remaining visible bounds, without moving the camera. Hiding every part preserves the last plane and disables position changes until a part is shown. Opening a different STEP resets section view off at the new assembled model's midpoint.
@@ -164,6 +166,7 @@ Preserve these contracts when changing their owners:
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
 | View ownership, file-cache invalidation and runtime relocation | `view-registry.test.mjs`, `inspection-cache.test.mjs`, `runtime-relocation.test.mjs` |
 | Test storage/inspection isolation and preference-only action acknowledgement | `runtime-isolation.test.mjs`, `copilot-host.test.mjs` |
+| Automatic explode: subassemblies separate before their parts, same-height layers on an axis, concentric telescoping, sibling clearance, the fixed part, a drift-free return to assembled | `explode.test.mjs`, `model.test.ts`, `section.test.ts` |
 | Assembly sequences: label and group resolution, carried parts, build-up hiding, step validation, explosion exclusivity; exporter ordering, direction, late-path, installed-overlap and stand-in checks; renders and captures wait for a step to settle, section range, cancelled drags | `assembly.test.mjs`, `test_assembly.py`, `assembly-browser.test.mjs` |
 | Design-project viewer: one background viewer per setup, in-place reload, stable address across restarts, view actions, captures, references and gated shutdown | `launcher.test.mjs` |
 
@@ -179,8 +182,48 @@ Frontend lifetimes are feature-specific: `useSelection` handles selection/clipbo
 
 Services default to the durable runtime described above. Internal callers can supply a `runtimeRoot`; all service-owned storage, leases and reference inspection are scoped together. Launcher tests isolate real background viewers the same way through `CAD_EXPLORER_RUNTIME_ROOT`. This is a test/service boundary, not a new canvas input or a change to existing saved paths.
 
+## Provenance
+
+The Explorer is first-party apart from the code recorded here. Keep each entry's notice with it.
+
+### Automatic explode layout
+
+- Source repository: https://github.com/earthtojake/text-to-cad
+- Source path: `packages/core/src/lib/viewer/explodedView.js`; its `explodedView.test.js` was read for behaviour.
+- Source revision: `2f793659fb7bab537e2f00836e06448fc4087cb2`
+- Imported: 2026-10-22.
+- License: MIT, Copyright (c) 2026 Thompson Labs LLC; the notice is reproduced below.
+- Scope: the hierarchical layout adapted into `shared/placement.mjs`: the level-by-level walk with wrapper collapse, radial offsets from spread, clearance and level falloff, the centred-child threshold, sibling separation, and overlapping level windows with smoothstep. Two scenarios in `tests/explode.test.mjs` (a shaft in a housing, siblings with nearby centres) follow upstream test cases.
+- Local changes: rewritten over the Explorer's node tree and world matrices instead of occurrence-path records, without three.js; measured once per model and direction; levels that move nothing take no share of the slider; the fixed part is held by subtracting its offset from every part. Children centred on their parent are stacked with the X/Y/Z stacking along the axis their centres spread along, falling back to upstream's longest side only when they share a centre: upstream's per-child longest side laid flat coaxial plates out side by side. The X/Y/Z axis stacking is original CAD-Pilot code. Upstream's ease-out, bounds and scene helpers are not used.
+
+```text
+MIT License
+
+Copyright (c) 2026 Thompson Labs LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+To update, review an explicit upstream commit and its license against the pinned revision, record the new revision and any further local changes here, then run `explode.test.mjs` and look at a real assembly exploded in each direction.
+
 ## Limits
 
-CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Assembly steps are straight-line display offsets, and the optional sequence check is a rigid geometric screen run by the exporter, not a physical simulation. Section caps are a tessellated display aid, not precise geometric measurements, new B-rep faces, a cut STEP, a minimum-wall check or exported print geometry. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
+CAD Explorer loads snapshots; it does not watch source files, simulate disassembly, slice models or control printers. Automatic explode separates bounding boxes, not shapes: it is not a disassembly path, and interlocking parts can still look interleaved. Assembly steps are straight-line display offsets, and the optional sequence check is a rigid geometric screen run by the exporter, not a physical simulation. Section caps are a tessellated display aid, not precise geometric measurements, new B-rep faces, a cut STEP, a minimum-wall check or exported print geometry. Large-assembly performance is not certified. Native conversion runs trusted local code, not a sandbox, with a 100 MB STEP cap and a two-minute timeout.
 
 See the repository's [ownership and provenance guidance](../README.md#provenance).
