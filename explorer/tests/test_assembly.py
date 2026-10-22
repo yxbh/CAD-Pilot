@@ -62,6 +62,7 @@ def test_groups_resolve_and_the_file_records_the_step_identity(tmp_path):
     assert document["step"] == {"file": "design.step", "sha256": hashlib.sha256(step.read_bytes()).hexdigest()}
     assert [item["parts"] for item in document["steps"]] == [["pegs"], ["l?d"]]
     assert document["steps"][1]["note"] == "Press flat"
+    assert document["source"] == "../source/design.py", "the generator is recorded relative to the sequence file"
     assert "check" not in document and all("check" not in item for item in document["steps"])
     assert assembly.sequence_path(step) == step.with_name("design.assembly.json")
 
@@ -92,6 +93,8 @@ def test_check_reports_installed_overlap_and_named_stand_ins(tmp_path):
     ([{"title": "", "parts": ["peg"], "from": (0, 0, 5)}], "needs a title"),
     ([{"title": "Peg", "parts": ["peg"], "from": (0, 5)}], "three"),
     ([{"title": "Peg", "parts": ["peg"], "from": (0, 0, 5), "rotate": 90}], "unsupported"),
+    ([{"title": "Peg", "parts": ["peg"], "from": ("10", "up", 0)}], "three numbers"),
+    ([{"title": "Peg", "parts": ["p[e]g"], "from": (0, 0, 5)}], "unknown part"),
 ])
 def test_sequence_errors_name_the_step(tmp_path, steps, message):
     with pytest.raises(assembly.SequenceError, match=message):
@@ -122,3 +125,35 @@ def test_a_failed_overlap_boolean_is_an_error_not_clear(tmp_path, monkeypatch):
                                        {"title": "Lid", "parts": ["lid"], "from": (0, 0, 30)}])
     assert [step["check"]["status"] for step in document["steps"]] == ["error", "error"]
     assert "intersection" in document["steps"][0]["check"]["detail"]
+
+
+def test_a_path_that_reaches_a_part_after_a_gap_is_blocked():
+    from build123d import Box, Compound, Pos
+
+    # The box touches nothing where it is installed; its path meets the wall only after 46 mm.
+    lone = Box(4, 4, 4)
+    lone.label = "lone"
+    wall = Pos(50, 0, 0) * Box(4, 40, 40)
+    wall.label = "wall"
+    # A plate thinner than a 10 mm sample spacing, between grid samples, is found from its interval's midpoint.
+    plate = Pos(-35, 0, 0) * Box(0.2, 40, 40)
+    plate.label = "plate"
+    leaves, groups = assembly.labelled_parts(Compound(children=[lone, wall, plate]))
+    out = assembly.normalize_steps({"steps": [{"title": "Out", "parts": ["lone"], "from": (100, 0, 0)}]}, groups)
+    result = assembly.check_steps(out, leaves, 0.5)[0]
+    assert (result["status"], result["contacts"][0]["blocker"]) == ("blocked", "wall")
+    assert 46 <= result["contacts"][0]["atMm"] <= 48
+    back = assembly.normalize_steps({"steps": [{"title": "Back", "parts": ["lone"], "from": (-100, 0, 0)}]}, groups)
+    assert assembly.check_steps(back, leaves, 10.0)[0]["contacts"][0]["blocker"] == "plate"
+
+
+def test_check_shapes_must_be_shapes(tmp_path):
+    source = SOURCE.replace("stand_in = Pos(0, 0, 500) * Sphere(1)", "stand_in = 'squeezed'").replace(
+        'stand_in.label = "far_away_stand_in"', "")
+    (tmp_path / "source").mkdir()
+    (tmp_path / "source" / "design.py").write_text(source.format(
+        peg_radius=4.9, steps=repr([{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20), "stand_in": True}])), encoding="utf-8")
+    step = tmp_path / "design.step"
+    step.write_text("ISO-10303-21; END-ISO-10303-21;", encoding="utf-8")
+    with pytest.raises(assembly.SequenceError, match="build123d shapes"):
+        assembly.build_document(tmp_path / "source" / "design.py", step, False, 1.0)

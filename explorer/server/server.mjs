@@ -186,11 +186,13 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
 
   async function demoFile() {
     const target = path.join(runtimeRoot, "demo-assembly.step");
-    try { await Promise.all([stat(target), stat(sequencePath(target))]); }
-    catch (error) {
+    const missing = (file) => stat(file).then(() => false, (error) => {
       if (error?.code !== "ENOENT") throw error;
-      await python("create_demo.py", ["--output", target]);
-    }
+      return true;
+    });
+    if (await missing(target)) await python("create_demo.py", ["--output", target]);
+    // Older runtimes gain the demo sequence without rewriting the STEP that saved views and references use.
+    else if (await missing(sequencePath(target))) await python("create_demo.py", ["--output", target, "--sequence-only"]);
     return target;
   }
 
@@ -225,7 +227,7 @@ async function startOwnedService({ project, viewKey, file, runtimeRoot, inspecti
     catch (error) {
       const file = path.relative(root, sequencePath(stepPath)).split(path.sep).join("/");
       log(`Explorer assembly sequence: ${publicError(error)}`);
-      return { file, stale: false, checked: false, steps: [], error: publicError(error) };
+      return { file, stale: false, digest: "", steps: [], error: publicError(error) };
     }
   }
 

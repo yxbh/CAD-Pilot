@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { isInside } from "./paths.mjs";
@@ -61,13 +62,11 @@ export function resolveSequence(document, model, file) {
       ...(step.check ? { check: { status: step.check.status, detail: step.check.detail ?? "" } } : {}),
     };
   });
-  return {
-    file,
-    // A sequence written for different STEP bytes may still resolve by label; say so rather than guess.
-    stale: document.step !== undefined && document.step.sha256 !== model.source.sha256,
-    checked: steps.some((step) => step.check),
-    steps,
-  };
+  // A sequence written for different STEP bytes may still resolve by label; say so rather than guess.
+  const stale = document.step !== undefined && document.step.sha256 !== model.source.sha256;
+  // State arrives as fresh objects on every update; the digest lets the renderer key on content instead.
+  const digest = createHash("sha256").update(JSON.stringify({ file, stale, steps })).digest("hex");
+  return { file, stale, digest, steps };
 }
 
 export async function readSequence(stepPath, model, root) {

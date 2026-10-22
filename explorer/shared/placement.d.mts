@@ -9,7 +9,7 @@ export type SequenceStep = {
   from: [number, number, number];
   check?: { status: "clear" | "blocked" | "interferes" | "error"; detail: string };
 };
-export type AssemblySequence = { file: string; stale: boolean; checked: boolean; steps: SequenceStep[]; error?: string };
+export type AssemblySequence = { file: string; stale: boolean; digest: string; steps: SequenceStep[]; error?: string };
 export type SequencePose = { steps: SequenceStep[]; position: number; mode: StepMode };
 export type PlacementState = {
   explode: number;

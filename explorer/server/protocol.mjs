@@ -110,7 +110,9 @@ export function changeView(state, model, name, input = {}) {
       followDisplay();
       break;
     case "set_step": {
-      if (input.step === undefined && input.mode === undefined) throw new PrototypeError("bad_step", "Supply a step number, null or a mode");
+      if (input.off !== undefined && typeof input.off !== "boolean") throw new PrototypeError("bad_step", "off must be true or false");
+      if (input.off === true && input.step !== undefined && input.step !== null) throw new PrototypeError("bad_step", "Choose a step or off, not both");
+      if (input.step === undefined && input.mode === undefined && input.off !== true) throw new PrototypeError("bad_step", "Supply a step number, off=true or a mode");
       const steps = state.assembly?.steps ?? [];
       if (input.step !== undefined && input.step !== null) {
         if (!steps.length) throw new PrototypeError("no_sequence", "This STEP has no assembly sequence. Write one beside it as <name>.assembly.json and open the STEP again.", 409);
@@ -120,6 +122,7 @@ export function changeView(state, model, name, input = {}) {
         next.explode = 0;
       }
       if (input.step !== undefined) next.step = input.step;
+      if (input.off === true) next.step = null;
       if (input.mode !== undefined) {
         if (!STEP_MODES.includes(input.mode)) throw new PrototypeError("bad_step_mode", "Choose exploded or buildup");
         next.stepMode = input.mode;

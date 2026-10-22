@@ -124,15 +124,17 @@ function SequenceTrails({ placements, origin }: { placements: Placement[]; origi
     const start = center(bounds).map((value, axis) => value - origin[axis]);
     return [...start, ...start.map((value, axis) => value - offset[axis])];
   }), [placements, origin]);
-  const lines = useMemo(() => {
-    if (!positions.length) return null;
-    const material = new LineMaterial({ color: 0x8adfc9, dashed: true, dashSize: 3, gapSize: 2, transparent: true, opacity: 0.75, depthTest: false });
-    const line = new LineSegments2(new LineSegmentsGeometry().setPositions(positions), material);
-    line.computeLineDistances();
-    return line;
-  }, [positions]);
-  useEffect(() => () => { lines?.geometry.dispose(); lines?.material.dispose(); }, [lines]);
-  if (!lines) return null;
+  // One line object for the panel's lifetime; only its small geometry is replaced as parts move.
+  const lines = useMemo(() => new LineSegments2(new LineSegmentsGeometry(),
+    new LineMaterial({ color: 0x8adfc9, dashed: true, dashSize: 3, gapSize: 2, transparent: true, opacity: 0.75, depthTest: false })), []);
+  const geometry = useMemo(() => positions.length ? new LineSegmentsGeometry().setPositions(positions) : null, [positions]);
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  useEffect(() => () => { lines.geometry.dispose(); lines.material.dispose(); }, [lines]);
+  if (!geometry) return null;
+  if (lines.geometry !== geometry) {
+    lines.geometry = geometry;
+    lines.computeLineDistances();
+  }
   lines.material.linewidth = 1.5;
   lines.material.resolution.set(size.width, size.height);
   return <primitive object={lines} renderOrder={5} raycast={() => null} />;
@@ -406,7 +408,8 @@ export default function Scene(props: Props) {
   const { model, state, amount, stepPosition, sectionPosition } = props;
   const [hovered, setHovered] = useState<HoverTarget | null>(null);
   const placements = useMemo(() => placeParts(model, amount, state.direction, state.fixedId, sequencePose(state, stepPosition)),
-    [model, amount, state.direction, state.fixedId, state.assembly, state.stepMode, stepPosition]);
+    // The sequence's digest, not its object identity, which every state event replaces.
+    [model, amount, state.direction, state.fixedId, state.assembly?.digest, state.stepMode, stepPosition]);
   const origin = useMemo(() => center(model.bounds), [model]);
   const section = useMemo(() => ({ ...state.section, position: sectionPosition }),
     [state.section.enabled, state.section.axis, state.section.flipped, sectionPosition]);

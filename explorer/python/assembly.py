@@ -5,8 +5,8 @@ Run from the design root with the workbench interpreter, after generating the ST
     python <workbench>/explorer/python/assembly.py source/model.py --step outputs/model.step [--check]
 
 The source defines ``gen_step()`` (the labelled assembly) and ``gen_assembly()``, which returns
-``{"steps": [...]}``. Each step names parts by label (``*`` and ``?`` wildcards; a group label
-covers its parts) and gives the offset in millimetres they arrive from, relative to where they
+``{"steps": [...]}``. Each step names parts by label (``*`` and ``?`` wildcards, matching CAD
+Explorer, so other characters such as brackets are literal; a group label covers its parts) and gives the offset in millimetres they arrive from, relative to where they
 sit when assembled. A step may also name a part from an earlier step to carry it along, and may
 supply ``check_shapes`` that stand in for listed parts during the check only, such as a
 deflected-finger illustration of a snap part.
@@ -21,12 +21,13 @@ or friction, and features thinner than the sample spacing can be stepped over.
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
+import re
 import sys
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
@@ -82,11 +83,17 @@ def labelled_parts(shape) -> tuple[dict[str, list], dict[str, list[str]]]:
     return leaves, groups
 
 
+def label_pattern(glob: str) -> re.Pattern:
+    """Only ``*`` and ``?`` are wildcards, exactly as CAD Explorer resolves the same file."""
+    return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
+
+
 def match_parts(patterns: list[str], groups: dict[str, list[str]]) -> tuple[list[str], list[str]]:
     matched: list[str] = []
     missing: list[str] = []
     for pattern in patterns:
-        names = [name for name in groups if fnmatch.fnmatchcase(name, pattern)]
+        matcher = label_pattern(pattern)
+        names = [name for name in groups if matcher.fullmatch(name)]
         if not names:
             missing.append(pattern)
         for name in names:
@@ -97,7 +104,7 @@ def match_parts(patterns: list[str], groups: dict[str, list[str]]) -> tuple[list
 def _vector(value, field: str) -> list[float]:
     try:
         vector = [float(item) for item in value]
-    except TypeError as error:
+    except (TypeError, ValueError) as error:
         raise SequenceError(f"{field} must be three numbers") from error
     if len(vector) != 3 or not all(math.isfinite(item) and abs(item) <= 1e5 for item in vector):
         raise SequenceError(f"{field} must be three finite numbers within 100 m")
@@ -105,6 +112,8 @@ def _vector(value, field: str) -> list[float]:
 
 
 def normalize_steps(raw, groups: dict[str, list[str]]) -> list[dict]:
+    from build123d import Shape
+
     steps = raw.get("steps") if isinstance(raw, dict) else None
     if not isinstance(steps, list) or not 0 < len(steps) <= MAX_STEPS:
         raise SequenceError(f"gen_assembly() must return {{'steps': [...]}} with 1 to {MAX_STEPS} steps")
@@ -127,6 +136,8 @@ def normalize_steps(raw, groups: dict[str, list[str]]) -> list[dict]:
         check_shapes = step.get("check_shapes") or {}
         if not isinstance(check_shapes, dict) or any(name not in leaves for name in check_shapes):
             raise SequenceError(f"Step {index} check_shapes must replace parts named in that step")
+        if not all(isinstance(shape, Shape) and shape.wrapped is not None for shape in check_shapes.values()):
+            raise SequenceError(f"Step {index} check_shapes values must be build123d shapes")
         result.append({
             "title": step["title"].strip(), "note": note.strip(), "parts": parts, "leaves": leaves,
             "from": _vector(step.get("from"), f"Step {index} from"), "check_shapes": check_shapes,
@@ -139,8 +150,38 @@ def _box(shape):
     return [box.min.X, box.min.Y, box.min.Z], [box.max.X, box.max.Y, box.max.Z]
 
 
-def _boxes_overlap(a, b, shift=(0.0, 0.0, 0.0), gap=0.01) -> bool:
-    return all(a[0][axis] + shift[axis] < b[1][axis] + gap and b[0][axis] < a[1][axis] + shift[axis] + gap for axis in range(3))
+def _meeting_interval(moving, placed, direction, length, gap=0.01):
+    """Distances along the path where the moving box overlaps the placed box, or None if they never meet.
+
+    Along a straight path the overlap is a single interval, which can begin after a gap, so the whole
+    path is examined rather than stopping where the boxes first stand apart.
+    """
+    low, high = 0.0, length
+    for axis in range(3):
+        a_min, a_max = moving[0][axis] - gap, moving[1][axis] + gap
+        b_min, b_max = placed[0][axis], placed[1][axis]
+        step = direction[axis]
+        if abs(step) < 1e-12:
+            if not (a_min < b_max and b_min < a_max):
+                return None
+            continue
+        bounds = ((b_max - a_min) / step, (b_min - a_max) / step)
+        low, high = max(low, min(bounds)), min(high, max(bounds))
+        if low > high:
+            return None
+    return low, high
+
+
+def _samples(intervals, sample_mm: float) -> list[float]:
+    """Every grid distance inside an interval, plus its midpoint so intervals shorter than the spacing are sampled."""
+    distances = set()
+    for low, high in intervals:
+        distances.add(round((low + high) / 2, 9))
+        if low <= 0:
+            distances.add(0.0)
+        for count in range(math.ceil(low / sample_mm), math.floor(high / sample_mm) + 1):
+            distances.add(round(count * sample_mm, 9))
+    return sorted(distances)
 
 
 def _overlap(a, b) -> float:
@@ -184,17 +225,22 @@ def check_steps(steps: list[dict], leaves: dict[str, list], sample_mm: float) ->
         result = {"status": "clear", "clearsAt": None, "contacts": []}
         if substitutes:
             result["substitutes"] = substitutes
-        samples = [0.0] + [min(length, sample_mm * count) for count in range(1, math.ceil(length / sample_mm) + 1)] if length else [0.0]
+        pairs = []
+        for mover in movers:
+            for other in placed:
+                interval = _meeting_interval(mover[2], other[2], direction, length)
+                if interval is not None:
+                    pairs.append((mover, other, interval))
+        # Bounding boxes that still overlap at the start offset have no clearance distance to report.
+        if pairs and length and all(interval[1] < length for _, _, interval in pairs):
+            result["clearsAt"] = round(max(interval[1] for _, _, interval in pairs), 3)
         blocked = set()
         try:
-            for distance in samples:
-                shift = [axis * distance for axis in direction]
-                near = [(m, p) for m in movers for p in placed if _boxes_overlap(m[2], p[2], shift)]
-                if not near and distance > 0:
-                    result["clearsAt"] = round(distance, 3)
-                    break
+            for distance in _samples([interval for _, _, interval in pairs], sample_mm):
                 if len(blocked) == len({name for name, _, _ in movers}):
                     break
+                shift = [axis * distance for axis in direction]
+                near = [(m, p) for m, p, (low, high) in pairs if low <= distance <= high]
                 for (name, shape, _), (blocker, other, _) in near:
                     if name in blocked:
                         continue
@@ -234,7 +280,7 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
     results = check_steps(steps, leaves, sample_mm) if check else [None] * len(steps)
     document = {
         "format": FORMAT, "version": VERSION, "units": "mm",
-        "source": source.as_posix(),
+        "source": _relative_source(source, step_path),
         "step": {"file": step_path.name, "sha256": hashlib.sha256(step_path.read_bytes()).hexdigest()},
         "steps": [
             {"title": step["title"], **({"note": step["note"]} if step["note"] else {}), "parts": step["parts"], "from": step["from"],
@@ -245,6 +291,14 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
     if check:
         document["check"] = {"sampleMm": sample_mm, "overlapToleranceMm3": OVERLAP_TOLERANCE_MM3, "limits": LIMITS}
     return document
+
+
+def _relative_source(source: Path, step_path: Path) -> str:
+    """The generator relative to the sequence file, so the file carries no machine-specific folder."""
+    try:
+        return Path(os.path.relpath(source.resolve(), step_path.resolve().parent)).as_posix()
+    except ValueError:  # Windows paths on different drives have no relative form.
+        return source.name
 
 
 def sequence_path(step_path: Path) -> Path:

@@ -28,23 +28,30 @@ const model = {
 const document = (steps, sha256 = model.source.sha256) => ({
   format: "cad-explorer-assembly", version: 1, units: "mm", step: { file: "jig.step", sha256 }, steps,
 });
-const sequence = resolveSequence(document([
+const sequenceSteps = [
   { title: "Drop in the pins", parts: ["pins"], from: [0, 0, 10] },
   { title: "Press on the cap", note: "Square it up", parts: ["cap", "pin_?"], from: [0, 0, 20],
     check: { status: "blocked", detail: "cap overlaps base after 1 mm" } },
-]), model, "outputs/jig.assembly.json");
+];
+const sequence = resolveSequence(document(sequenceSteps), model, "outputs/jig.assembly.json");
 const placed = (state, position) => Object.fromEntries(placeParts(model, 0, "radial", "", sequencePose(state, position))
   .map((placement) => [placement.node.id, placement.matrix.slice(12, 15)]));
 
 test("sequence labels resolve groups and wildcards to parts, and report what they cannot find", () => {
   assert.equal(sequence.stale, false);
-  assert.equal(sequence.checked, true);
+  assert.match(sequence.digest, /^[a-f0-9]{64}$/);
+  assert.equal(resolveSequence(document(structuredClone(sequenceSteps)), model, "outputs/jig.assembly.json").digest, sequence.digest,
+    "the same file resolves to the same digest");
   assert.deepEqual(sequence.steps.map((step) => step.nodeIds), [["pin-1", "pin-2"], ["cap", "pin-1", "pin-2"]]);
   assert.deepEqual(sequence.steps[1].check, { status: "blocked", detail: "cap overlaps base after 1 mm" });
   const other = resolveSequence(document([{ title: "Lid", parts: ["lid", "cap"], from: [0, 0, 1] }], "b".repeat(64)), model, "x");
   assert.equal(other.stale, true);
+  assert.notEqual(other.digest, sequence.digest);
   assert.deepEqual(other.steps[0].unresolved, ["lid"]);
   assert.deepEqual(other.steps[0].nodeIds, ["cap"]);
+  // Only * and ? are wildcards, as in the exporter; brackets and dots are literal.
+  const literal = resolveSequence(document([{ title: "Pins", parts: ["pin_[12]", "pin.1"], from: [0, 0, 1] }]), model, "x");
+  assert.deepEqual(literal.steps[0].unresolved, ["pin_[12]", "pin.1"]);
   for (const steps of [[], [{ title: "", parts: ["cap"], from: [0, 0, 1] }], [{ title: "A", parts: [], from: [0, 0, 1] }],
     [{ title: "A", parts: ["cap"], from: [0, 1] }], [{ title: "A", parts: ["cap"], from: [0, 0, Infinity] }],
     [{ title: "A", parts: ["cap"], from: [0, 0, 1], check: { status: "fine" } }]]) {
@@ -83,13 +90,18 @@ test("set_step validates the range, switches off automatic explosion and is clea
   }
   assert.throws(() => changeView(initialState(), model, "set_step", { step: 0 }), /no assembly sequence/);
   assert.equal(changeView(first, model, "set_step", { step: null }).step, null);
+  assert.equal(changeView(first, model, "set_step", { off: true }).step, null);
+  assert.throws(() => changeView(first, model, "set_step", { off: true, step: 1 }), /not both/);
+  assert.throws(() => changeView(first, model, "set_step", { off: "yes" }), /off must be/);
   assert.equal(changeView(first, model, "set_explode", { amount: 0.5 }).step, null);
   assert.equal(changeView(first, model, "set_explode", { direction: "z" }).step, 0);
   assert.equal(changeView(first, model, "reset_view").step, null);
-  assert.ok(COMMANDS.set_step.inputSchema.properties.step);
+  // Canvas hosts get plain JSON-schema types; no union for "number or null".
+  assert.deepEqual(COMMANDS.set_step.inputSchema.properties.step, { type: "integer", minimum: 0, maximum: 200 });
+  assert.equal(COMMANDS.set_step.inputSchema.properties.off.type, "boolean");
 });
 
-test("the sequence file is read from beside its STEP and is optional", async () => {
+test("the sequence file is read from beside its STEP and is optional", async (t) => {
   // The server passes canonical roots; macOS temporary folders are reached through a symlink.
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "cad-explorer-sequence-")));
   try {
@@ -107,7 +119,8 @@ test("the sequence file is read from beside its STEP and is optional", async () 
     try {
       await writeFile(path.join(outside, "elsewhere.json"), JSON.stringify(document([{ title: "Cap", parts: ["cap"], from: [0, 0, 5] }])));
       await rm(sequencePath(step));
-      await symlink(path.join(outside, "elsewhere.json"), sequencePath(step));
+      try { await symlink(path.join(outside, "elsewhere.json"), sequencePath(step), "file"); }
+      catch (error) { if (process.platform === "win32" && error.code === "EPERM") { t.skip("Symlinks require Windows permission"); return; } throw error; }
       await assert.rejects(readSequence(step, model, root), /inside the selected project root/);
     } finally {
       await rm(outside, { recursive: true, force: true });

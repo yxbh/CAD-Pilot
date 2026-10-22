@@ -27,9 +27,10 @@ export const COMMANDS = Object.freeze({
     fixedId: { type: "string", description: "Occurrence to keep fixed, or empty to clear." },
     direction: { enum: ["radial", "x", "y", "z"] },
   }),
-  set_step: command("Show a step of the STEP's assembly sequence (its .assembly.json) without moving the camera or changing the STEP. Step 0 shows every sequenced part waiting at its start offset; the last step is fully assembled; null turns the sequence off.", {
-    step: { anyOf: [{ type: "integer", minimum: 0, maximum: 200 }, { type: "null" }] },
+  set_step: command("Show a step of the STEP's assembly sequence (its .assembly.json) without moving the camera or changing the STEP. Step 0 shows every sequenced part waiting at its start offset; the last step is fully assembled; off=true leaves the sequence.", {
+    step: { type: "integer", minimum: 0, maximum: 200 },
     mode: { enum: STEP_MODES, description: "exploded keeps later parts visible at their start offsets; buildup hides them until their step." },
+    off: { type: "boolean", description: "true leaves the sequence and shows the assembled STEP. The design-project CLI also accepts step=null." },
   }),
   select_parts: command("Highlight occurrences without writing the clipboard.", { ids }, ["ids"]),
   select_face: command("Highlight a CAD face on the exact displayed topology, without writing the clipboard.", {

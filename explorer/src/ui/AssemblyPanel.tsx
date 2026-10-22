@@ -44,7 +44,9 @@ export function AssemblyPanel({ state, player, busy, run }: {
       <input aria-label="Assembly step" type="range" min={0} max={count} step={0.01} value={shown} disabled={busy}
         onChange={(event) => player.preview(Number(event.target.value))}
         onPointerUp={(event) => player.commit(Number(event.currentTarget.value))}
-        onKeyUp={(event) => player.commit(Number(event.currentTarget.value))} />
+        onPointerCancel={player.revert}
+        onKeyUp={(event) => player.commit(Number(event.currentTarget.value))}
+        onBlur={(event) => player.commit(Number(event.currentTarget.value))} />
       <output>{committed}/{count}</output>
     </div>
     <p className="assembly-footnote">Display only. Parts move between their placements in the STEP; the STEP itself is unchanged.</p>
