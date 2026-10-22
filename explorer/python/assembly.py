@@ -29,6 +29,10 @@ import math
 from pathlib import Path
 import sys
 
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
+from OCP.BRepGProp import BRepGProp
+from OCP.GProp import GProp_GProps
+
 FORMAT = "cad-explorer-assembly"
 VERSION = 1
 MAX_STEPS = 200
@@ -140,8 +144,19 @@ def _boxes_overlap(a, b, shift=(0.0, 0.0, 0.0), gap=0.01) -> bool:
 
 
 def _overlap(a, b) -> float:
-    common = a & b
-    return sum(solid.volume for solid in common.solids()) if common else 0.0
+    """Exact shared volume. A failed boolean is an error, never an empty and therefore clear result."""
+    common = BRepAlgoAPI_Common(a.wrapped, b.wrapped)
+    # OCCT marks a boolean done only when it finished without errors.
+    failed = not common.IsDone()
+    volume = 0.0
+    if not failed:
+        properties = GProp_GProps()
+        BRepGProp.VolumeProperties_s(common.Shape(), properties)
+        volume = properties.Mass()
+        failed = volume < -OVERLAP_TOLERANCE_MM3  # an inside-out result is not a measurement
+    if failed:
+        raise RuntimeError(f"the B-rep intersection of {a.label or 'a part'} and {b.label or 'a part'} failed")
+    return max(volume, 0.0)
 
 
 def check_steps(steps: list[dict], leaves: dict[str, list], sample_mm: float) -> list[dict]:

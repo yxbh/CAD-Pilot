@@ -107,3 +107,18 @@ def test_command_writes_beside_the_step_and_summarizes(tmp_path, capsys):
     assert summary["check"][0]["status"] == "blocked" and "lid" in summary["check"][0]["detail"]
     assert json.loads(step.with_name("design.assembly.json").read_text(encoding="utf-8"))["steps"][0]["title"] == "Peg"
     assert assembly.main([str(tmp_path / "source" / "design.py"), "--step", str(tmp_path / "missing.step")]) == 2
+
+
+def test_a_failed_overlap_boolean_is_an_error_not_clear(tmp_path, monkeypatch):
+    class FailedCommon:
+        def __init__(self, *shapes):
+            pass
+
+        def IsDone(self):
+            return False
+
+    monkeypatch.setattr(assembly, "BRepAlgoAPI_Common", FailedCommon)
+    document, _ = _document(tmp_path, [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20)},
+                                       {"title": "Lid", "parts": ["lid"], "from": (0, 0, 30)}])
+    assert [step["check"]["status"] for step in document["steps"]] == ["error", "error"]
+    assert "intersection" in document["steps"][0]["check"]["detail"]
