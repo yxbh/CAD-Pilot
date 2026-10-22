@@ -1,5 +1,6 @@
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mjs";
 import { SECTION_AXES } from "./section.mjs";
+import { STEP_MODES } from "./placement.mjs";
 
 export const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const ids = { type: "array", items: { type: "string" }, maxItems: 500 };
@@ -25,6 +26,11 @@ export const COMMANDS = Object.freeze({
     amount: { type: "number", minimum: 0, maximum: 1 },
     fixedId: { type: "string", description: "Occurrence to keep fixed, or empty to clear." },
     direction: { enum: ["radial", "x", "y", "z"] },
+  }),
+  set_step: command("Show a step of the STEP's assembly sequence (its .assembly.json) without moving the camera or changing the STEP. Step 0 shows every sequenced part waiting at its start offset; the last step is fully assembled; off=true leaves the sequence.", {
+    step: { type: "integer", minimum: 0, maximum: 200 },
+    mode: { enum: STEP_MODES, description: "exploded keeps later parts visible at their start offsets; buildup hides them until their step." },
+    off: { type: "boolean", description: "true leaves the sequence and shows the assembled STEP. The design-project CLI also accepts step=null." },
   }),
   select_parts: command("Highlight occurrences without writing the clipboard.", { ids }, ["ids"]),
   select_face: command("Highlight a CAD face on the exact displayed topology, without writing the clipboard.", {

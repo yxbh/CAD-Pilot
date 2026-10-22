@@ -1,5 +1,6 @@
 import type { CameraState } from "../shared/view-settings.mjs";
 import type { SectionSettings } from "../shared/section.mjs";
+import type { AssemblySequence, SequencePose, StepMode } from "../shared/placement.mjs";
 import {
   center as sharedCenter,
   diagonal as sharedDiagonal,
@@ -74,6 +75,9 @@ export type ViewState = {
   explode: number;
   fixedId: string;
   direction: "radial" | "x" | "y" | "z";
+  assembly: AssemblySequence | null;
+  step: number | null;
+  stepMode: StepMode;
   cameraPreset: "iso" | "top" | "bottom" | "front" | "back" | "right" | "left";
   projection: "perspective" | "orthographic";
   appearance: "inspect" | "studio";
@@ -86,7 +90,7 @@ export type ViewState = {
   activeReviewId: string | null;
   camera: CameraState | null;
 };
-export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds };
+export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds; offset: number[] | null };
 export type HoverTarget = { nodeId: string; faceId: string | null; edgeId?: string };
 
 export function center(bounds: Bounds): Vec3 {
@@ -105,8 +109,8 @@ export function mergeBounds(bounds: Bounds[]): Bounds | null {
   return sharedMergeBounds(bounds);
 }
 
-export function placeParts(model: Model, amount: number, direction: ViewState["direction"], fixedId: string): Placement[] {
-  return sharedPlaceParts(model, amount, direction, fixedId);
+export function placeParts(model: Model, amount: number, direction: ViewState["direction"], fixedId: string, sequence: SequencePose | null = null): Placement[] {
+  return sharedPlaceParts(model, amount, direction, fixedId, sequence);
 }
 
 export function faceAtTriangle(part: Part, triangle: number): CadFace | null {

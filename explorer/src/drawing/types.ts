@@ -23,6 +23,8 @@ export type Review = {
     materialFinish?: ViewState["materialFinish"];
     showEdges?: boolean;
     section?: ViewState["section"];
+    step?: number;
+    stepMode?: ViewState["stepMode"];
   };
   image: { dataUrl: string; width: number; height: number };
   drawing: DrawingState;

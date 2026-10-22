@@ -120,6 +120,7 @@ export class ReviewStore {
       source: { name: state.modelName, sha256: state.documentRevision, topologyRevision: state.topologyRevision },
       pose: {
         explode: state.explode, direction: state.direction, fixedId: state.fixedId,
+        ...(state.step !== null && state.step !== undefined ? { step: state.step, stepMode: state.stepMode } : {}),
         hiddenIds: [...state.hiddenIds], selectedIds: [...state.selectedIds], selectedFace: state.selectedFace,
         selectedEdge: state.selectedEdge ?? null,
         camera: capture.camera,

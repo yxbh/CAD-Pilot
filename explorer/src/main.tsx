@@ -7,9 +7,10 @@ import { useReviews } from "./useReviews.ts";
 import { useSelection } from "./useSelection.ts";
 import { useViewCapture } from "./useViewCapture.ts";
 import { useSectionControl } from "./useSectionControl.ts";
+import { useStepPlayer } from "./useStepPlayer.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
 import {
-  Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen,
+  Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen, ListOrdered,
   Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
   Slice,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import { axisViews, type ViewPreset } from "./camera.ts";
 import { IconButton } from "./ui/IconButton";
 import { ImportWarnings } from "./ui/ImportWarnings.tsx";
 import { SectionPanel } from "./ui/SectionPanel.tsx";
+import { AssemblyPanel } from "./ui/AssemblyPanel.tsx";
 import "./style.css";
 
 class ViewerBoundary extends React.Component<{ children: React.ReactNode }, { error: string }> {
@@ -71,6 +73,7 @@ export function App({ host }: { host: ViewerHost }) {
     host, model, state, latest, run, onError: reportError,
   });
   const section = useSectionControl({ model, state, amount, latest, queue, run, onError: reportError });
+  const player = useStepPlayer({ state, run });
 
   useEffect(() => {
     let active = true;
@@ -215,11 +218,12 @@ export function App({ host }: { host: ViewerHost }) {
           <div className="live-scene" aria-hidden={drawingActive} inert={drawingActive}>
           {ready ? (
             <ViewerBoundary key={state.topologyRevision}>
-              <Scene model={model} state={state} amount={amount} sectionPosition={section.position} active={!drawingActive} onSelect={select}
+              <Scene model={model} state={state} amount={amount} stepPosition={player.position} sectionPosition={section.position} active={!drawingActive} onSelect={select}
                 onError={reportError} registerCapture={registerCapture} onRendered={rendered} onCameraChange={saveCamera} onView={chooseView} />
             </ViewerBoundary>
           ) : <div className="empty">{state?.error ? "No model to display. Open a STEP file to retry." : "Preparing the model..."}</div>}
           </div>
+          {ready && !drawingActive && <AssemblyPanel state={state} player={player} busy={busy} run={run} />}
           {drawingActive && <div className="drawing-layer">
             {activeReview ? (
               <DrawingReview review={activeReview} onChange={reviews.onChange} onClose={() => void reviews.close()}
@@ -235,7 +239,7 @@ export function App({ host }: { host: ViewerHost }) {
           {drawingActive ? <div className="review-summary">
             <strong>{activeReview?.title || "Loading review"}</strong>
             <span>{activeReview ? `${activeReview.drawing.present.length} marks` : ""}</span>
-            <span>{activeReview ? `${Math.round(activeReview.pose.explode * 100)}% exploded` : ""}</span>
+            <span>{activeReview ? activeReview.pose.step !== undefined ? `Assembly step ${activeReview.pose.step}` : `${Math.round(activeReview.pose.explode * 100)}% exploded` : ""}</span>
             <span>{activeReview?.pose.camera.projection === "orthographic" ? "Orthographic (parallel)" : "Perspective"}</span>
             <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "plastic"}` : "Inspect"}</span>
             <span>{activeReview?.pose.section?.enabled
@@ -283,6 +287,10 @@ export function App({ host }: { host: ViewerHost }) {
             <option value="radial">Outward</option><option value="z">Up / down</option><option value="x">Left / right</option><option value="y">Front / back</option>
           </select>
           <IconButton label="Reassemble" icon={RotateCcw} disabled={drawingActive} onClick={() => run("reset_view")} />
+          {state?.assembly && <IconButton label={state.assembly.error ? `Assembly steps unavailable: ${state.assembly.error}` : `Assembly steps (${state.assembly.steps.length})`}
+            icon={ListOrdered} aria-pressed={state.step !== null} className={state.assembly.error ? "assembly-unavailable" : ""}
+            disabled={busy || drawingActive || !!state.assembly.error}
+            onClick={() => void player.go(state.step === null ? 0 : null)} />}
         </div>
         <div className={`reference-bar ${copyStatus.kind}`} aria-label="Chat references" data-copy-status={copyStatus.kind}>
         <label><input type="checkbox" role="switch" checked={autoCopyEnabled}

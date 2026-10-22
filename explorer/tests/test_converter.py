@@ -592,9 +592,20 @@ def test_cli_demo_convert_paths_with_spaces_and_non_model_cwd(workdir):
     again = _run("convert.py", source, "--output", output, cwd=folder)
     assert again.returncode == 0, again.stderr
     assert output.read_bytes() == before
+    # The demo writes its assembly sequence beside the STEP; conversion writes only the requested output.
+    sequence = source.with_name("raised cover.assembly.json")
     assert {p.relative_to(workdir) for p in workdir.rglob("*") if p.is_file()} == {
-        source.relative_to(workdir), output.relative_to(workdir),
+        source.relative_to(workdir), sequence.relative_to(workdir), output.relative_to(workdir),
     }
+    steps = json.loads(sequence.read_text())["steps"]
+    assert [step["parts"] for step in steps] == [["Four spacers"], ["Cover plate"]]
+    # Older runtimes gain the sequence without the STEP that saved views and references use being rewritten.
+    step_bytes = source.read_bytes()
+    sequence.unlink()
+    added = _run("create_demo.py", "--output", source, "--sequence-only", cwd=workdir)
+    assert added.returncode == 0, added.stderr
+    assert source.read_bytes() == step_bytes
+    assert json.loads(sequence.read_text())["step"]["sha256"] == hashlib.sha256(step_bytes).hexdigest()
 
 
 @pytest.mark.parametrize("content", [

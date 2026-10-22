@@ -21,7 +21,7 @@ export function useSectionControl({ model, state, amount, latest, queue, run, on
   const support = useMemo(() => sectionSupport(model), [model]);
   // The range follows the explosion preview so the slider matches what is drawn.
   const bounds = useMemo(() => model && state ? displayedWorldBounds(model, { ...state, explode: amount }) : null,
-    [model, amount, state?.direction, state?.fixedId, state?.hiddenIds]);
+    [model, amount, state?.direction, state?.fixedId, state?.hiddenIds, state?.step, state?.stepMode, state?.assembly?.digest]);
   const axis = committed?.axis ?? "x";
   const index = sectionAxisIndex(axis);
   const min = bounds?.min[index] ?? committed?.position ?? 0;

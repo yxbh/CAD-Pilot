@@ -20,6 +20,7 @@ import { AxisIndicator, createAxisStore, type AxisStore } from "./AxisIndicator.
 import StudioStage from "./Studio.tsx";
 import { appearanceFor, type MaterialFinish } from "./appearance.ts";
 import type { SectionSettings } from "../shared/section.mjs";
+import { sequencePose } from "../shared/placement.mjs";
 import {
   clipCadEdges, sceneSectionPlane, sectionMeshRaycast, sectionOutlineSegments,
   visibleFacePoint, visibleFaceTriangleCount,
@@ -29,6 +30,7 @@ type Props = {
   model: Model;
   state: ViewState;
   amount: number;
+  stepPosition: number | null;
   sectionPosition: number;
   active: boolean;
   onSelect: (id: string, faceId?: string, edgeId?: string) => void;
@@ -112,6 +114,30 @@ function EdgeOverlay({ edge, selected, matrix, section }: { edge: CadEdge; selec
   const geometry = useMemo(() => positions.length ? new LineSegmentsGeometry().setPositions(positions) : null, [positions]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
   return geometry ? <CadLines geometry={geometry} color={selected ? "#13d9f0" : "#b5e9f1"} width={selected ? 4 : 2.5} /> : null;
+}
+
+// Dashed paths from each waiting part to where it is installed, like the explode lines in printed instructions.
+function SequenceTrails({ placements, origin }: { placements: Placement[]; origin: number[] }) {
+  const { size } = useThree();
+  const positions = useMemo(() => placements.flatMap(({ bounds, offset }) => {
+    if (!offset || Math.hypot(...offset) < 1e-6) return [];
+    const start = center(bounds).map((value, axis) => value - origin[axis]);
+    return [...start, ...start.map((value, axis) => value - offset[axis])];
+  }), [placements, origin]);
+  // One line object for the panel's lifetime; only its small geometry is replaced as parts move.
+  const lines = useMemo(() => new LineSegments2(new LineSegmentsGeometry(),
+    new LineMaterial({ color: 0x8adfc9, dashed: true, dashSize: 3, gapSize: 2, transparent: true, opacity: 0.75, depthTest: false })), []);
+  const geometry = useMemo(() => positions.length ? new LineSegmentsGeometry().setPositions(positions) : null, [positions]);
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  useEffect(() => () => { lines.geometry.dispose(); lines.material.dispose(); }, [lines]);
+  if (!geometry) return null;
+  if (lines.geometry !== geometry) {
+    lines.geometry = geometry;
+    lines.computeLineDistances();
+  }
+  lines.material.linewidth = 1.5;
+  lines.material.resolution.set(size.width, size.height);
+  return <primitive object={lines} renderOrder={5} raycast={() => null} />;
 }
 
 function SectionCap({ placement, resources, origin, capCenter, section, plane, planeGeometry, order, studio }: {
@@ -275,7 +301,7 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
   );
 }
 
-function Rig({ model, state, amount, sectionPosition, active, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
@@ -284,7 +310,7 @@ function Rig({ model, state, amount, sectionPosition, active, placements, resour
   const activeView = useRef(active);
   activeView.current = active;
   const { invalidateReport, assertCaptureReady } = useRenderReports({
-    model, state, amount, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
+    model, state, amount, stepPosition, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
   });
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
@@ -309,7 +335,7 @@ function Rig({ model, state, amount, sectionPosition, active, placements, resour
   }, [size.width, size.height, dpr, controller, invalidateReport]);
 
   useLayoutEffect(() => {
-    const committed = placeParts(model, state.explode, state.direction, state.fixedId);
+    const committed = placeParts(model, state.explode, state.direction, state.fixedId, sequencePose(state));
     const visible = committed.filter((item) => !state.hiddenIds.includes(item.node.id));
     const bounds = mergeBounds(visible.map((item) => item.bounds)) || model.bounds;
     const origin = center(model.bounds);
@@ -379,21 +405,23 @@ function Rig({ model, state, amount, sectionPosition, active, placements, resour
 }
 
 export default function Scene(props: Props) {
-  const { model, state, amount, sectionPosition } = props;
+  const { model, state, amount, stepPosition, sectionPosition } = props;
   const [hovered, setHovered] = useState<HoverTarget | null>(null);
-  const placements = useMemo(() => placeParts(model, amount, state.direction, state.fixedId), [model, amount, state.direction, state.fixedId]);
+  const placements = useMemo(() => placeParts(model, amount, state.direction, state.fixedId, sequencePose(state, stepPosition)),
+    // The sequence's digest, not its object identity, which every state event replaces.
+    [model, amount, state.direction, state.fixedId, state.assembly?.digest, state.stepMode, stepPosition]);
   const origin = useMemo(() => center(model.bounds), [model]);
   const section = useMemo(() => ({ ...state.section, position: sectionPosition }),
     [state.section.enabled, state.section.axis, state.section.flipped, sectionPosition]);
   const clippingPlane = useMemo(() => sceneSectionPlane(section, origin), [section, origin]);
   const resources = useMemo(() => new GeometryResources(model), [model]);
   const axes = useMemo(createAxisStore, []);
-  const pickingEnabled = props.active && amount === state.explode && sectionPosition === state.section.position && !state.loading;
+  const pickingEnabled = props.active && amount === state.explode && stepPosition === state.step && sectionPosition === state.section.position && !state.loading;
   const onHover = useCallback((next: HoverTarget | null) => setHovered((current) =>
     current?.nodeId === next?.nodeId && current?.faceId === next?.faceId && current?.edgeId === next?.edgeId ? current : next
   ), []);
   const onHoverEnd = useCallback((nodeId: string) => setHovered((current) => current?.nodeId === nodeId ? null : current), []);
-  useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, state.hiddenIds, state.explode, state.direction, state.fixedId,
+  useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, state.hiddenIds, state.explode, state.direction, state.fixedId, state.step, state.stepMode,
     state.section.enabled, state.section.axis, state.section.position, state.section.flipped, pickingEnabled]);
   useEffect(() => () => resources.dispose(), [resources]);
   const displayedBounds = mergeBounds(placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((part) => part.bounds)) || model.bounds;
@@ -448,6 +476,7 @@ export default function Scene(props: Props) {
           origin={origin} capCenter={capCenter} section={section} plane={clippingPlane} planeGeometry={capGeometry}
           order={10 + index * 3} studio={studio} />
       ))}
+      {stepPosition !== null && <SequenceTrails placements={placements.filter((part) => !state.hiddenIds.includes(part.node.id))} origin={origin} />}
       <Rig {...props} placements={placements} resources={resources} axes={axes} />
     </Canvas>
     {props.active && <AxisIndicator store={axes} onChoose={props.onView} />}

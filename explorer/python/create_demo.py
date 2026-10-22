@@ -1,12 +1,16 @@
 """Generate a self-contained colored STEP assembly for prototype testing.
 
 This is a synthetic visual fixture, not a manufactured or printable product.
-Geometry is in mm, with a centered XY footprint and positive Z height.
+Geometry is in mm, with a centered XY footprint and positive Z height. A two-step assembly
+sequence is written beside it as <name>.assembly.json.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
 import sys
 
@@ -94,14 +98,36 @@ def create_demo(output: str | Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     if writer.Write(str(output)) != IFSelect_RetDone:
         raise OSError(f"Native demo STEP write failed: {output}")
+    write_sequence(output)
+
+
+def write_sequence(output: str | Path) -> None:
+    """Write the demo's two-step assembly sequence beside an existing demo STEP, replacing it in one rename."""
+    output = Path(output)
+    sequence = {
+        "format": "cad-explorer-assembly", "version": 1, "units": "mm",
+        "step": {"file": output.name, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()},
+        "steps": [
+            {"title": "Stand the four spacers on the base plate", "parts": ["Four spacers"], "from": [0, 0, 45]},
+            {"title": "Lay the cover plate on the spacers", "parts": ["Cover plate"], "from": [0, 0, 70]},
+        ],
+    }
+    target = output.with_name(f"{output.stem}.assembly.json")
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(sequence, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--sequence-only", action="store_true", help="Only add the sequence beside an existing demo STEP")
     args = parser.parse_args(argv)
     try:
-        create_demo(args.output)
+        if args.sequence_only:
+            write_sequence(args.output)
+        else:
+            create_demo(args.output)
     except (OSError, RuntimeError, ValueError, Standard_Failure) as error:
         print(f"Demo generation failed: {error}", file=sys.stderr)
         return 1

@@ -3,7 +3,7 @@ import { commandDefinition } from "../shared/commands.mjs";
 import {
   pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
 } from "../shared/section.mjs";
-import { displayedWorldBounds } from "../shared/placement.mjs";
+import { displayedWorldBounds, sequenceOffsets, sequencePose, STEP_MODES } from "../shared/placement.mjs";
 
 export class PrototypeError extends Error {
   constructor(code, message, status = 400) {
@@ -18,6 +18,7 @@ export function initialState() {
     revision: 0, documentRevision: "", topologyRevision: "", modelName: "", selectedIds: [], selectedFace: null, selectedEdge: null,
     selectionMode: "face", autoCopy: true, hiddenIds: [],
     explode: 0, fixedId: "", direction: "radial", cameraPreset: "iso", fitNonce: 0,
+    assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
     activeReviewId: null, camera: null,
     projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true,
@@ -57,7 +58,7 @@ export function changeView(state, model, name, input = {}) {
     case "select_face": {
       if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
       const nodeId = requireId(input.id);
-      if (state.hiddenIds.includes(nodeId)) throw new PrototypeError("hidden_face", "Show this part before selecting its face", 409);
+      if (state.hiddenIds.includes(nodeId) || sequenceHidden(state).has(nodeId)) throw new PrototypeError("hidden_face", "Show this part before selecting its face", 409);
       const node = model.nodes.find((item) => item.id === nodeId);
       const part = model.parts.find((item) => item.id === node.partId);
       if (!part.faces.some((face) => face.id === input.faceId)) throw new PrototypeError("unknown_face", "Unknown CAD face on this occurrence");
@@ -71,7 +72,7 @@ export function changeView(state, model, name, input = {}) {
     case "select_edge": {
       if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
       const nodeId = requireId(input.id);
-      if (state.hiddenIds.includes(nodeId)) throw new PrototypeError("hidden_edge", "Show this part before selecting its edge", 409);
+      if (state.hiddenIds.includes(nodeId) || sequenceHidden(state).has(nodeId)) throw new PrototypeError("hidden_edge", "Show this part before selecting its edge", 409);
       const node = model.nodes.find((item) => item.id === nodeId);
       const part = model.parts.find((item) => item.id === node.partId);
       if (!part.edges?.some((edge) => edge.id === input.edgeId)) throw new PrototypeError("unknown_edge", "Unknown CAD edge on this occurrence");
@@ -98,6 +99,8 @@ export function changeView(state, model, name, input = {}) {
         }
         if (input.amount > 0 && valid.size < 2) throw new PrototypeError("not_assembly", "This model has no separate parts to explode");
         next.explode = input.amount;
+        // Automatic explosion and the assembly sequence are alternative ways to separate parts.
+        if (input.amount > 0) next.step = null;
       }
       if (input.direction !== undefined) {
         if (!["radial", "x", "y", "z"].includes(input.direction)) throw new PrototypeError("bad_direction", "Unsupported explosion direction");
@@ -106,6 +109,30 @@ export function changeView(state, model, name, input = {}) {
       if (input.fixedId !== undefined) next.fixedId = input.fixedId === "" ? "" : requireId(input.fixedId);
       followDisplay();
       break;
+    case "set_step": {
+      if (input.off !== undefined && typeof input.off !== "boolean") throw new PrototypeError("bad_step", "off must be true or false");
+      if (input.off === true && input.step !== undefined && input.step !== null) throw new PrototypeError("bad_step", "Choose a step or off, not both");
+      if (input.step === undefined && input.mode === undefined && input.off !== true) throw new PrototypeError("bad_step", "Supply a step number, off=true or a mode");
+      const steps = state.assembly?.steps ?? [];
+      if (input.step !== undefined && input.step !== null) {
+        if (!steps.length) throw new PrototypeError("no_sequence", "This STEP has no assembly sequence. Write one beside it as <name>.assembly.json and open the STEP again.", 409);
+        if (!Number.isInteger(input.step) || input.step < 0 || input.step > steps.length) {
+          throw new PrototypeError("bad_step", `Step must be a whole number from 0 to ${steps.length}`);
+        }
+        next.explode = 0;
+      }
+      if (input.step !== undefined) next.step = input.step;
+      if (input.off === true) next.step = null;
+      if (input.mode !== undefined) {
+        if (!STEP_MODES.includes(input.mode)) throw new PrototypeError("bad_step_mode", "Choose exploded or buildup");
+        next.stepMode = input.mode;
+      }
+      const hidden = sequenceHidden(next);
+      if (next.selectedFace && hidden.has(next.selectedFace.nodeId)) next.selectedFace = null;
+      if (next.selectedEdge && hidden.has(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      followDisplay();
+      break;
+    }
     case "set_visibility": {
       if (typeof input.visible !== "boolean") throw new PrototypeError("bad_visibility", "visible must be true or false");
       const selected = ids();
@@ -197,12 +224,17 @@ export function changeView(state, model, name, input = {}) {
       next.explode = 0;
       next.fixedId = "";
       next.direction = "radial";
+      next.step = null;
       followDisplay();
       break;
     default:
       throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
   }
   return next;
+}
+
+function sequenceHidden(state) {
+  return sequenceOffsets(sequencePose(state)).hidden;
 }
 
 export function validateCommandRevision(state, name, expectedRevision, message = "The view changed. Refresh state and retry.") {
