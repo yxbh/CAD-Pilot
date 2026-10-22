@@ -91,5 +91,5 @@ After running the command:
 - Confirm the process succeeded.
 - Confirm the STEP file exists and is non-empty.
 - Run the relevant `scripts/inspect` command and parse its output.
-- Show the STEP in CAD Explorer using `rendering-and-explorer.md`, or report why it is unavailable.
+- Show the STEP in CAD Explorer using `rendering-and-explorer.md`, or report why it is unavailable. After a visible geometry change, capture and look at it yourself as its Self-review section describes.
 - Continue with targeted inspection if facts/planes are insufficient.

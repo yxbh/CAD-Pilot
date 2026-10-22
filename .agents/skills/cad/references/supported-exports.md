@@ -65,6 +65,6 @@ CAD Explorer:
 - <URL printed by explorer.mjs open for models/bracket.step>
 
 Validation:
-- STEP geometry validated; STL/3MF generated as requested sidecars.
-- No capture taken unless requested or needed.
+- STEP checks: <what ran, with values and thresholds>; STL/3MF generated as requested sidecars.
+- Self-review: <captures checked after a geometry change, or skipped because only the export changed>.
 ```

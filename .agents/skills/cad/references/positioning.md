@@ -16,20 +16,20 @@ Use these terms carefully:
 
 There is no general instruction to ignore the CLI because build123d has joints. Use build123d joints to express and compute source assembly placement where appropriate, then use CLI inspection to validate the generated STEP.
 
-## Preferred assembly structure
+## Assembly structure
 
-For assemblies, prefer a mate/joint-driven structure over arbitrary transforms:
+Build assemblies from datums rather than arbitrary numbers:
 
 ```text
 root component
 → part-local coordinate systems
 → named datums / joint locations
-→ source-level build123d joints or explicit parameterized Locations
+→ parameterized Locations or source-level build123d joints
 → labeled Compound assembly
-→ refs/measure/frame/mate validation
+→ refs/measure/frame/mate and Python checks on the saved STEP
 ```
 
-A numeric `Location(...)` should usually correspond to a stated datum, offset, clearance, screw axis, face contact, or joint relationship.
+A numeric `Location(...)` should correspond to a stated datum, offset, clearance, screw axis, face contact, or joint relationship.
 
 ## Part-local positioning
 
@@ -71,16 +71,18 @@ with Locations(*hole_positions):
 
 Avoid untraceable placement constants inside geometry calls. Put all meaningful offsets into parameters.
 
-## When to use build123d joints
+## Joints or explicit transforms
 
-Use build123d joints when assembly intent is clearer as a relationship between part datums than as a raw transform:
+Choose whichever makes the intended relationship easiest to read and keep correct when a dimension changes. Neither is required by the size or complexity of the assembly.
 
-- lid-to-base, cover-to-frame, bracket-to-rail, flange-to-pipe, pin-to-hole, shaft-to-bearing
-- hinge, slider, screw-like, cylindrical, ball/gimbal, or other motion-positioned assemblies
-- repeated or library components that already expose joints
-- source assemblies where a change to one dimension should recompute part placement
+- An explicit transform built from named parameters, such as `Pos(0, 0, base_height + gap) * lid`, is direct and easy to check. It suits static layouts, rows or patterns of repeated parts, and placements that follow from one or two datums.
+- A build123d joint names a datum on each part and lets `connect_to()` solve the placement. It suits relationships between reusable mount points, components that already expose joints, and hinge, slider, screw-like or ball poses driven by an angle or position parameter.
 
-Direct `Location(...)` transforms are acceptable for simple static layouts when they are parameterized and documented, such as a row of identical spacers or a visual exploded view.
+Either way, compose placements with `.moved()` or `Location * shape`, not `.located()`, which replaces a rotation applied earlier; see the placement pitfalls in `build123d-modeling.md`.
+
+## Mirrored parts
+
+A mirrored part is new geometry, not another placement of the original. In build123d 0.13 the `part.mirror(plane)` method keeps the original's label and joint objects but does not mirror the joint locations; the `mirror()` function and the builder's `mirror()` return a part with no label and no joints. Either way, give the mirrored part its own label, define its datums or joints after mirroring, and check its features where they actually landed.
 
 ## build123d joint pattern
 
@@ -171,6 +173,18 @@ python scripts/inspect mate \
 
 Use `--mode flush` for coplanar face alignment. Use `--mode center` for centerline, plane-center, or symmetrical alignment where supported by the selected references. If the returned delta is outside tolerance, edit the build123d source placement or joint location, regenerate, and rerun inspection.
 
+## What `mate` and `measure` show
+
+`mate --mode flush` and `measure` reduce each selection to one coordinate along one axis: a plane's coordinate, or a point such as a circle centre or origin, falling back to the centre of the selection's bounding box. `mate --mode center` compares two such points. Read the results with these limits:
+
+- **One axis is one axis.** A zero flush delta along Z shows the two faces lie in the same Z plane. It does not show that they overlap sideways, that the parts are centred in X and Y, or that the faces are parallel. Check each of those separately: another `mate` or `measure` per axis, or a Python check.
+- **Check face direction.** Faces that seat against each other point in opposite directions. `mate` and `measure` report `vectorRelationship`; for contact it should be `opposed`. `parallel` means both faces point the same way, which usually means the wrong face was selected or a part is upside down; `mate` then also reports `rotationRequired: true`. Assert the relation you expect instead of accepting either.
+- **A bounding box is an envelope.** Its size is not a hole diameter or a wall thickness, and its centre is not a datum. Measure a hole from its circle edge's or cylinder face's radius, which `refs --detail` reports under `params`, and a wall as the distance between its two faces.
+- **Hole patterns use true centres.** Compare circle centres when checking spacing or symmetry, not the centres of faces or parts. `refs --detail` reports a circle edge's `params.center` (its detail-level `center` field is not the circle centre), and `measure` from a circle edge uses the true centre.
+- **Clearance is a minimum distance.** The gap between two parts is the smallest distance between their surfaces, not the offset between two chosen faces along one axis. Measure it in Python on the saved STEP (see `inspection-and-validation.md`). A minimum distance of zero means touching or overlapping; overlap volume tells the two apart.
+- **One pose proves one pose.** A hinge, slider or lid checked in one position is only checked there. Check each pose that matters, or say which were not checked.
+- **Mirrored parts need their own checks.** Re-select references on a mirrored part rather than reusing the original's; see Mirrored parts above.
+
 ## Frame validation
 
 Use `frame` to inspect an occurrence or selector's world frame:
@@ -200,8 +214,8 @@ python scripts/inspect measure \
 
 Examples:
 
-- lid bottom face to base top face should be 0 mm for flush contact
-- two screw axes should have matching X/Y positions
+- lid bottom face to base top face should be 0 mm along Z, with an `opposed` vector relationship, for flush contact
+- two screw axes should have matching X and Y positions, measured on each axis from the circle centres
 - bracket mounting face should sit a specified distance from a datum plane
 - spacer height should equal requested offset
 
@@ -223,15 +237,19 @@ Then regenerate. Do not patch the exported STEP directly.
 
 ## Reporting positioning
 
-In the final response, report only checks that were run:
+In the final response, report only checks that were run, each with the geometry, value and threshold:
 
 ```text
 Positioning/joints:
 - source used RigidJoint lid_seat → underside
-- base/lid Z mate: flush, delta 0.00 mm
-- screw boss axis alignment: checked in XY by measurement
+- base top / lid underside: Z delta 0.00 mm (limit 0.01 mm), faces opposed
+- screw boss circle centres: X and Y offsets ≤ 0.01 mm on all four (limit 0.05 mm)
+- lid lip to base inner walls: minimum clearance between those faces 0.48 mm (required ≥ 0.40 mm); no overlap between the bodies
 - lid occurrence frame: +Z up, origin at assembly centerline
+- hinge: checked closed only; open pose not checked
 ```
+
+The numbers above are illustrative. Take each threshold from the user's requirement or a confirmed tolerance, and say when a threshold is your own provisional choice.
 
 If no positioning-sensitive features exist, say:
 
