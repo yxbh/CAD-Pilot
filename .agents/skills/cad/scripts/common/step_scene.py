@@ -649,6 +649,10 @@ def _normalize_label_name(raw_name: object) -> str | None:
 
 
 def _label_name(label: object) -> str | None:
+    # FindAttribute dereferences null for an absent name in OCP (7.x and 8),
+    # killing the process with SIGSEGV, so check presence with IsAttribute first.
+    if not label.IsAttribute(TDataStd_Name.GetID_s()):
+        return None
     name = TDataStd_Name()
     if not label.FindAttribute(TDataStd_Name.GetID_s(), name):
         return None

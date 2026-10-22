@@ -12,7 +12,8 @@ from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
-from common.step_scene import LoadedStepScene, OccurrenceNode, _shape_hash
+from common.step_export import export_build123d_step_scene
+from common.step_scene import LoadedStepScene, OccurrenceNode, _shape_hash, mesh_step_scene
 from common.threemf import export_scene_3mf, export_shape_3mf
 
 
@@ -195,6 +196,31 @@ class ThreeMfExportTests(unittest.TestCase):
             self.assertIsNotNone(mesh_object.attrib.get("pindex"))
             self.assertFalse(any("p1" in triangle.attrib for triangle in triangles))
 
+    def test_display_colors_are_srgb_encoded_from_scene_colors(self) -> None:
+        # Scene colours are linear, as XCAF and glTF hold them; 3MF
+        # displaycolor is sRGB, so writing linear bytes made every part darker.
+        with tempfile.TemporaryDirectory(prefix="cad-3mf-test-") as temp_dir:
+            output_path = Path(temp_dir) / "linear.3mf"
+            scene, _prototype_key = _single_leaf_scene(_meshed_box())
+
+            export_scene_3mf(scene, output_path, occurrence_colors={"o1": (0.22, 0.28, 0.34, 1.0)})
+
+            bases = _read_model(output_path).findall("./m:resources/m:basematerials/m:base", NS)
+            self.assertIn("#81909EFF", [base.attrib.get("displaycolor") for base in bases])
+
+    def test_authored_build123d_color_reaches_3mf_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cad-3mf-test-") as temp_dir:
+            box = build123d.Box(10, 10, 10)
+            box.color = build123d.Color("orange")
+            scene = export_build123d_step_scene(box, Path(temp_dir) / "orange.step")
+            mesh_step_scene(scene, linear_deflection=0.1, angular_deflection=0.5, relative=False)
+            output_path = Path(temp_dir) / "orange.3mf"
+
+            export_scene_3mf(scene, output_path)
+
+            bases = _read_model(output_path).findall("./m:resources/m:basematerials/m:base", NS)
+            self.assertIn("#FFA500FF", [base.attrib.get("displaycolor") for base in bases])
+
     def test_occurrence_color_overrides_default_material(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-3mf-test-") as temp_dir:
             output_path = Path(temp_dir) / "black.3mf"
@@ -209,7 +235,7 @@ class ThreeMfExportTests(unittest.TestCase):
             black_index = next(
                 str(index)
                 for index, base in enumerate(bases)
-                if base.attrib.get("displaycolor") == "#2B2F33FF"
+                if base.attrib.get("displaycolor") == "#72777CFF"
             )
             self.assertEqual(black_index, mesh_object.attrib.get("pindex"))
 
@@ -251,7 +277,7 @@ class ThreeMfExportTests(unittest.TestCase):
             black_index = next(
                 str(index)
                 for index, base in enumerate(bases)
-                if base.attrib.get("displaycolor") == "#2B2F33FF"
+                if base.attrib.get("displaycolor") == "#72777CFF"
             )
             self.assertEqual(black_index, mesh_object.attrib.get("pindex"))
 

@@ -468,8 +468,12 @@ def _format_refs_text(result: dict[str, object], *, quiet: bool, verbose: bool) 
         if not isinstance(token, dict):
             continue
         summary = token.get("summary") if isinstance(token.get("summary"), dict) else {}
-        headline = f"{token.get('cadPath')} faces={summary.get('faceCount')} edges={summary.get('edgeCount')}"
-        lines.append(headline)
+        counted = [
+            f"{name}={summary[key]}"
+            for name, key in (("faces", "faceCount"), ("edges", "edgeCount"))
+            if summary.get(key) is not None
+        ]
+        lines.append(" ".join([str(token.get("cadPath")), *counted]))
         if quiet:
             continue
         for selection in token.get("selections", []):

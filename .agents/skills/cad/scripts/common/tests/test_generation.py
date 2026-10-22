@@ -431,6 +431,52 @@ class CadGenerationTests(unittest.TestCase):
         self.assertTrue(script_path.with_suffix(".step").exists())
         self.assertIsNotNone(scene)
 
+    def test_step_generation_refuses_labels_the_step_reader_misreads(self) -> None:
+        # OCCT writes non-ASCII as mojibake, and ends a name early at a quote
+        # followed by "," or ")", dropping the part (or crashing the reader).
+        for index, label in enumerate(["Bügel", "日本", "post (6')", "a', b", "x(' ,y)"]):
+            with self.subTest(label=label):
+                script_path = self.temp_root / f"labelled_{index}.py"
+                script_path.write_text(
+                    "\n".join(
+                        [
+                            "def gen_step():",
+                            "    import build123d",
+                            "    part = build123d.Box(1, 1, 1)",
+                            f"    part.label = {label!r}",
+                            "    return build123d.Compound(children=[part], label='holder')",
+                            "",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                spec = next(spec for spec in cad_generation.list_entry_specs() if spec.source_path == script_path)
+
+                with self.assertRaisesRegex(ValueError, "label"):
+                    cad_generation.run_script_generator(spec, "gen_step")
+                self.assertFalse(script_path.with_suffix(".step").exists())
+
+    def test_step_generation_keeps_plain_apostrophes_in_labels(self) -> None:
+        script_path = self.temp_root / "apostrophe.py"
+        script_path.write_text(
+            "\n".join(
+                [
+                    "def gen_step():",
+                    "    import build123d",
+                    "    part = build123d.Box(1, 1, 1)",
+                    "    part.label = \"Helena's cup (big)\"",
+                    "    return build123d.Compound(children=[part], label='holder')",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        spec = next(spec for spec in cad_generation.list_entry_specs() if spec.source_path == script_path)
+
+        scene = cad_generation.run_script_generator(spec, "gen_step")
+
+        self.assertEqual(["Helena's cup (big)"], [node.name for node in scene.roots[0].children])
+
     def test_bare_assembly_children_return_is_supported(self) -> None:
         self._write_step("leaf")
         script_path = self.temp_root / "bare_assembly.py"
