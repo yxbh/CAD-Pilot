@@ -92,10 +92,11 @@ def test_viewer_guidance_covers_workbench_skill_and_project_template():
 def test_cad_skill_routes_viewing_to_the_maintained_explorer():
     cad = ROOT / ".agents/skills/cad"
     assert not (cad / "explorer/package.json").exists()
+    assert not (cad / "scripts/render/cli.py").exists()
     documents = [cad / "SKILL.md", cad / "agents/openai.yaml", *sorted((cad / "references").glob("*.md"))]
     for document in documents:
         text = document.read_text(encoding="utf-8")
-        for retired in ("npm --prefix explorer", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
+        for retired in ("scripts/render", "npm --prefix explorer", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
             assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
     assert "visual-review" in (cad / "SKILL.md").read_text(encoding="utf-8")
     assert "explorer.mjs open" in (cad / "references/rendering-and-explorer.md").read_text(encoding="utf-8")
