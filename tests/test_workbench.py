@@ -54,11 +54,11 @@ def test_skills_have_metadata_and_provenance():
         for field in ("- Origin:", "- License:", "- Local changes:", "### Update Procedure"):
             assert field in entry
         origin = re.search(r"^- Origin: (.+)$", entry, re.MULTILINE).group(1)
-        if "imported" in origin or "fork" in origin:
+        if origin.startswith(("imported", "first-party fork")):
             for field in ("- Source repository:", "- Source revision:", "- Source directory:", "- Imported:"):
                 assert field in entry
             assert re.search(r"- Source revision: `[0-9a-f]{40}`", entry)
-        if "fork" in origin:
+        if origin.startswith("first-party fork"):
             assert "- Forked:" in entry
     cad = registry.split("\n## cad\n", 1)[1].split("\n## ", 1)[0]
     assert "- Origin: first-party fork" in cad
