@@ -28,7 +28,7 @@ function fixture() {
   return model;
 }
 
-test("references are occurrence-specific, readable and not imported @cad identifiers", () => {
+test("references are occurrence-specific, readable and not @cad inspector identifiers", () => {
   const model = fixture();
   validateModel(model);
   const first = createReference(model, model.nodes[0].id, "f1");

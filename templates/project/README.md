@@ -6,9 +6,9 @@ The template layout is a proposed convention, not a mandatory structure. For exi
 
 Open this folder and explicitly provide the shared workbench path, or add both folders to a multi-root workspace. Existing `.cad-pilot.local.json` and `.cad-pilot.code-workspace` files can still locate the toolkit, but are optional. No global skills or settings are installed.
 
-Use the workbench's Python interpreter to invoke the imported `scripts/step` and `scripts/inspect` launchers from this project's root, following the direct commands in the workbench README.md. Choose the STEP destination with `-o`, using the same project-relative forward-slash path when inspecting it. Mesh sidecar paths are relative to the STEP directory. Keep review screenshots and decisions in the project's chosen review location; create `outputs/` or `reviews/` only when needed.
+Use the workbench's Python interpreter to invoke the cad skill's `scripts/step` and `scripts/inspect` launchers from this project's root, following the direct commands in the workbench README.md. Choose the STEP destination with `-o`, using the same project-relative forward-slash path when inspecting it. Mesh sidecar paths are relative to the STEP directory. Keep review screenshots and decisions in the project's chosen review location; create `outputs/` or `reviews/` only when needed.
 
-For viewing, the shared visual-review skill prefers the maintained CAD Explorer with this project as the explicit root: the `cad-explorer` canvas in the Copilot desktop, or the workbench's `explorer/scripts/explorer.mjs` viewer in other hosts such as Claude Code. The imported browser/CLI workflow is the fallback. Providing a workbench path alone does not register its project-scoped extension, and the two viewers' reference formats are not interchangeable.
+For viewing, the shared visual-review skill uses the maintained CAD Explorer with this project as the explicit root: the `cad-explorer` canvas in the Copilot desktop, or the workbench's `explorer/scripts/explorer.mjs` viewer in other hosts such as Claude Code. Providing a workbench path alone does not register its project-scoped extension. The Explorer's `cadproto:v2` references and the `@cad` references that `scripts/inspect` reports are not interchangeable.
 
 ## Instruction Provenance
 

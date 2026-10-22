@@ -44,7 +44,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
   });
   const inspectionTool = (name) => ({
     name,
-    description: "Resolve a cadproto:v2 reference to its exact cached STEP occurrence, CAD face or CAD edge and original placement. These are not imported @cad inspector ordinals.",
+    description: "Resolve a cadproto:v2 reference to its exact cached STEP occurrence, CAD face or CAD edge and original placement. These are not the cad skill's @cad inspector ordinals.",
     parameters: objectSchema({ reference: { type: "string", maxLength: 16384 } }, ["reference"]),
     handler: async ({ reference }) => {
       try { return { textResultForLlm: JSON.stringify(await inspect(reference)), resultType: "success" }; }

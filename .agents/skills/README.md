@@ -2,6 +2,8 @@
 
 This workbench-owned README is the provenance registry for skills in this folder. Keep one entry per skill here, outside the imported skill's own files. Preserve upstream READMEs and licenses; do not replace or append provenance to them.
 
+A fork is an imported skill that CAD-Pilot has taken over and maintains as first-party code. Its entry keeps the source repository, revision, import date, license and attribution, adds the fork date and reason, and replaces the update procedure with how first-party changes are checked. Keep the license file with the forked files.
+
 For imported instructions, prompts, and agent definitions, use the README at the corresponding collection folder, following the same convention. Record:
 
 - Source repository URL and source path.
@@ -16,23 +18,22 @@ The workbench's skills are discoverable here. External design projects need an e
 
 ## cad
 
-- Origin: imported, not authored by CAD-Pilot.
+- Origin: first-party fork of an imported skill, maintained in CAD-Pilot; not originally authored here.
 - Entry point: [cad/SKILL.md](./cad/SKILL.md).
 - Source repository: https://github.com/cedrickchee/text-to-cad
 - Source revision: `2dd54cf8e27dc71c92244dc47271dcf10d302e16`
 - Source directory: `.agents/skills/cad/`
 - Imported: 2026-09-14.
-- License: MIT; original notice retained in [cad/LICENSE](./cad/LICENSE).
-- Upstream attribution: Thompson Labs. The source repository README identifies `earthtojake/text-to-cad` and `earthtojake/cad-skill` as upstream projects; this import is specifically from the available cedrickchee fork above.
-- Scope: the CAD skill, supporting CLI packages, reference material, agent metadata, and CAD Explorer. Other top-level skills were not imported.
-- Local changes: compatible security updates to `cad/explorer/package-lock.json` via `npm audit fix` on 2026-09-14; removal of the unsupported `--experimental-default-type=module` flag in `cad/explorer/package.json` for Node 24.12.0 compatibility. On 2026-09-15, removed private-feed `resolved` URL metadata from the imported lock without changing dependency versions or integrity hashes, and added a package-local `.npmrc` setting to omit registry-resolved URLs from future lock writes. The lock remains version-controlled. No upstream READMEs were modified. Python runtime dependencies are declared in CAD-Pilot's `pyproject.toml` and resolved separately in each machine's Git-ignored `uv.lock` using its configured feeds; exact Python dependency versions are not pinned across machines.
-- Python API patch (2026-09-22): first-party compatibility changes to `cad/scripts/common/step_scene.py`, `glb_mesh_payload.py`, `threemf.py` and the corresponding `common/tests/test_glb.py`, `test_threemf.py` and `test_step_scene.py` adapt native collection imports, topology casts and gap-preserving bounding-box corner accessors to the OCP 8 API used by build123d 0.13. `common/tests/test_assembly_export.py` checks named occurrences, local placements and actual world bounds instead of assuming exporter-specific hierarchy depths. Assemblies regenerated with build123d 0.13 can have flatter hierarchies and different imported `@cad` occurrence paths; re-inspect the regenerated artifact and its sidecars rather than translating old IDs. Existing artifact files are not rewritten by this patch. This is a local patch to the pinned source above, not an upstream refresh; upstream READMEs, requirements and license notices remain intact.
+- Forked: 2026-10-22. The pinned revision was the source fork's latest commit, and `earthtojake/text-to-cad` had diverged into separate 0.7.x releases, so there was no upstream line to keep in sync with.
+- License: MIT; original notice retained in [cad/LICENSE](./cad/LICENSE). Keep it with the forked files.
+- Upstream attribution: Thompson Labs. The source repository README identifies `earthtojake/text-to-cad` and `earthtojake/cad-skill` as upstream projects; this fork starts from the cedrickchee revision above.
+- Scope: the CAD skill, supporting CLI packages, reference material and agent metadata. Other top-level skills were not imported.
+- Local changes: at the fork, removed the bundled browser viewer (`cad/explorer/`, with its npm lock and local registry-metadata patches) and the workbench check that drove it, and rewrote `SKILL.md`, `agents/openai.yaml` and `references/` to route viewing and images to the maintained CAD Explorer through the visual-review skill. Modeling, generation and CLI inspection guidance is retained. `scripts/step` still writes the hidden `.<name>.step.glb` beside each STEP because `scripts/inspect` reads `@cad` topology from it. Python runtime dependencies are declared in CAD-Pilot's `pyproject.toml` and resolved separately in each machine's Git-ignored `uv.lock` using its configured feeds; exact Python dependency versions are not pinned across machines.
+- Python API patch (2026-09-22): first-party compatibility changes to `cad/scripts/common/step_scene.py`, `glb_mesh_payload.py`, `threemf.py` and the corresponding `common/tests/test_glb.py`, `test_threemf.py` and `test_step_scene.py` adapt native collection imports, topology casts and gap-preserving bounding-box corner accessors to the OCP 8 API used by build123d 0.13. `common/tests/test_assembly_export.py` checks named occurrences, local placements and actual world bounds instead of assuming exporter-specific hierarchy depths. Assemblies regenerated with build123d 0.13 can have flatter hierarchies and different `@cad` occurrence paths; re-inspect the regenerated artifact and its sidecars rather than translating old IDs. Existing artifact files are not rewritten by this patch.
 
 ### Update Procedure
 
-Review an explicit upstream commit, its license, and its diff against the pinned revision before updating. Preserve upstream documentation and notices. Record local patches in this entry, update revision/date, and regenerate dependency locks only as needed. Run workbench tests (including the imported Python common suite), upstream viewer tests/build, and a viewer smoke test. For Python dependency/API changes, also exercise the imported inspection CLI tests and a fresh resolution through configured feeds. Upstream print defaults are not measured calibration or manufacturing certification.
-
-From the workbench root, run the additional inspection suite with `uv run pytest .agents/skills/cad/scripts/inspect -q`. Run other imported CLI test directories separately: their upstream `test_cli.py` basenames overlap under pytest's default import mode.
+CAD-Pilot changes this skill directly; there is no upstream refresh. Keep `cad/LICENSE` and the attribution above with the files, and record notable changes under Local changes. From the workbench root, run `node tools/check.mjs`, which covers sample geometry, direct `scripts/step`/`scripts/inspect` generation and inspection, and the common/export suite. Also run `uv run pytest .agents/skills/cad/scripts/inspect -q` and the other CLI test directories you touched (`scripts/step`, `scripts/dxf`) one directory per command: their `test_cli.py` basenames overlap under pytest's default import mode. For Python dependency/API changes, also resolve afresh through the configured feeds. For guidance changes, check that viewing still routes to the maintained Explorer through the visual-review skill and that `@cad[...]` references stay with `scripts/inspect`. To adopt a later change from either upstream, review its license and diff, copy only what is needed and record its source revision here. Default print values are not measured calibration or manufacturing certification.
 
 ## visual-review
 
@@ -44,7 +45,7 @@ From the workbench root, run the additional inspection suite with `uv run pytest
 - Reference: https://github.com/cedrickchee/text-to-cad at `2dd54cf8e27dc71c92244dc47271dcf10d302e16`.
 - Third-party text/code copied into this skill: none.
 - License: no additional license granted here; follows the repository's policy.
-- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained CAD Explorer (Copilot `cad-explorer` canvas or the design-project viewer), imported-browser fallback, separate handling of `cadproto:v2` descriptors versus imported `@cad` references, display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances, and assembly-step guidance (agreeing the order, writing `gen_assembly()`, reporting the rigid sequence check and capturing steps). No third-party source modifications; record future imported material explicitly.
+- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained CAD Explorer (Copilot `cad-explorer` canvas or the design-project viewer), separate handling of `cadproto:v2` descriptors versus the cad inspector's `@cad` references, display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances, and assembly-step guidance (agreeing the order, writing `gen_assembly()`, reporting the rigid sequence check and capturing steps). No third-party source modifications; record future imported material explicitly.
 
 ### Update Procedure
 

@@ -56,7 +56,7 @@ CAD brief:
 - Holes: four 4.5 mm M4 clearance through-holes, 10 mm in from each corner.
 - Cutout: centered rectangular through-cut, 20 × 12 mm.
 - Validation: one positive-volume solid, bbox 100 × 60 × 6 mm, four holes, one center cutout, label mounting_plate.
-- Explorer: return link to the STEP file.
+- Explorer: show the STEP file for review.
 ```
 
 ## Example: assembly
@@ -78,7 +78,7 @@ CAD brief:
 - Lid: separate plate on top; assume 3 mm lid thickness unless user gave another value.
 - Bosses: four aligned screw bosses; assume M3 unless unspecified dimensions make this unsafe.
 - Positioning: base top face and lid bottom face are mating datums; screw axes must align; native build123d joints may be used if they clarify reusable mount points or motion.
-- Validation: labeled base and lid children, bbox near 120 × 80 × 35 mm, aligned hole/boss axes, Explorer link returned.
+- Validation: labeled base and lid children, bbox near 120 × 80 × 35 mm, aligned hole/boss axes, shown in Explorer.
 ```
 
 ## Clarification policy
@@ -111,4 +111,4 @@ A brief is ready for modeling when it contains enough information to define:
 - feature plan
 - labels
 - expected bounding box or key measurements
-- Explorer link target
+- STEP to show in Explorer

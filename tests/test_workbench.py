@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import pytest
 import trimesh
@@ -54,14 +53,19 @@ def test_skills_have_metadata_and_provenance():
         entry = registry.split(f"\n## {skill.parent.name}\n", 1)[1].split("\n## ", 1)[0]
         for field in ("- Origin:", "- License:", "- Local changes:", "### Update Procedure"):
             assert field in entry
-        if "- Origin: imported" in entry:
+        origin = re.search(r"^- Origin: (.+)$", entry, re.MULTILINE).group(1)
+        if "imported" in origin or "fork" in origin:
             for field in ("- Source repository:", "- Source revision:", "- Source directory:", "- Imported:"):
                 assert field in entry
             assert re.search(r"- Source revision: `[0-9a-f]{40}`", entry)
-    imported = collection / "cad"
-    assert "2dd54cf8e27dc71c92244dc47271dcf10d302e16" in registry
-    assert "cedrickchee/text-to-cad" in registry
-    assert "MIT License" in (imported / "LICENSE").read_text(encoding="utf-8")
+        if "fork" in origin:
+            assert "- Forked:" in entry
+    cad = registry.split("\n## cad\n", 1)[1].split("\n## ", 1)[0]
+    assert "- Origin: first-party fork" in cad
+    assert "2dd54cf8e27dc71c92244dc47271dcf10d302e16" in cad
+    assert "cedrickchee/text-to-cad" in cad
+    assert "Thompson Labs" in cad
+    assert "MIT License" in (collection / "cad/LICENSE").read_text(encoding="utf-8")
 
 
 def test_viewer_guidance_covers_workbench_skill_and_project_template():
@@ -72,8 +76,10 @@ def test_viewer_guidance_covers_workbench_skill_and_project_template():
     ]
     for document in guidance:
         text = document.read_text(encoding="utf-8")
-        for required in ("cad-explorer", "available", "projectRoot", "file", "imported", "cadproto:v2", "@cad[", "explorer.mjs"):
+        for required in ("cad-explorer", "available", "projectRoot", "file", "cadproto:v2", "@cad[", "scripts/inspect", "explorer.mjs"):
             assert required in text, f"{document}: missing viewer-routing contract {required}"
+        for retired in ("imported browser", "imported viewer", "imported inspector", "ensure-dev"):
+            assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
         assert "cad_explorer_inspect" in text
         for required in ("gen_assembly", "explorer/python/assembly.py", "set_step", "geometric screen"):
             assert required in text, f"{document}: missing assembly-step guidance {required}"
@@ -81,6 +87,18 @@ def test_viewer_guidance_covers_workbench_skill_and_project_template():
     assert "do not insert or send chat messages" in skill
     assert "separate VS Code extension" in skill
     assert (guidance[1].parent / "../../../explorer/README.md").resolve().is_file()
+
+
+def test_cad_skill_routes_viewing_to_the_maintained_explorer():
+    cad = ROOT / ".agents/skills/cad"
+    assert not (cad / "explorer/package.json").exists()
+    documents = [cad / "SKILL.md", cad / "agents/openai.yaml", *sorted((cad / "references").glob("*.md"))]
+    for document in documents:
+        text = document.read_text(encoding="utf-8")
+        for retired in ("npm --prefix explorer", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
+            assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
+    assert "visual-review" in (cad / "SKILL.md").read_text(encoding="utf-8")
+    assert "explorer.mjs open" in (cad / "references/rendering-and-explorer.md").read_text(encoding="utf-8")
 
 
 def test_first_party_npm_lock_is_machine_local():
@@ -93,21 +111,6 @@ def test_first_party_npm_lock_is_machine_local():
         assert "npm install" in commands
         assert not re.search(r"^\s*npm ci\s*$", commands, re.MULTILINE)
         assert "package-lock.json" in text and "Git-ignored" in text
-    assert (ROOT / ".agents/skills/cad/explorer/package-lock.json").is_file()
-
-
-def test_imported_lock_preserves_pins_without_private_feed_urls():
-    explorer = ROOT / ".agents/skills/cad/explorer"
-    assert "omit-lockfile-registry-resolved=true" in (explorer / ".npmrc").read_text(encoding="utf-8").splitlines()
-    lock = json.loads((explorer / "package-lock.json").read_text(encoding="utf-8"))
-    for name, package in lock["packages"].items():
-        resolved = package.get("resolved", "")
-        host = urlsplit(resolved).hostname or ""
-        private_feed = host == "pkgs.dev.azure.com" or host.endswith(".pkgs.visualstudio.com")
-        assert not private_feed, f"{name} has a feed-specific resolved URL"
-        if name.startswith("node_modules/") and not package.get("link"):
-            assert package.get("version"), name
-            assert package.get("integrity"), name
 
 
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])

@@ -4,7 +4,7 @@ Read this file for every generated STEP artifact and whenever the user asks for 
 
 ## Principle
 
-Use programmatic geometry checks as the validation source of truth. Use CAD Explorer and renders for visual review, not as substitutes for measurements, facts, planes, labels, or positioning checks.
+Use programmatic geometry checks as the validation source of truth. Use CAD Explorer views and captures for visual review, not as substitutes for measurements, facts, planes, labels, or positioning checks.
 
 ## Tool
 
@@ -16,7 +16,7 @@ python scripts/inspect {refs|diff|frame|measure|mate|worker|batch} ...
 
 Inspection targets are resolved from the command cwd unless absolute. Keep the root model in `SKILL.md` explicit when choosing whether to run from the workspace root or the skill directory.
 
-Common data-output flags on most non-render commands:
+Common data-output flags on most commands:
 
 - `--format json|text`; default is machine-readable output.
 - `--quiet`
@@ -44,8 +44,8 @@ Default validation sequence:
 4. `mate` confirms read-only alignment deltas for assembly interfaces or ref-to-ref positioning; it does not create source-level build123d joints.
 5. `frame` confirms world frame for occurrences or selected references.
 6. `diff` compares before/after geometry for modifications.
-7. CAD Explorer link is returned for human review.
-8. `scripts/render` is used only when it answers a validation question or when Explorer is unavailable.
+7. The STEP is shown in CAD Explorer for human review.
+8. An Explorer capture is taken only when it answers a validation question.
 
 ## Reference discovery
 
@@ -126,9 +126,9 @@ python scripts/inspect diff path/to/before.step path/to/after.step --planes
 
 Use diff when a repair, feature addition, or source edit could affect unrelated geometry.
 
-## CAD Explorer links
+## Showing the model in CAD Explorer
 
-For every final response involving a STEP/STP artifact, return a CAD Explorer link when possible. Use `rendering-and-explorer.md` for startup, scan-root, and link-format rules. If an important selector was inspected, return the textual `@cad[...]` reference beside the owning Explorer link.
+For every final response involving a STEP/STP artifact, show it in the maintained CAD Explorer when the host can display it, and return the Explorer URL. Use `rendering-and-explorer.md` and the visual-review skill to open it. If an important selector was inspected, return the textual `@cad[...]` reference beside the Explorer URL.
 
 ## Validation report content
 
@@ -144,7 +144,7 @@ Validation:
 - Major planes/refs: <summary>
 - Positioning: <frame/measure/mate results if relevant>
 - Feature checks: <holes, cutouts, bosses, etc.>
-- Visual review: Explorer link returned; render run/not run and why
+- Visual review: shown in Explorer or why not; capture taken/not taken and why
 ```
 
 Do not claim:

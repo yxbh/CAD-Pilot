@@ -1,6 +1,6 @@
 # Repair loop
 
-Read this file when generation, export, inspection, positioning, render review, Explorer setup, or documentation validation fails.
+Read this file when generation, export, inspection, positioning, Explorer viewing or capture, or documentation validation fails.
 
 ## Loop
 
@@ -129,38 +129,35 @@ Fix:
 - apply correction to source build123d joint, `.connect_to()` call, `Location`, datum, or feature offset
 - regenerate and remeasure
 
-### Explorer startup or link failure
+### Explorer open failure
 
 Likely causes:
 
-- Node/npm unavailable
-- Explorer app not built or cannot start
-- scan root differs from assumed root
-- returned file path is not relative to active scan root
+- Node unavailable
+- the workbench's Explorer is not built (`open` prints the build command)
+- `open` was run from a different folder than the design project's root
+- the STEP path is not relative to that root, or the STEP was not generated
 
 Fix:
 
-- run `npm --prefix explorer run dev:ensure -- --file path/to/model.step`
-- check `EXPLORER_ROOT_DIR` when available
-- return the best documented link format
-- report startup failure if unresolved
+- build the Explorer as its README describes, or report that it needs building
+- rerun `explorer.mjs open path/to/model.step` from the design project's root
+- report the failure if unresolved; do not switch to another viewer
 - rely on CLI facts/measurements for validation
 
-### Render failure
+### Capture failure
 
 Likely causes:
 
-- attempted to render Python source, STL, or 3MF
-- target path wrong
-- Explorer/adjacent render artifact missing
-- invalid render flags
+- no viewer page is open (the capture reports the URL to open)
+- the page did not finish drawing before the timeout
+- the output path is outside the design project
 
 Fix:
 
-- generate STEP first
-- render STEP/STP, CAD path, generated GLB/topology artifact, or `@cad[...]` ref
-- use a simple `render view` before advanced wireframe/section renders
-- skip rendering if it is not needed for validation
+- open the reported URL, then capture again
+- use a project-relative `.png` path
+- skip the capture if it is not needed for validation
 
 ## Diff after repair
 
