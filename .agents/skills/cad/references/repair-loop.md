@@ -64,7 +64,7 @@ Fix:
 - reselect the edges from the final solid, and test a held selection with `edge in solid.edges()`
 - filter selected edges more narrowly, or split edge groups by feature intent
 - apply fillets later in the model, or build the rounding or bevel into the profile
-- use `solid.max_fillet(edges)` to see how much room there is
+- use `solid.max_fillet(edges, max_iterations=20)` to see how much room there is; the default 10 iterations often fail on build123d 0.13
 - changing a specified radius or length is a design decision: report the limit and ask, or record the user's decision, rather than reducing it silently
 
 ### Loft failure or twisted surface
@@ -168,7 +168,8 @@ Fix:
 - run `mate` for the read-only delta and check the reported direction relationship; check the other axes and the minimum clearance separately
 - verify the build123d joint labels and `joint_location` definitions
 - apply the smallest correction to the joint location, axis, angle, position, `.connect_to()` call, explicit transform, datum or feature offset
-- regenerate the assembly from the Python source and rerun the failed `measure`, `mate` or Python check
+- regenerate the assembly from the Python source
+- rerun `refs --facts --planes --positioning` to rediscover selectors, which can change on regeneration, then rerun the failed `measure`, `mate` or Python check
 
 ### Explorer open failure
 

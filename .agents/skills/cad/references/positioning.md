@@ -82,7 +82,7 @@ Either way, compose placements with `.moved()` or `Location * shape`, not `.loca
 
 ## Mirrored parts
 
-A mirrored part is new geometry, not another placement of the original. In build123d 0.13 `mirror()` keeps the original's label and joint objects but does not mirror the joint locations. Give the mirrored part its own label, define its datums or joints after mirroring, and check its features where they actually landed.
+A mirrored part is new geometry, not another placement of the original. In build123d 0.13 the `part.mirror(plane)` method keeps the original's label and joint objects but does not mirror the joint locations; the `mirror()` function and the builder's `mirror()` return a part with no label and no joints. Either way, give the mirrored part its own label, define its datums or joints after mirroring, and check its features where they actually landed.
 
 ## build123d joint pattern
 
@@ -179,8 +179,8 @@ Use `--mode flush` for coplanar face alignment. Use `--mode center` for centerli
 
 - **One axis is one axis.** A zero flush delta along Z shows the two faces lie in the same Z plane. It does not show that they overlap sideways, that the parts are centred in X and Y, or that the faces are parallel. Check each of those separately: another `mate` or `measure` per axis, or a Python check.
 - **Check face direction.** Faces that seat against each other point in opposite directions. `mate` and `measure` report `vectorRelationship`; for contact it should be `opposed`. `parallel` means both faces point the same way, which usually means the wrong face was selected or a part is upside down; `mate` then also reports `rotationRequired: true`. Assert the relation you expect instead of accepting either.
-- **A bounding box is an envelope.** Its size is not a hole diameter or a wall thickness, and its centre is not a datum. Measure a hole from its circular edge's radius or cylinder face, and a wall as the distance between its two faces.
-- **Hole patterns use true centres.** Compare circle centres (a circular edge's `arc_center`, or the cylinder's axis) when checking spacing or symmetry, not the centres of faces or parts.
+- **A bounding box is an envelope.** Its size is not a hole diameter or a wall thickness, and its centre is not a datum. Measure a hole from its circle edge's or cylinder face's radius, which `refs --detail` reports under `params`, and a wall as the distance between its two faces.
+- **Hole patterns use true centres.** Compare circle centres when checking spacing or symmetry, not the centres of faces or parts. `refs --detail` reports a circle edge's `params.center` (its detail-level `center` field is not the circle centre), and `measure` from a circle edge uses the true centre.
 - **Clearance is a minimum distance.** The gap between two parts is the smallest distance between their surfaces, not the offset between two chosen faces along one axis. Measure it in Python on the saved STEP (see `inspection-and-validation.md`). A minimum distance of zero means touching or overlapping; overlap volume tells the two apart.
 - **One pose proves one pose.** A hinge, slider or lid checked in one position is only checked there. Check each pose that matters, or say which were not checked.
 - **Mirrored parts need their own checks.** Re-select references on a mirrored part rather than reusing the original's; see Mirrored parts above.

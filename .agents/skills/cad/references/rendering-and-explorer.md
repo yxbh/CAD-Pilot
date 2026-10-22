@@ -29,11 +29,11 @@ In the Copilot desktop, open the `cad-explorer` canvas with the design directory
 
 Geometry checks cover only what you thought to measure. Looking at the model catches a missing cut, a part on the wrong side, a flipped lid or a surface that twisted. After creating or visibly changing geometry:
 
-1. Open or reload the STEP in the Explorer as above. A capture needs the viewer page open; in the Claude desktop app, that is the browser-pane tab showing the viewer URL. In the Copilot canvas, use its `capture_image` action; the visual-review skill covers both hosts.
-2. Choose views that expose the features under review, using the table below. One view may be enough, and no set of views proves every face is right.
-3. Run `capture` without an output path. The result's `path` names the image the Explorer saved in its own runtime folder; open that file and look at it. Give a project-relative `.png` path only for an image the user wants to keep.
+1. Use a separate review setup, so your views never move the user's camera. From the design root, run `explorer.mjs open <same STEP> --view review`, and pass `--view review` to every `do` and `capture` for it. Run that `open` again after each regeneration. The setup has its own URL: open it in its own browser-pane tab. A background tab does not draw, so bring the review tab to the front while you capture, then return to the user's tab. In the Copilot canvas, the visual-review skill covers the canvas's own capture action.
+2. Choose views that expose the features under review, using the table below. Keep it proportionate: one or two views for a small change, more only for features those views hide. No set of views proves every face is right.
+3. Run `capture` without an output path. The result's `path` names the image the Explorer saved in its own runtime folder; open that file and look at it. Those files are not cleaned up automatically, so capture only the views you need. Give a project-relative `.png` path only for an image the user wants to keep.
 4. Turn each concern into a measurement before calling it resolved (second table below), and fix the source if the measurement confirms a problem.
-5. Leave the viewer as the user had it. The viewer is shared, so views, sections and hidden parts you set are what the user sees. Read `state` before changing the view; afterwards turn off sections you added, show hidden parts again, and mention it if you moved the camera while the user was looking.
+5. If you have to use the user's setup instead, read `state` first. Afterwards restore its projection and view preset, turn off sections you added, and show hidden parts again. The CLI cannot restore an arbitrary orbit, so tell the user if you moved their camera.
 
 Skip self-review captures when no visible geometry was created or changed: export-only requests, source edits that leave the shape alone, inspection-only questions, or a generation that failed before a valid STEP existed. Also skip, and say so, when the Explorer cannot open or no page can show it. When skipping, report why and which geometry checks still ran.
 
@@ -58,7 +58,7 @@ Turn visual concerns into measurements:
 
 | The image suggests | Measure |
 | --- | --- |
-| A hole pattern looks off-centre or uneven | circle centres (`arc_center`) and their offsets or spacing |
+| A hole pattern looks off-centre or uneven | circle centres (`params.center` from `refs --detail`, or `measure` from the circle edges) and their offsets or spacing |
 | A part looks shifted, flipped or floating | `frame`, `mate` with its direction relationship, and the minimum distance to what it should touch |
 | A rib, boss or handle may not be attached | solid count, and the minimum distance and overlap with the body |
 | A wall or floor looks thin or uneven | the distance between its inner and outer faces at that spot |
@@ -119,5 +119,5 @@ Visual review: CAD Explorer could not start (<reported error>); validation relie
 or:
 
 ```text
-Visual review: section capture (X = 0) taken to confirm the internal bore and lid/base overlap.
+Visual review: section capture (Y = 0) showed the bore and wall where expected; bore depth and lid-to-base clearance confirmed by measurement, not by the image.
 ```

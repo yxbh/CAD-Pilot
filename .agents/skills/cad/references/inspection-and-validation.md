@@ -39,11 +39,11 @@ If the source uses build123d `Joint` objects, validate the generated STEP exactl
 Choose checks from the requirements: the dimensions the user gave, the fits and clearances that matter, the topology the part needs, and what the edit could have disturbed. There is no fixed sequence or universal report. Typical tools:
 
 - Generation completed and the STEP/STP file exists; a failed generation leaves nothing to check.
-- `refs --facts --planes --positioning` gives scale, solid counts, labels, major planes and selectors to measure from.
+- `refs --facts --planes --positioning` gives scale, solid counts, labels, major planes and selectors to measure from. `refs --detail` on a selector gives its geometry, including a circle edge's or cylinder face's radius and true centre or axis under `params`.
 - `measure` and `mate` give one-axis offsets and read-only alignment deltas between selections. Read `positioning.md` for what they do not show.
 - `frame` gives the world frame of an occurrence or selected reference.
 - `diff` compares before/after geometry for modifications.
-- A short Python check on the saved STEP measures what the CLI cannot: minimum clearance, overlap volume, hole radii and centres, per-solid volume and validity.
+- A short Python check on the saved STEP measures what the CLI cannot: minimum clearance, overlap volume and mass properties.
 - Your own look at Explorer captures catches what nobody thought to measure (see `rendering-and-explorer.md`). Turn every visual concern into a measurement before claiming it is resolved.
 
 Check the saved STEP rather than parameter constants or the in-memory shape: placement, export and labelling happen after `gen_step()` returns.
@@ -82,7 +82,7 @@ Use lower plane limits and compact facts for normal validation. Use topology enu
 
 ## Measurement checks
 
-Use `measure` for bounding distances, clearances, offsets, part spacing, plate thickness, hole-to-face distances, and alignment verification.
+Use `measure` for signed offsets along one axis: part spacing, plate thickness between parallel faces, hole-centre-to-face distances, and alignment verification. It is not a clearance check: the gap between two bodies is a minimum distance, which needs the Python check below.
 
 ```bash
 python scripts/inspect measure \
@@ -129,12 +129,12 @@ Use diff when a repair, feature addition, or source edit could affect unrelated 
 
 ## Python checks on the saved STEP
 
-`scripts/inspect` measures one-axis offsets between selections. For minimum clearance, overlap volume, radii, circle centres and per-solid volume, write a short build123d script that reads the saved STEP. Run it from the design root with the workbench's Python interpreter. Keep disposable checks outside the skill directory and the project's source and output folders, and keep a check worth rerunning in the project's existing test or check location.
+`scripts/inspect` reports each selection's geometry (`refs --detail`) and one-axis offsets between selections. For the minimum clearance between bodies, overlap volume and mass properties, write a short build123d script that reads the saved STEP. Run it from the design root with the workbench's Python interpreter. Put a throwaway check in a temporary folder outside the project, such as the system temp directory, or in a scratch folder the project already ignores. Keep a check worth rerunning in the project's existing test or check location. Never put checks in the skill directory or in the project's source or output folders.
 
 ```python
 import sys
 
-from build123d import GeomType, import_step
+from build123d import import_step
 
 assembly = import_step(sys.argv[1])
 parts = {child.label: child for child in assembly.children}
@@ -149,10 +149,7 @@ def overlap_mm3(a, b):
 gap, on_base, on_lid = base.distance_to_with_closest_points(lid)
 print(f"base-lid minimum clearance: {gap:.3f} mm, between {on_base} and {on_lid}")
 print(f"base-lid overlap: {overlap_mm3(base, lid):.3f} mm3")
-print("solid volumes (mm3):", [round(solid.volume, 3) for solid in assembly.solids()])
 print("all solids valid:", all(solid.is_valid for solid in assembly.solids()))
-for edge in base.edges().filter_by(GeomType.CIRCLE):
-    print("circle centre", edge.arc_center, "radius", round(edge.radius, 3))
 ```
 
 Notes for build123d 0.13:
@@ -160,11 +157,11 @@ Notes for build123d 0.13:
 - The top-level children of an imported assembly keep their labels and world placement. Deeper levels can come back with generic names such as `ASSEMBLY` or `SOLID`, and their `.children` report placements relative to their parent. Measure world geometry through `.solids()`, and use `scripts/inspect refs` to identify nested occurrences.
 - `distance_to_with_closest_points` returns the minimum distance and one pair of closest points. It is zero for touching and for overlapping bodies alike, and it does not measure how deep an overlap goes. When parts touch on purpose, such as a lid resting on a rim, measure clearance between the specific faces that must stay apart: select them from `lid.faces()` and `base.faces()` by position or normal, and wrap each list in `Compound(...)` before measuring.
 - Overlap volume is exact for the bodies given and zero for mere contact. Minimum clearance and overlap volume are different measurements: use clearance for "at least this gap" requirements and overlap for "these must not intersect" requirements, and report which one ran.
-- Check `.volume` on each solid: a reversed solid passes `is_valid` with a negative volume, and an assembly total can hide it.
+- A reversed solid passes `is_valid` with a negative `.volume`, and an assembly total can hide it. STEP export and re-import report it as positive, so the saved STEP cannot show it. Check `.volume` on each solid of the in-memory shape instead, for example `[solid.volume for solid in runpy.run_path("models/enclosure.py")["gen_step"]().solids()]`.
 - A check proves only the pose in the saved STEP. For a hinge, slider or lid with several positions, check each pose that matters, or report which were not checked.
 - Choose pairs from the question, such as a moving part against the parts it passes, and list deliberate press fits or contacts you excluded. Do not infer exclusions from the assembly hierarchy.
 
-Measure the feature that defines the dimension: a circle's `arc_center` and `radius` for holes and patterns, the distance between two faces for a wall, a face normal for direction. A bounding box is an envelope, and its centre is not a datum; see `positioning.md` for what CLI `mate` and `measure` do and do not show.
+Measure the feature that defines the dimension: a circle edge's or cylinder face's radius and centre for holes and patterns (`params` in `refs --detail`, or `arc_center` and `radius` in Python), the distance between two faces for a wall, a face normal for direction. A bounding box is an envelope, and its centre is not a datum; see `positioning.md` for what CLI `mate` and `measure` do and do not show.
 
 ## Showing the model in CAD Explorer
 
@@ -183,7 +180,7 @@ Shape the report to the task. A single plate needs a few lines; an assembly with
 
 ```text
 Checks (models/enclosure.step):
-- Generation: passed; 2 solids, labels base and lid, all valid, volumes positive.
+- Generation: passed; 2 solids, labels base and lid, all valid; source solids' volumes positive.
 - Overall size: 120.00 × 80.00 × 35.00 mm (required 120 × 80 × 35).
 - Lid seating: base top / lid underside Z delta 0.00 mm, faces opposed.
 - Screw holes: circle centres at (±52, ±32) mm, offsets ≤ 0.01 mm from the bosses; radius 1.25 mm (provisional, printer fit not confirmed).

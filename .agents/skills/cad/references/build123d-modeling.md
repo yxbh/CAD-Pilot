@@ -76,7 +76,7 @@ lost = bar.located(Location((5, 0, 0)))            # 10 × 2 again: rotation rep
 - **`align=None` is not centred.** It keeps the primitive's raw datum: a `Cylinder` sits on Z = 0, centred in XY, and a `Box` starts at its corner. The default alignment centres both. Set `align` deliberately when placement depends on it.
 - **Rotation frames.** Do not infer which local axis a rotation turns about from how the angles are written. When orientation matters, check the transformed axes or a face normal after the rotation, or build the frame from explicit direction vectors.
 - **Compound children keep local placements.** After moving a labelled `Compound`, its `.children` still report their placement inside the compound; the compound's `.solids()` and the exported STEP carry the world placement. Measure placed solids or the saved STEP, not the children.
-- **Mirrored copies.** `mirror()` creates new geometry. The copy keeps the original's label and joint objects, but the joint locations are not mirrored: a mirrored part's holes move while its joints stay where the original's were. Give a mirrored part its own label and define its datums or joints after mirroring.
+- **Mirrored copies.** Mirroring creates new geometry. The `part.mirror(plane)` method keeps the original's label and joint objects without mirroring the joint locations, so the holes move while the joints stay where the original's were. The `mirror()` function and the builder's `mirror()` return a part with no label and no joints. Give a mirrored part its own label and define its datums or joints after mirroring.
 
 ## Builder contexts
 
@@ -153,11 +153,11 @@ On build123d 0.13, a stale edge fails in confusing ways:
 - `fillet` given a mix silently skips the stale edges and rounds the rest.
 - `chamfer` given any stale edge raises `Standard_NoSuchObject`.
 
-Reselect the edges from the final solid before changing a radius. When a fillet genuinely does not fit, `solid.max_fillet(edges)` estimates the largest radius the selected edges allow (to its `tolerance`, 0.1 mm by default); choosing a smaller radius than specified is a design decision, not a repair.
+Reselect the edges from the final solid before changing a radius. When a fillet genuinely does not fit, `solid.max_fillet(edges, max_iterations=20)` estimates the largest radius the selected edges allow, to within its `tolerance` (0.1 mm by default). On build123d 0.13 the default 10 iterations often fail with `Failed to find the max value`, even on a plain box, so raise `max_iterations`; choosing a smaller radius than specified is a design decision, not a repair.
 
 ## Lofts and sampled profiles
 
-A loft joins each section to the next by matching their edges and start points. A loft can be topologically valid and still twisted or rippled when those do not correspond. On build123d 0.13, polygon sections with shifted start vertices were aligned automatically, but identical periodic spline sections with shifted start points produced a valid solid whose volume differed from the straight extrusion by about 3%.
+A loft joins each section to the next by matching their edges and start points. A loft can be topologically valid and still twisted or rippled when those do not correspond. On build123d 0.13, polygon sections with shifted start vertices were aligned automatically, but identical periodic spline sections with shifted start points produced a valid solid whose volume differed from the straight extrusion.
 
 - Sample every section in the same order, with the same start point, direction and feature positions. Equal sample counts alone do not guarantee a correct loft.
 - Check the sections themselves as well as the result: a disconnected or self-crossing section can surface as a confusing loft failure. Lofting adjacent pairs of sections can locate the failing region, but a successful pair does not prove the full loft.
@@ -186,7 +186,7 @@ Never shrink, drop or approximate a specified feature to make a build or check s
 
 `is_valid` checks topology. It does not prove the shape is the requested one, that it is positively oriented, or that it will survive a later Boolean.
 
-- On build123d 0.13, a solid with reversed orientation passes `is_valid` and reports a negative `.volume`. A compound's total volume can hide it: a valid solid and a reversed copy sum to zero. Check `.volume` on each solid from `shape.solids()`.
+- On build123d 0.13, a solid with reversed orientation passes `is_valid` and reports a negative `.volume`. A compound's total volume can hide it: a valid solid and a reversed copy sum to zero. STEP export and re-import report the reversed solid as positive, so check `.volume` on each solid of the in-memory shape from `shape.solids()`, not on the saved STEP.
 - Open shells are legitimate when the user asked for surfaces.
 - A full revolve gives each periodic face a seam edge. The seam is a real edge of a valid closed solid, not a crack: it appears in `refs --topology`, can be picked as an edge in the Explorer, and may be drawn as a line by other viewers or slicers. Confirm closure with `is_valid` and the solid count rather than by eye. Do not rotate a finished, datum-constrained part only to hide its seam.
 
