@@ -117,6 +117,140 @@ test("flat plates centred on one axis separate along it in order, not across it"
     "the stack keeps its order with gaps");
 });
 
+test("several parts sharing one centre each slide out along their own axis", () => {
+  // A housing with a bearing ring and a shaft through it: the shaft's length and the bearing's thickness both run along Z.
+  const parts = [
+    { id: "housing", bounds: box([-10, -10, -10], [10, 10, 10]) },
+    { id: "bearing", bounds: box([-8, -8, -2], [8, 8, 2]) },
+    { id: "shaft", bounds: box([-1, -1, -9], [1, 1, 9]) },
+  ];
+  const model = {
+    bounds: box([-10, -10, -10], [10, 10, 10]), parts,
+    nodes: [{ id: "root", parentId: null, partId: null, matrix: identity },
+      ...parts.map((part) => ({ id: part.id, parentId: "root", partId: part.id, matrix: identity }))],
+  };
+  const moved = offsets(model, 1);
+  near(moved.housing, [0, 0, 0], "the housing stays");
+  for (const id of ["bearing", "shaft"]) assert.ok(moved[id][0] === 0 && moved[id][1] === 0 && moved[id][2] !== 0, `${id} slides along Z`);
+  assert.ok(Math.sign(moved.bearing[2]) !== Math.sign(moved.shaft[2]), "they come out opposite ends");
+  const placed = placeParts(model, 1, "radial", "");
+  for (let i = 0; i < placed.length; i++) {
+    for (let j = i + 1; j < placed.length; j++) assert.ok(apart(placed[i].bounds, placed[j].bounds), `${placed[i].node.id} and ${placed[j].node.id}`);
+  }
+});
+
+test("a group's spread-out parts clear its neighbours, and cousins clear each other, at full explode", () => {
+  // Five discs in a subassembly with a knob on top: the discs fan out at the second level, so the knob must clear them all.
+  const stack = {
+    bounds: box([-40, -40, 0], [40, 40, 22]),
+    parts: [{ id: "disc", bounds: box([-40, -40, 0], [40, 40, 4]) }, { id: "knob", bounds: box([-5, -5, 0], [5, 5, 2]) }],
+    nodes: [
+      { id: "root", parentId: null, partId: null, matrix: identity },
+      { id: "stack", parentId: "root", partId: null, matrix: identity },
+      ...[0, 1, 2, 3, 4].map((index) => ({ id: `disc-${index}`, parentId: "stack", partId: "disc", matrix: at(0, 0, index * 4) })),
+      { id: "knob", parentId: "root", partId: "knob", matrix: at(0, 0, 20) },
+    ],
+  };
+  for (const direction of ["radial", "z"]) {
+    const placed = placeParts(stack, 1, direction, "");
+    const knob = placed.find((item) => item.node.id === "knob").bounds;
+    for (const item of placed) if (item.node.id !== "knob") assert.ok(apart(item.bounds, knob), `${direction}: the knob clears ${item.node.id}`);
+  }
+  // Random two-level assemblies: groups of overlapping boxes, the groups themselves close together.
+  let seed = 777;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let trial = 0; trial < 150; trial++) {
+    const parts = [];
+    const nodes = [{ id: "root", parentId: null, partId: null, matrix: identity }];
+    const world = [];
+    const groups = 2 + Math.floor(random() * 3);
+    for (let group = 0; group < groups; group++) {
+      const origin = [0, 1, 2].map(() => random() * 40 - 20);
+      nodes.push({ id: `g${group}`, parentId: "root", partId: null, matrix: at(...origin) });
+      for (let child = 2 + Math.floor(random() * 3); child > 0; child--) {
+        const half = [0, 1, 2].map(() => 1 + random() * 6);
+        const place = [0, 1, 2].map(() => random() * 12 - 6);
+        const id = `p${group}-${child}`;
+        parts.push({ id, bounds: box(half.map((value) => -value), half) });
+        nodes.push({ id: `n${group}-${child}`, parentId: `g${group}`, partId: id, matrix: at(...place) });
+        world.push(box(place.map((value, axis) => value + origin[axis] - half[axis]), place.map((value, axis) => value + origin[axis] + half[axis])));
+      }
+    }
+    const model = { parts, nodes, bounds: box([0, 1, 2].map((axis) => Math.min(...world.map((item) => item.min[axis]))),
+      [0, 1, 2].map((axis) => Math.max(...world.map((item) => item.max[axis])))) };
+    for (const direction of ["radial", "x", "y", "z"]) {
+      const placed = placeParts(model, 1, direction, "");
+      for (let i = 0; i < placed.length; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          assert.ok(apart(placed[i].bounds, placed[j].bounds), `trial ${trial} ${direction}: ${placed[i].node.id} and ${placed[j].node.id}`);
+        }
+      }
+    }
+  }
+});
+
+test("slight interference separates on an axis, while boxes that only touch keep one layer", () => {
+  // Two blocks side by side under a cap, so a Z explode has a layer to lift.
+  const parts = [{ id: "block", bounds: box([-10, -10, 0], [10, 10, 10]) }, { id: "cap", bounds: box([-10, -10, 0], [30, 10, 2]) }];
+  const model = (gap) => ({
+    bounds: box([-10, -10, 0], [30, 10, 12]), parts,
+    nodes: [{ id: "root", parentId: null, partId: null, matrix: identity },
+      { id: "left", parentId: "root", partId: "block", matrix: identity },
+      { id: "right", parentId: "root", partId: "block", matrix: at(20 - gap, 0, 0) },
+      { id: "cap", parentId: "root", partId: "cap", matrix: at(0, 0, 10) }],
+  });
+  // Pressed 0.2 mm into each other: well under 1 % of the assembly's size, but a real overlap.
+  const pressed = placeParts(model(0.2), 1, "z", "");
+  assert.ok(apart(pressed[0].bounds, pressed[1].bounds), "the pressed pair separates");
+  // Side by side with the micrometre of overlap STEP conversion leaves where faces meet.
+  const touching = offsets(model(1e-6), 1, "z");
+  near(touching.left, touching.right, "a touching pair stays one layer");
+});
+
+test("an axis along which nothing separates lays the parts out side by side along it", () => {
+  const model = {
+    bounds: box([-50, -30, 0], [50, 30, 44]),
+    parts: [{ id: "box", bounds: box([-50, -30, 0], [50, 30, 40]) }, { id: "lid", bounds: box([-50, -30, 0], [50, 30, 4]) }],
+    nodes: [{ id: "root", parentId: null, partId: null, matrix: identity },
+      { id: "box", parentId: "root", partId: "box", matrix: identity }, { id: "lid", parentId: "root", partId: "lid", matrix: at(0, 0, 40) }],
+  };
+  for (const [direction, axis] of [["x", 0], ["y", 1]]) {
+    const moved = offsets(model, 1, direction);
+    near(moved.box, [0, 0, 0], `${direction}: the box stays`);
+    const placed = Object.fromEntries(placeParts(model, 1, direction, "").map((item) => [item.node.id, item.bounds]));
+    assert.ok(placed.lid.min[axis] > placed.box.max[axis] && moved.lid.every((value, other) => other === axis || value === 0),
+      `${direction}: the lid clears the box along that axis only`);
+  }
+});
+
+test("the first layout of a very large assembly stays quick", () => {
+  // 20,000 bolts side by side in one level, as many as the converter allows, then the same bolts overlapping their
+  // neighbours, and a pile of coincident copies. The bound is generous: it guards against quadratic work, not speed.
+  const grid = (count, half) => {
+    const side = Math.ceil(Math.sqrt(count));
+    return {
+      bounds: box([-half, -half, 0], [(side - 1) * 10 + half, Math.floor((count - 1) / side) * 10 + half, 20]),
+      parts: [{ id: "bolt", bounds: box([-half, -half, 0], [half, half, 20]) }],
+      nodes: [{ id: "root", parentId: null, partId: null, matrix: identity },
+        ...Array.from({ length: count }, (_, index) => ({ id: `n${index}`, parentId: "root", partId: "bolt", matrix: at((index % side) * 10, Math.floor(index / side) * 10, 0) }))],
+    };
+  };
+  const pile = {
+    bounds: box([-5, -5, -5], [7, 5, 5]),
+    parts: [{ id: "copy", bounds: box([-5, -5, -5], [5, 5, 5]) }],
+    nodes: [{ id: "root", parentId: null, partId: null, matrix: identity },
+      ...Array.from({ length: 2000 }, (_, index) => ({ id: `n${index}`, parentId: "root", partId: "copy", matrix: at(index * 0.001, 0, 0) }))],
+  };
+  for (const [name, model] of [["side by side", grid(20000, 4)], ["overlapping", grid(20000, 6)], ["piled", pile]]) {
+    for (const direction of ["radial", "x", "z"]) {
+      const started = performance.now();
+      placeParts(model, 1, direction, "");
+      const elapsed = performance.now() - started;
+      assert.ok(elapsed < 5000, `${name} ${direction}: ${Math.round(elapsed)} ms`);
+    }
+  }
+});
+
 test("siblings clear each other at full explode, even with nearby centres", () => {
   const bodies = [box([-10, -10, -10], [8, 10, 10]), box([-8, -10, -10], [10, 10, 10]), box([-9, -8, -10], [9, 12, 10])];
   const model = {
