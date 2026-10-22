@@ -34,11 +34,13 @@ With the viewer page open, set up the view and capture it:
 
 ```bash
 node <workbench>/explorer/scripts/explorer.mjs do set_view preset=iso
-node <workbench>/explorer/scripts/explorer.mjs do set_section enabled=true axis=x position=0
+node <workbench>/explorer/scripts/explorer.mjs do set_section enabled=true axis=x
 node <workbench>/explorer/scripts/explorer.mjs capture path/to/model_section.png
 ```
 
 List the available view actions with `explorer.mjs actions`. A capture waits until an open page has drawn the current view; with no page open it reports the URL to open. There is no headless renderer, so open the URL (in the Claude desktop app, in the built-in browser pane) before capturing. Keep capture paths inside the design project, not in this skill directory.
+
+Without `position`, the plane stays inside the visible model: a newly loaded model starts at the middle of its X range, and changing the axis moves the plane to the middle of the new axis. To cut at a chosen coordinate, add `position=<mm>` in model-world millimetres within the visible model's extent on that axis, for example from the bounding box `scripts/inspect refs --facts` reports for an unexploded model. A position outside the visible model is rejected, and the error states the allowed range on that axis.
 
 Section view is a display-only cutaway: it does not cut the STEP, and its cut surfaces are not CAD faces or evidence of clearance.
 

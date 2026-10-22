@@ -1,6 +1,4 @@
 build123d
 ezdxf
 numpy
-pillow
 trimesh
-vtk
