@@ -4,7 +4,7 @@ Read this file when the user requests STL or 3MF output from CAD geometry. Read 
 
 ## Policy
 
-STL and 3MF are mesh sidecars, not substitutes for STEP. Generate and validate STEP first, then export requested sidecars from the same `scripts/step` run. Do not render STL or 3MF directly; render or inspect the STEP when visual review is needed.
+STL and 3MF are mesh sidecars, not substitutes for STEP. Generate and validate STEP first, then export requested sidecars from the same `scripts/step` run. Do not view or inspect STL or 3MF in place of the STEP; show or inspect the STEP when visual review is needed.
 
 ## Tool
 
@@ -41,7 +41,7 @@ Use tighter tolerances for small curved parts or visual fidelity. Use looser tol
 
 1. Generate STEP from `gen_step()` with the requested sidecar flag(s).
 2. Run facts/planes/positioning inspection on the STEP.
-3. Return the STEP, requested sidecar files, and CAD Explorer link.
+3. Return the STEP, requested sidecar files, and the STEP's CAD Explorer URL.
 
 Example:
 
@@ -62,9 +62,9 @@ Files:
 - STL: meshes/bracket.stl
 
 CAD Explorer:
-- http://127.0.0.1:4178/?file=models/bracket.step
+- <URL printed by explorer.mjs open for models/bracket.step>
 
 Validation:
 - STEP geometry validated; STL/3MF generated as requested sidecars.
-- Render not run unless requested or needed.
+- No capture taken unless requested or needed.
 ```

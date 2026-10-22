@@ -47,11 +47,11 @@ python scripts/inspect refs path/to/imported.step --facts --planes --positioning
 
 Direct targets can use sidecar mesh flags, but generator targets remain preferred when a generator exists. Read `supported-exports.md` for STL and 3MF sidecars.
 
-## Adjacent Explorer artifacts
+## Adjacent inspection artifacts
 
-`scripts/step` generates the explicit STEP target and adjacent hidden Explorer GLB/topology artifacts. These artifacts support Explorer and render workflows. Do not require a separate validation subcommand for them.
+`scripts/step` generates the explicit STEP target and an adjacent hidden GLB with topology data (`.<name>.step.glb`). `scripts/inspect` reads `@cad` selectors and topology from it, so regenerate it with the STEP rather than editing or deleting it. Do not require a separate validation subcommand for it. The maintained CAD Explorer reads the STEP itself and does not need this file.
 
-Use `rendering-and-explorer.md` for Explorer startup and link formatting.
+Use `rendering-and-explorer.md` to show the generated STEP in the maintained CAD Explorer.
 
 ## Post-generation inspection
 
@@ -91,5 +91,5 @@ After running the command:
 - Confirm the process succeeded.
 - Confirm the STEP file exists and is non-empty.
 - Run the relevant `scripts/inspect` command and parse its output.
-- Return Explorer link(s) using `rendering-and-explorer.md`, or report why they are unavailable.
+- Show the STEP in CAD Explorer using `rendering-and-explorer.md`, or report why it is unavailable.
 - Continue with targeted inspection if facts/planes are insufficient.

@@ -1,6 +1,6 @@
 # CAD Explorer
 
-Maintained first-party STEP viewer for the project-scoped GitHub Copilot desktop canvas, and a local browser viewer that other agent hosts, such as Claude Code, can open and drive from a design project. The application lives here; `.github\extensions\cad-explorer\extension.mjs` is only the Copilot entry point. The imported CAD skill remains independent and unchanged. Python source owns a design's intent; STEP and preview meshes do not carry its parametric history.
+Maintained first-party STEP viewer for the project-scoped GitHub Copilot desktop canvas, and a local browser viewer that other agent hosts, such as Claude Code, can open and drive from a design project. The application lives here; `.github\extensions\cad-explorer\extension.mjs` is only the Copilot entry point. The workbench's cad skill generates and inspects the STEP files it shows. Python source owns a design's intent; STEP and preview meshes do not carry its parametric history.
 
 ## Build and open
 
@@ -16,7 +16,7 @@ Pop-Location
 
 Reload project extensions, then open **CAD Explorer**. Build output and dependencies are Git-ignored; a source checkout needs the build step. Rebuild and reload after changing the application or extension. Missing assets produce the build command rather than opening an empty success state.
 
-`package.json` is version-controlled; `package-lock.json` is local and Git-ignored because npm records resolved registry URLs in it. Use normal `npm install` with the machine's configured feed, without forcing a public registry or bypassing required feeds. The local lock can be reused on that machine, but versions permitted by the manifest can differ across machines. Imported dependency locks elsewhere in the workbench remain version-controlled; the provenance registry records their separate metadata-only patches.
+`package.json` is version-controlled; `package-lock.json` is local and Git-ignored because npm records resolved registry URLs in it. Use normal `npm install` with the machine's configured feed, without forcing a public registry or bypassing required feeds. The local lock can be reused on that machine, but versions permitted by the manifest can differ across machines.
 
 The canvas accepts an explicit authorized `projectRoot`, a STEP `file` inside it, and an optional `viewId` for its remembered setup. Without a file it restores that setup, or creates the synthetic demo when none exists. The default project is the workbench checkout. Use Open STEP to import another local snapshot; the source file is not modified and its Python generator is never executed.
 
@@ -96,7 +96,7 @@ Changing the auto-copy preference through a canvas action acknowledges the saved
 
 The chip points to a real JSON descriptor containing a `cadproto:v2:` address: exact topology revision, occurrence and face (`fN`), edge (`eN`) or whole part (`part`). A middle dot separates the part and selected entity in the label so native file-chip basename formatting does not drop the part name. Explosion and appearance do not change this address. Raw/plain-text composer modes may intentionally show the markup.
 
-`cad_explorer_inspect` resolves these references in Copilot, and `explorer.mjs inspect` resolves them from a design project. These are not the imported skill's `@cad[...]` ordinals. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
+`cad_explorer_inspect` resolves these references in Copilot, and `explorer.mjs inspect` resolves them from a design project. These are not the `@cad[...]` ordinals that the cad skill's `scripts/inspect` reports. Cached geometry and source snapshots are validated; missing or changed data is reported rather than guessed. Validated data is reused only while its file identity remains unchanged.
 
 CAD kernel updates can change tessellation or topology ordering when a STEP is imported again, producing a new topology revision. Retained caches and their copied references are not rewritten to match the newer kernel; re-resolve selections against the newly generated or imported revision.
 
@@ -128,7 +128,7 @@ To relocate a runtime directory within this checkout, stop its Explorer processe
 
 ## Validation
 
-The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Check all** task. It covers both the workbench and maintained Explorer, not the imported viewer's independent npm package. **Test Python** and **Test Explorer core** provide narrower editor tasks without launching Chromium. Python discovery includes `explorer/tests/test_converter.py` and the imported CAD common/export suite; see the root README for dependency/API compatibility and fresh-resolution guidance.
+The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Check all** task. It covers both the workbench and maintained Explorer. **Test Python** and **Test Explorer core** provide narrower editor tasks without launching Chromium. Python discovery includes `explorer/tests/test_converter.py` and the cad skill's common/export suite; see the root README for dependency/API compatibility and fresh-resolution guidance.
 
 Use these commands from the workbench root for narrower checks:
 

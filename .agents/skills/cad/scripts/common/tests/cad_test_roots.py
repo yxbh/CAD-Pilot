@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-import sys
 from pathlib import Path
 from unittest import mock
 
@@ -28,13 +27,6 @@ class IsolatedCadRoots:
             mock.patch.object(render, "CAD_ROOT", self.cad_root),
             mock.patch.object(generation, "CAD_ROOT", self.cad_root),
         ]
-        render_tool_cli = sys.modules.get("render.cli")
-        if render_tool_cli is not None:
-            patches.extend(
-                (
-                    mock.patch.object(render_tool_cli, "CAD_ROOT", self.cad_root),
-                )
-            )
         for patcher in patches:
             patcher.start()
             testcase.addCleanup(patcher.stop)

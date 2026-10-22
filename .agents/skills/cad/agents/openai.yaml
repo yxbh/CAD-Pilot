@@ -1,4 +1,4 @@
 interface:
   display_name: "CAD"
-  short_description: "Generate CAD and hand off Explorer links."
-  default_prompt: "Use $cad to create, regenerate, inspect, validate, and hand off CAD Explorer links for explicit CAD files and @cad references."
+  short_description: "Generate, inspect and validate CAD files."
+  default_prompt: "Use $cad to create, regenerate, inspect, and validate explicit CAD files and @cad references; show the results in CAD Explorer through the visual-review skill."

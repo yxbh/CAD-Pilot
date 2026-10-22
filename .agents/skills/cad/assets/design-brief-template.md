@@ -17,6 +17,6 @@ CAD brief:
 - STEP target path:
 - Secondary outputs:
 - Validation targets:
-- Explorer link target:
+- STEP to show in Explorer:
 - Assumptions:
 ```

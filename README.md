@@ -4,7 +4,7 @@ Personal workbench for conversational CAD design and 3D-print preparation with G
 
 ## Stack and Setup
 
-The workbench uses build123d, the pinned text-to-cad skill, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas and a design-project browser viewer that Claude Code and other hosts can open and drive; the imported skill's browser viewer remains available for its CLI workflow. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
+The workbench uses build123d, a cad skill forked from text-to-cad, and original visual-review and FDM-design skills. Its maintained first-party [CAD Explorer](explorer/README.md) provides the project-scoped Copilot desktop canvas and a design-project browser viewer that Claude Code and other hosts can open and drive. No MCP server or global skill installation is needed. Python dependencies live in a local environment managed by uv.
 
 Prerequisites: Windows or macOS, Git, uv, and Node.js 22.18+ or 24+. Node's built-in TypeScript support is used by Explorer tests. PowerShell 7 is needed for the PowerShell examples. The project requires Python 3.12 or newer; the selected version also needs compatible CAD dependency builds. uv can provision Python when needed.
 
@@ -13,11 +13,11 @@ uv sync
 uv run python -m playwright install chromium
 ```
 
-Run setup from the workbench root. Playwright Chromium is needed for browser checks and the imported render commands, not for STEP generation. Installing/running third-party tools executes code; this is not a sandbox.
+Run setup from the workbench root. Playwright Chromium is needed for the Explorer's browser checks, not for STEP generation. Installing/running third-party tools executes code; this is not a sandbox.
 
-Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines. The imported viewer's npm lockfile remains version-controlled with dependency versions and integrity hashes preserved; a documented local patch omits private registry URLs and prevents registry-resolved URLs from being written back.
+Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines.
 
-The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The pinned imported CLI has a provenance-recorded local API patch, not a silent upstream refresh. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes the imported common/export tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
+The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The cad skill's CLI carries a provenance-recorded OCP API patch. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes the cad skill's common/export tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
 
 For the first-party CAD Explorer, build its separate package:
 
@@ -28,15 +28,15 @@ npm run build
 Pop-Location
 ```
 
-Commit `explorer/package.json`, but keep its `package-lock.json` local and Git-ignored, like `uv.lock`. Normal `npm install` creates or reuses that machine's lock using its configured registry; do not commit private-feed URLs or override required feeds to make a shared lock. Versions permitted by the manifest can resolve differently across machines. The imported viewer retains its version-controlled lock and uses package-local registry-metadata omission instead.
+Commit `explorer/package.json`, but keep its `package-lock.json` local and Git-ignored, like `uv.lock`. Normal `npm install` creates or reuses that machine's lock using its configured registry; do not commit private-feed URLs or override required feeds to make a shared lock. Versions permitted by the manifest can resolve differently across machines.
 
 Prepare source releases from tracked files, such as a Git archive, rather than zipping the working directory. Local locks, runtime data and caches are not release content.
 
 Reload project extensions and open **CAD Explorer**. Its [README](explorer/README.md) owns build/open, viewer behavior and local-data guidance. Preserve useful saved references and drawings before moving or removing runtime data.
 
-Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Check all** task runs the same command. **Test Python** runs `uv`/pytest only, and **Test Explorer core** runs the non-browser Node checks. No default test task is imposed. The imported browser viewer is independent: install it with `npm --prefix .agents/skills/cad/explorer ci` when using that fallback, and use its separate checks below.
+Run `node tools/check.mjs` for the workbench and maintained Explorer checks; the VS Code **CAD-Pilot: Check all** task runs the same command. **Test Python** runs `uv`/pytest only, and **Test Explorer core** runs the non-browser Node checks. No default test task is imposed.
 
-`AGENTS.md`, the first-party visual-review skill and the design-project template explicitly prefer the maintained Explorer (the Copilot canvas, or the design-project viewer in other hosts), with the imported browser/CLI workflow as the fallback. The imported cad skill still owns modeling guidance and is not patched to change its upstream viewer instructions.
+`AGENTS.md`, the cad and visual-review skills and the design-project template route viewing to the maintained Explorer (the Copilot canvas, or the design-project viewer in other hosts). The cad skill owns modeling, generation and CLI inspection; the visual-review skill owns choosing, opening and driving the viewer.
 
 ## Start a Design
 
@@ -44,7 +44,7 @@ The project template is a proposed convention, not a mandatory structure. Use it
 
 To use the starter, copy the contents of `templates/project/` into a new, empty design folder separate from the workbench, including its `.gitignore`. Do not copy it over existing work. Replace the sample brief before designing; the plate is a tooling test, not an approved product. Copying the template does not initialize Git, assign a Git identity, or register shared skills.
 
-Invoke the imported tools with the workbench's Python interpreter, while keeping the current directory at the design root. Start the following example at the workbench root. It uses a sibling design folder, `../first-part`; substitute the relative path to your design. Capture the workbench location before switching folders:
+Invoke the cad skill's tools with the workbench's Python interpreter, while keeping the current directory at the design root. Start the following example at the workbench root. It uses a sibling design folder, `../first-part`; substitute the relative path to your design. Capture the workbench location before switching folders:
 
 ```powershell
 $Workbench = $PWD.Path
@@ -60,7 +60,7 @@ Pop-Location
 
 Check each command's result before continuing; do not mistake an older artifact for a successful new build. These commands execute the Python generator and do not enforce a filesystem sandbox.
 
-For an existing project, skip the template and use its generator defining `gen_step()`. Choose the STEP destination with `-o`; use a project-relative path with forward slashes, including on Windows. Inspect that same relative path to keep geometry references consistent. STL and 3MF sidecar paths are relative to the STEP's directory, so do not repeat the output directory in those arguments. Hidden viewer assets are generated beside the STEP.
+For an existing project, skip the template and use its generator defining `gen_step()`. Choose the STEP destination with `-o`; use a project-relative path with forward slashes, including on Windows. Inspect that same relative path to keep geometry references consistent. STL and 3MF sidecar paths are relative to the STEP's directory, so do not repeat the output directory in those arguments. A hidden `.<name>.step.glb`, which `scripts/inspect` reads for `@cad` references, is generated beside the STEP.
 
 With the same workbench variables, start from the workbench root and substitute the relative path to the existing project:
 
@@ -81,16 +81,14 @@ For Copilot CLI, start in the design folder, allow access to the workbench when 
 
 ## Visual Review
 
-The maintained Explorer, as the Copilot canvas or the design-project viewer that `explorer/scripts/explorer.mjs open` starts and reuses, opens ordinary STEP snapshots, supports exploded views, assembly steps, section views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the imported inspector's `@cad` addresses. Section view looks inside an assembly: choose an X, Y or Z cutting plane, adjust its position and flip the visible side. This is a display-only cutaway, not a change to the STEP or print geometry. Cut surfaces are visual aids, not newly created CAD faces or evidence of measured clearance. Use geometric inspection for dimensions, and include the section settings when discussing a captured gap or internal feature. The commands and `@cad` workflow below describe the imported browser viewer, which remains unchanged.
+The maintained Explorer, as the Copilot canvas or the design-project viewer that `explorer/scripts/explorer.mjs open` starts and reuses, opens ordinary STEP snapshots, supports exploded views, assembly steps, section views, exact face, edge and part references, Studio appearance and saved drawing reviews. Choose Faces, Edges or Parts in its toolbar; hovering previews the target and clicking selects it. Its `cadproto:v2` references are separate from the `@cad` addresses that `scripts/inspect` reports. Section view looks inside an assembly: choose an X, Y or Z cutting plane, adjust its position and flip the visible side. This is a display-only cutaway, not a change to the STEP or print geometry. Cut surfaces are visual aids, not newly created CAD faces or evidence of measured clearance. Use geometric inspection for dimensions, and include the section settings when discussing a captured gap or internal feature.
 
-The imported viewer is the fallback when the maintained Explorer is unavailable. Its `node "$Cad/explorer/scripts/ensure-dev.mjs" --workspace-root "$PWD" --root-dir "$PWD" --file <step> --json` command prints a loopback URL scoped to the selected project. It reuses a matching viewer or chooses a free port in 4178-4198; open the printed URL in your browser. Keep it open while regenerating. No global viewer configuration is changed.
-
-1. Select a face or edge and paste its copied `@cad[...]` reference into chat.
+1. Select a face, edge or part and paste its copied reference into chat.
 2. Describe what feels wrong in plain language; attach a marked screenshot, sketch, or reference picture when easier. Draw and screenshot controls are available in the viewer.
 3. Ask the agent to confirm the region or show rough alternatives before an ambiguous edit. State what must remain unchanged.
 4. Keep useful decisions and feedback with the project's existing notes. Include the model revision and relevant screenshot/reference so a later session can interpret them. No separate review form is required; re-resolve selections after geometry changes.
 
-Regenerating STEP and sidecars with a different exporter or CAD kernel can change assembly hierarchy and imported `@cad` occurrence selectors even when physical geometry remains equivalent. Keep the artifact revision with a copied reference and re-inspect the regenerated artifact; do not translate old selector paths by adding or removing an assumed hierarchy level.
+Regenerating STEP and sidecars with a different exporter or CAD kernel can change assembly hierarchy and `@cad` occurrence selectors even when physical geometry remains equivalent. Keep the artifact revision with a copied reference and re-inspect the regenerated artifact; do not translate old selector paths by adding or removing an assumed hierarchy level.
 
 There is no automatic chat-selection bridge. Your live browser selection or drawing is not visible to the agent until you send a reference or screenshot. Check that annotations appear in the shared image. Confirm printer, nozzle, material, loads, and fit allowances when they affect the design.
 
@@ -104,7 +102,7 @@ Start with known equipment and materials. Add useful fit measurements and print 
 
 ## Provenance
 
-The workbench-owned [.agents/skills/README.md](.agents/skills/README.md) contains one provenance entry per skill: source URL/path, pinned revision, import date, license/attribution, scope, local patches, and update checks. Keep upstream READMEs and licenses intact. Use the same parent-collection README convention for future instructions, prompts, and agent imports.
+The workbench-owned [.agents/skills/README.md](.agents/skills/README.md) contains one provenance entry per skill: source URL/path, pinned revision, import date, license/attribution, scope, local patches, and update checks. Keep upstream READMEs and licenses intact. The cad skill is a first-party fork: its entry keeps the source revision, license and attribution, and its text and scripts are maintained here. Use the same parent-collection README convention for future instructions, prompts, and agent imports.
 
 First-party tools, templates, and guidance are maintained in this repository; their revisions are recorded in Git. No additional license is granted for original work here. Imported notices remain intact, and dependency packages have their own licenses.
 
@@ -120,18 +118,14 @@ node tools/check.mjs
 
 For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` builds and exercises the maintained UI. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations. A failed stage stops the aggregate command with a nonzero exit code.
 
-The imported viewer has a separate dependency lock, build and browser workflow. After relevant imported changes, follow its provenance update procedure and run:
+The cad skill's CLI inspection suite runs separately from the workbench root, because its `test_cli.py` basename overlaps with the other CLI test directories:
 
-```powershell
-npm --prefix .agents/skills/cad/explorer test
-npm --prefix .agents/skills/cad/explorer run build
-uv run python tools/check_viewer.py --url 'http://127.0.0.1:4178/?file=outputs/mounting_plate.step' --output .local/viewer-check
+```text
+uv run pytest .agents/skills/cad/scripts/inspect -q
 ```
 
-The browser check requires the sample plate to be generated and served; use the URL printed by `ensure-dev.mjs`. It captures desktop/mobile screenshots and checks canvas pixels, camera changes, face-reference copying, and entry into draw mode.
+Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
 
-Python checks cover sample geometry, direct imported CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, imported common/export behavior and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit viewer dependencies when reviewing updates; a clean audit is not a security certification.
+The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
 
-For the pinned viewer, prefer desktop: resizing to mobile can retain excessive zoom, and the isometric reset control can overlap the top-view control (keyboard activation is available). Recheck these limitations when updating the viewer. The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
-
-The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. The imported viewer remains running after `ensure-dev.mjs` exits. Its JSON response includes its process ID; verify that process before stopping it with `Stop-Process -Id <pid>`. Do not stop unrelated Node processes. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.
+The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.

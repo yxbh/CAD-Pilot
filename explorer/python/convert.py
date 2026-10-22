@@ -1,4 +1,4 @@
-"""Disposable native STEP preview converter, independent of imported CAD tooling.
+"""Disposable native STEP preview converter, independent of the cad skill's tooling.
 
 Meshes retain the source's Z-up frame and use millimeters. Colors are linear RGB.
 The JSON maps render triangles to CAD faces and ordered polylines to native CAD

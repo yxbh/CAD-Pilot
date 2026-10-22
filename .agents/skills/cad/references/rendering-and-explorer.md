@@ -1,165 +1,58 @@
-# Rendering and CAD Explorer review
+# Viewing and CAD Explorer review
 
-Read this file when CAD Explorer links are needed, when visual review is useful, when the user asks for screenshots/previews, or when programmatic facts need visual confirmation.
+Read this file when a model should be shown to the user, when the user asks for screenshots, previews or sections, or when programmatic facts need visual confirmation.
 
 ## Policy
 
-Always return CAD Explorer link(s) for relevant STEP/STP artifacts when possible. Do not always generate images. Rendering is conditional because it is more expensive than geometry inspection.
+Show relevant STEP/STP artifacts in the maintained CAD Explorer whenever the host can display it. Viewing belongs to the workbench's visual-review skill: load it to choose between the Copilot `cad-explorer` canvas and `explorer/scripts/explorer.mjs`, open the model, drive the view and capture images. This skill does not start, stop or bundle a viewer.
 
-Use renders only when:
+Do not always capture images. Capture only when:
 
-- the user explicitly asks for an image, screenshot, preview, section, or wireframe
-- CAD Explorer cannot be started or accessed in the current environment
+- the user explicitly asks for an image, screenshot, preview or section
 - the agent needs visual evidence to resolve ambiguity
-- hidden/internal features need section or wireframe review
+- hidden/internal features need a section view
 - programmatic facts cannot confirm shape intent
-- a complex assembly needs a quick visual sanity check and Explorer is not sufficient
+- a complex assembly needs a quick visual sanity check
 
-Do not use renders as the sole validation mechanism for dimensions, topology, labels, clearances, or mating checks.
+Do not use images as the sole validation mechanism for dimensions, topology, labels, clearances, or mating checks.
 
-## CAD Explorer
+## Opening a model
 
-Start Explorer for agent workflows:
-
-```bash
-npm --prefix explorer run dev:ensure -- --file path/to/model.step
-```
-
-This command shape is relative to the CAD skill directory. `dev:ensure` probes local CAD Explorer dev servers, reuses one when its scan root matches the requested workspace/root, or starts a new Vite dev server on the first free port in the configured range. Use the URL printed by this command for final Explorer links; do not assume port `4178`.
-
-For manual foreground Vite development, use:
+In hosts without the Copilot canvas, run the workbench's Explorer command from the design project's root, with the same project-relative STEP path that `scripts/step -o` wrote and `scripts/inspect` read:
 
 ```bash
-npm --prefix explorer run dev
+node <workbench>/explorer/scripts/explorer.mjs open path/to/model.step
 ```
 
-Important environment variables:
+It prints the viewer URL as JSON. Show that URL to the user and keep reusing it. After regenerating, run the same `open` again: it reloads the running viewer and returns the same URL. Do not invent URL parameters or start another viewer. If `open` reports that the Explorer is not built, follow the build command it prints or report the failure.
 
-```text
-EXPLORER_PORT              default 4178
-EXPLORER_PORT_END          dev:ensure default 4198
-EXPLORER_ROOT_DIR          scan subdirectory; empty means the inferred workspace root
-EXPLORER_DEFAULT_FILE      scan-root-relative file opened when no ?file= is supplied
-EXPLORER_GITHUB_URL
-EXPLORER_WORKSPACE_ROOT
-EXPLORER_ROBOT_MOTION_WS_URL
+In the Copilot desktop, open the `cad-explorer` canvas with the design directory as `projectRoot` and the STEP as `file` instead. The visual-review skill owns the details for both hosts.
+
+## Images
+
+With the viewer page open, set up the view and capture it:
+
+```bash
+node <workbench>/explorer/scripts/explorer.mjs do set_view preset=iso
+node <workbench>/explorer/scripts/explorer.mjs do set_section enabled=true axis=x
+node <workbench>/explorer/scripts/explorer.mjs capture path/to/model_section.png
 ```
 
-Explorer link command:
+List the available view actions with `explorer.mjs actions`. A capture waits until an open page has drawn the current view; with no page open it reports the URL to open. There is no headless renderer, so open the URL (in the Claude desktop app, in the built-in browser pane) before capturing. Keep capture paths inside the design project, not in this skill directory.
+
+Without `position`, the plane stays inside the visible model: a newly loaded model starts at the middle of its X range, and changing the axis moves the plane to the middle of the new axis. To cut at a chosen coordinate, add `position=<mm>` in model-world millimetres within the visible model's extent on that axis, for example from the bounding box `scripts/inspect refs --facts` reports for an unexploded model. A position outside the visible model is rejected, and the error states the allowed range on that axis.
+
+Section view is a display-only cutaway: it does not cut the STEP, and its cut surfaces are not CAD faces or evidence of clearance.
+
+## References
+
+`@cad[...]` refs come from `scripts/inspect` and are resolved there. The Explorer copies its own `cadproto:v2` references, which `explorer.mjs inspect` resolves. Never feed one kind to the other tool.
+
+If an inspected selector matters, include its textual ref next to the Explorer URL:
 
 ```text
-npm --prefix explorer run dev:ensure -- --file <path-relative-to-active-scan-root-with-extension>
-```
-
-If the STEP file is `models/mounting_plate.step` and the active scan root is the workspace root:
-
-```text
-npm --prefix explorer run dev:ensure -- --file models/mounting_plate.step
-```
-
-If an inspected selector matters, include its textual ref next to the Explorer link:
-
-```text
-Explorer: http://127.0.0.1:4178/?file=models/mounting_plate.step
+Explorer: <URL printed by explorer.mjs open>
 Key ref: @cad[models/mounting_plate.step#<selector>]
-```
-
-Do not invent selector-specific URL parameters unless the environment documents them. Use the documented file link format and include textual `@cad[...]` refs.
-
-## Render tool
-
-```bash
-python scripts/render {view|orbit|wireframe|section|list} ...
-```
-
-Supported render inputs:
-
-- `.step`, `.stp`
-- adjacent hidden GLB/topology artifacts generated by STEP tooling
-- CAD paths
-- `@cad[...]` refs
-
-Rejected inputs:
-
-- Python generators
-- STL
-- 3MF
-
-Generate STEP first, then render the STEP, CAD path, generated GLB/topology artifact, or supported CAD reference.
-
-STEP renders use the same CAD coordinate convention as the source geometry: positive Z is up. Preset cameras, custom `azimuth:elevation` cameras, axes overlays, and CAD Explorer floor/grid placement should not require rotating the STEP or its package-local GLB sidecar.
-
-`view` and `wireframe` use Python Playwright with Playwright-managed Chromium through a warm local render daemon. The first render auto-starts the daemon and pays browser startup cost; later renders reuse the browser and should be faster. The daemon exits after about 10 minutes idle or 100 jobs. If Chromium is not installed for the active CAD Python environment, run:
-
-```bash
-python -m playwright install chromium
-```
-
-Useful daemon diagnostics:
-
-```bash
-python scripts/render daemon status
-python scripts/render daemon stop
-```
-
-Use `--no-daemon` only for render debugging or tests when an explicit one-shot Playwright run is needed.
-
-## Render commands
-
-Use subcommand help for the current flags:
-
-```bash
-python scripts/render view --help
-python scripts/render orbit --help
-python scripts/render wireframe --help
-python scripts/render section --help
-python scripts/render list --help
-```
-
-Common cameras include `front`, `back`, `left`, `right`, `top`, `bottom`, `iso`, or `azimuth:elevation[:distance]`.
-
-Use `view` for explicit visual review or fallback when Explorer is unavailable:
-
-```bash
-python scripts/render view path/to/model.step \
-  --output path/to/model_iso.png \
-  --camera iso \
-  --preset technical \
-  --edges thin
-```
-
-Use `orbit` when the user asks for a looping GIF or turntable-style visual:
-
-```bash
-python scripts/render orbit path/to/model.step \
-  --output path/to/model_orbit.gif \
-  --quality standard
-```
-
-Orbit GIFs reuse the browser render daemon and render all frames from one loaded scene. Quality profiles control default dimensions, frame count, and supersampling; `very-high` uses heavier 3x supersampling and can be slow or produce large GIF files. Override motion with `--start-azimuth`, `--elevation`, `--turns`, `--duration-seconds`, `--fps`, or `--frames`. GIF export is opaque-background only in v1.
-
-Use `wireframe` when hidden edges, overlapping solids, or assembly separation matters:
-
-```bash
-python scripts/render wireframe path/to/model.step \
-  --output path/to/model_wire.png \
-  --camera iso \
-  --hidden-lines faint
-```
-
-Use `section` for internal features, hollow parts, slots, bores, and occluded interfaces:
-
-```bash
-python scripts/render section path/to/model.step \
-  --output path/to/model_section.png \
-  --plane YZ \
-  --offset 0
-```
-
-Use `list` when input ambiguity exists:
-
-```bash
-python scripts/render list path/to/model.step --format json
 ```
 
 ## Reporting visual review
@@ -167,17 +60,17 @@ python scripts/render list path/to/model.step --format json
 Report visual review honestly:
 
 ```text
-Visual review: Explorer link returned; no image render generated because geometric validation passed and no visual ambiguity was present.
+Visual review: opened models/mounting_plate.step in CAD Explorer; no capture taken because geometric validation passed and no visual ambiguity was present.
 ```
 
 or:
 
 ```text
-Visual review: Explorer startup failed; generated a lightweight iso render as fallback.
+Visual review: CAD Explorer could not start (<reported error>); validation relies on CLI inspection.
 ```
 
 or:
 
 ```text
-Visual review: section render generated to confirm the internal bore and lid/base overlap.
+Visual review: section capture (X = 0) taken to confirm the internal bore and lid/base overlap.
 ```
