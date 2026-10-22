@@ -44,7 +44,7 @@ From the workbench root, run the additional inspection suite with `uv run pytest
 - Reference: https://github.com/cedrickchee/text-to-cad at `2dd54cf8e27dc71c92244dc47271dcf10d302e16`.
 - Third-party text/code copied into this skill: none.
 - License: no additional license granted here; follows the repository's policy.
-- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained CAD Explorer (Copilot `cad-explorer` canvas or the design-project viewer), imported-browser fallback, separate handling of `cadproto:v2` descriptors versus imported `@cad` references, and display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances. No third-party source modifications; record future imported material explicitly.
+- Local changes: original visual-feedback workflow using existing project notes rather than a required review form; capability-aware routing to the maintained CAD Explorer (Copilot `cad-explorer` canvas or the design-project viewer), imported-browser fallback, separate handling of `cadproto:v2` descriptors versus imported `@cad` references, display-only section-view guidance that distinguishes cut surfaces from native topology and measured clearances, and assembly-step guidance (agreeing the order, writing `gen_assembly()`, reporting the rigid sequence check and capturing steps). No third-party source modifications; record future imported material explicitly.
 
 ### Update Procedure
 

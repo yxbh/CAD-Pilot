@@ -1,6 +1,6 @@
 ---
 name: visual-review
-description: 'Choose and open a STEP viewer and co-design CAD with a non-CAD user. Use for viewing models, CAD Explorer, unclear shape preferences, pointing at an edge or surface, annotated screenshots, geometry references, before/after comparisons, or difficulty describing a design change.'
+description: 'Choose and open a STEP viewer and co-design CAD with a non-CAD user. Use for viewing models, CAD Explorer, unclear shape preferences, pointing at an edge or surface, annotated screenshots, geometry references, before/after comparisons, showing how parts go together or come apart (assembly steps), or difficulty describing a design change.'
 ---
 
 # Visual Co-Design
@@ -27,11 +27,22 @@ Use the imported browser viewer and CLI workflow described by the cad skill only
 6. Edit the smallest responsible source feature. Regenerate, inspect geometry, and show before/after views. Re-resolve geometry references after regeneration; face/edge numbers and even semantic selectors can change or become ambiguous.
 7. Ask for approval of the overall shape before finishing cosmetic details. Keep aesthetic approval separate from dimensional, print, and safety checks.
 
+## Assembly Steps
+
+Use assembly steps when the user wants to see how parts go together or come apart, needs step-by-step images, or asks whether an order works. The STEP needs labelled parts.
+
+1. Agree the order in plain words first, including which part stays put and anything done by hand, such as squeezing a clip or holding a part level. Ask rather than invent an order for a mechanism you have not understood.
+2. Write the sequence in the design's Python source: `gen_assembly()` beside `gen_step()`, returning `{"steps": [...]}`. Each step has a `title`, `parts` (labels, with `*`/`?` wildcards; a group label covers its parts), `from` (the millimetre offset the parts arrive from, relative to where they sit when assembled) and an optional `note`. Parts no step names stay in place. Naming a part again in a later step carries it along. Derive offsets from named parameters where they matter, and give later steps on the same axis larger offsets so waiting parts do not appear to pass through each other. In an existing project, ask before adding the function to its source.
+3. After generating the STEP, run the workbench's `explorer/python/assembly.py <source.py> --step <project-relative STEP> --check` with the workbench's Python interpreter from the design root. It writes `<name>.assembly.json` beside the STEP and never changes the STEP. Then run `open` again (or load the file again in the canvas) so the viewer reads it.
+4. Report the check per step: clear, blocked (the first blocking part and distance) or interferes (overlapping when installed). It is a rigid straight-line sweep sampled every 0.5 mm and does not model flexing, threads, gravity, tool access or friction, so a flexing snap part is expected to block. Supply `check_shapes` only with a deflected or squeezed illustration the source already models, and say that the check used it. A clear result is a geometric screen, not proof that the parts assemble or that a print will fit.
+5. Show the steps with `do set_step step=<n>`: 0 lays every sequenced part out, and the last step is fully assembled. `do set_step mode=buildup` hides parts until their step, and `do set_step step=null` leaves the sequence. Fit the view once, then set and `capture` each step for instruction images; captures wait for a step to finish moving. Check `state` for unmatched labels or a stale sequence before trusting what a capture shows.
+6. Keep step images worth reusing with the project's existing notes or deliverables, together with the model revision.
+
 ## References and Tool Boundaries
 
 Maintained-viewer references use `cadproto:v2` topology/occurrence/face, edge or whole-part identities. Use Faces, Edges or Parts in the toolbar; edge references identify actual STEP edges, not tessellation outlines. Resolve a pasted reference with `cad_explorer_inspect` or the canvas's `inspect_reference` action in Copilot, or with `explorer.mjs inspect '<pasted text>'` elsewhere. Outside Copilot, a copied reference is a readable summary line followed by its `cadproto:v2` address. Do not feed these IDs into the imported inspector. Imported `@cad[...]` references belong to that viewer's CLI inspection workflow and must be resolved there.
 
-The maintained Explorer exposes explicit state, selection, view, explosion, section and capture actions: canvas actions in Copilot, and `explorer.mjs` commands elsewhere. Read their returned state before claiming to know what is selected or visible. User clicks can copy references to the clipboard, but do not insert or send chat messages. The imported browser viewer does not gain these canvas actions merely because both viewers are called CAD Explorer.
+The maintained Explorer exposes explicit state, selection, view, explosion, assembly-step, section and capture actions: canvas actions in Copilot, and `explorer.mjs` commands elsewhere. Read their returned state before claiming to know what is selected or visible. User clicks can copy references to the clipboard, but do not insert or send chat messages. The imported browser viewer does not gain these canvas actions merely because both viewers are called CAD Explorer.
 
 Use the maintained Explorer's section view when a bridge, cover or surrounding body hides a feature the user wants to inspect. A cutting plane changes the display only; it does not cut the source STEP. Preserve the view direction and record the axis, plane position, visible side and any exploded placement with feedback. Artificial cut surfaces are not selectable native CAD faces or edges. A visible gap is useful context, but dimensional clearance still requires geometry measurement and printed fit still requires physical evidence.
 
