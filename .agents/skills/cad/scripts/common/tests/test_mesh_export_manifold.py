@@ -165,13 +165,21 @@ class MeshExportManifoldTests(unittest.TestCase):
         multiplicity = collections.Counter(edges.values())
         self.assertEqual({2: len(edges)}, dict(multiplicity), f"{label}: every edge of a closed solid is used by exactly two triangles")
 
-    def assertExportsManifold(self, name: str) -> None:
+    def assertExported(self, name: str) -> None:
         run = self.runs[name]
         self.assertEqual(0, run.returncode, run.stdout + run.stderr)
+        for suffix in ("step", "stl", "3mf"):
+            self.assertTrue((self.project / f"{name}.{suffix}").is_file(), f"{name}.{suffix}")
+
+    def assertMeshesManifold(self, name: str) -> None:
         self.assertManifold(read_binary_stl(self.project / f"{name}.stl"), f"{name}.stl")
         meshes = read_3mf_meshes(self.project / f"{name}.3mf")
         self.assertEqual(1, len(meshes), f"{name}.3mf: one mesh object")
         self.assertManifold(meshes[0], f"{name}.3mf")
+
+    def assertExportsManifold(self, name: str) -> None:
+        self.assertExported(name)
+        self.assertMeshesManifold(name)
 
     def test_plate_with_one_hole(self) -> None:
         for name in ("plate_10", "plate_20", "plate_10_fine"):
@@ -183,18 +191,25 @@ class MeshExportManifoldTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertExportsManifold(name)
 
-    # Known defect: OCCT's triangulation of the handle's swept faces is closed
-    # in double precision, but its sub-micron slivers collapse when vertices
-    # are rounded for the file (float32 in STL, 9 significant digits in 3MF),
-    # leaving zero-area triangles and edges shared by more than two. Remove the
-    # marker once the exporter welds or avoids them.
+    def test_teacup_exports(self) -> None:
+        for name in ("teacup", "teacup_fine"):
+            with self.subTest(name=name):
+                self.assertExported(name)
+
+    # Known defect, so only the mesh check is an expected failure. OCCT's
+    # triangulation of the teacup is closed in double precision, but the
+    # handle's swept faces mesh into sliver triangles that collapse when
+    # vertices are rounded for the file (float32 in STL, 9 significant digits
+    # in 3MF). Dropping the zero-area triangles is not enough: open edges and
+    # edges shared by four triangles remain. Remove the markers once the
+    # exporter writes a closed mesh here.
     @unittest.expectedFailure
-    def test_teacup(self) -> None:
-        self.assertExportsManifold("teacup")
+    def test_teacup_mesh_is_closed(self) -> None:
+        self.assertMeshesManifold("teacup")
 
     @unittest.expectedFailure
-    def test_teacup_at_fine_tolerance(self) -> None:
-        self.assertExportsManifold("teacup_fine")
+    def test_teacup_mesh_is_closed_at_fine_tolerance(self) -> None:
+        self.assertMeshesManifold("teacup_fine")
 
 
 if __name__ == "__main__":

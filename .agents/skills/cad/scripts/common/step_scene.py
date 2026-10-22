@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import time
 from array import array
 from dataclasses import dataclass, field
@@ -632,10 +633,33 @@ def _location_transform_matrix(location: object | None) -> tuple[float, ...]:
     return tuple(rows)
 
 
+_STEP_UNICODE_ESCAPE = re.compile(r"\\X([24])\\([0-9A-Fa-f]+)\\X0\\")
+
+
+def _decode_step_unicode_escapes(text: str) -> str:
+    """Decode Part 21 ``\\X2\\``/``\\X4\\`` name directives.
+
+    The STEP writer hands non-ASCII names to OCCT in this form, so labels in
+    its in-memory document carry them, while a reader of the file returns the
+    decoded name. Both are the same authored name.
+    """
+    def replace(match: re.Match[str]) -> str:
+        digits = match.group(2)
+        unit = 4 if match.group(1) == "2" else 8
+        if len(digits) % unit:
+            return match.group(0)
+        try:
+            return bytes.fromhex(digits).decode("utf-16-be" if unit == 4 else "utf-32-be")
+        except (UnicodeDecodeError, ValueError):
+            return match.group(0)
+
+    return _STEP_UNICODE_ESCAPE.sub(replace, text)
+
+
 def _normalize_label_name(raw_name: object) -> str | None:
     if raw_name is None:
         return None
-    text = " ".join(str(raw_name).split())
+    text = " ".join(_decode_step_unicode_escapes(str(raw_name)).split())
     if not text:
         return None
     lowered = text.lower()

@@ -328,6 +328,25 @@ class AssemblyExportTests(unittest.TestCase):
         self.assertEqual(1, iter_cad_sources.call_count)
         self.assertEqual(["leaf_a", "leaf_b"], [child.label for child in assembly.children])
 
+    def test_direct_export_keeps_non_ascii_and_quoted_part_names(self) -> None:
+        from common.step_export import export_build123d_step_scene
+
+        step_path = self.cad_root / "STEP" / "leaf.step"
+        step_path.parent.mkdir(parents=True, exist_ok=True)
+        box = build123d.Box(1, 1, 1)
+        # build123d's import_step turns " .()" into "_", so the name avoids them.
+        box.label = "Tách_trà_Helena's"
+        export_build123d_step_scene(box, step_path)
+        assembly_spec = self._assembly_spec(self._leaf_instance())
+        output_path = assembly_spec.assembly_path.with_suffix(".step")
+
+        export_assembly_step_scene(assembly_spec, output_path)
+
+        self.assertTrue(output_path.read_bytes().isascii())
+        scene = assembly_export_module.load_step_scene(output_path)
+        leaf = self._named_occurrence(scene, "leaf")
+        self.assertEqual("Tách_trà_Helena's", leaf.source_name)
+
     def test_direct_export_names_leaf_part_product_after_its_shape(self) -> None:
         # Without a name on the leaf definition, the product falls back to
         # OCCT's generic SOLID, which CAD browsers show for every component.

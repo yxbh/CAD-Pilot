@@ -1,3 +1,4 @@
+import importlib.util
 import re
 import subprocess
 import sys
@@ -13,6 +14,14 @@ from common.step_scene import load_step_scene, scene_occurrence_shape
 
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[2]
+EXPLORER_CONVERTER = Path(__file__).resolve().parents[6] / "explorer" / "python" / "convert.py"
+
+
+def _explorer_converter():
+    spec = importlib.util.spec_from_file_location("explorer_convert", EXPLORER_CONVERTER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _linear_rgba(color: build123d.Color) -> tuple[float, float, float, float]:
@@ -75,6 +84,61 @@ class StepExportNamingTests(unittest.TestCase):
                     self.assertAlmostEqual(shape.volume, authored.volume, places=6)
                     self.assertLess((shape.center() - authored.center()).length, 1e-6)
 
+    def test_same_colour_copies_keep_their_own_product_names(self) -> None:
+        foot = build123d.Cylinder(3, 4)
+        feet = []
+        for name, (x, y) in {"foot_fl": (-20, 10), "foot_fr": (20, 10), "foot_rl": (-20, -10), "foot_rr": (20, -10)}.items():
+            copy = foot.moved(build123d.Location((x, y, -2)))
+            copy.label, copy.color = name, build123d.Color("black")
+            feet.append(copy)
+        step_path = self.root / "stool.step"
+
+        export_build123d_step_scene(build123d.Compound(children=feet, label="stool"), step_path)
+
+        self.assertCountEqual(["stool", "foot_fl", "foot_fr", "foot_rl", "foot_rr"], _product_names(step_path.read_bytes()))
+        occurrences = load_step_scene(step_path).roots[0].children
+        self.assertEqual([node.name for node in occurrences], [node.source_name for node in occurrences])
+
+    def test_same_label_copies_share_one_definition(self) -> None:
+        peg = build123d.Cylinder(2, 10)
+        copies = [peg.moved(build123d.Location((index * 10, 0, 0))) for index in range(3)]
+        for copy in copies:
+            copy.label, copy.color = "peg", build123d.Color("red")
+        step_path = self.root / "row.step"
+
+        scene = export_build123d_step_scene(build123d.Compound(children=copies, label="row"), step_path)
+
+        self.assertEqual(["row", "peg"], _product_names(step_path.read_bytes()))
+        self.assertEqual(1, len(scene.prototype_shapes))
+
+    def test_coloured_groups_write_a_file_the_explorer_reads_without_warnings(self) -> None:
+        # A colour on a sub-assembly occurrence made STEPCAF write a
+        # presentation with an empty item list, which readers report.
+        converter = _explorer_converter()
+        a = build123d.Box(10, 10, 10)
+        a.label = "a"
+        group = build123d.Compound(children=[a], label="group")
+        group.color = build123d.Color("green")
+        c = build123d.Box(3, 3, 3).moved(build123d.Location((0, 20, 0)))
+        c.label = "c"
+        b = build123d.Box(4, 4, 4).moved(build123d.Location((20, 0, 0)))
+        b.label = "b"
+        sub = build123d.Compound(children=[b], label="sub")
+        models = {
+            "coloured_group": build123d.Compound(children=[group, c], label="top"),
+            "coloured_root": build123d.Compound(children=[sub, c], label="root", color=build123d.Color("tan")),
+        }
+        for name, model in models.items():
+            with self.subTest(name=name):
+                step_path = self.root / f"{name}.step"
+                export_build123d_step_scene(model, step_path)
+                self.assertNotIn(b"('',()", step_path.read_bytes())
+                converted = converter.convert_step(step_path)
+                self.assertEqual([], converted["warnings"])
+                leaf_colors = [node["color"] for node in converted["nodes"] if node["partId"]]
+                self.assertIn([round(channel, 3) for channel in _linear_rgba(build123d.Color("green" if name == "coloured_group" else "tan"))[:3]],
+                              [[round(channel, 3) for channel in color[:3]] for color in leaf_colors])
+
     def test_placed_root_keeps_its_hierarchy_and_world_placements(self) -> None:
         for root_frame in (build123d.Pos(40, 50, 60), build123d.Pos(40, 50, 60) * build123d.Rot(17, 29, 83)):
             with self.subTest(root_frame=root_frame):
@@ -108,6 +172,45 @@ class StepExportNamingTests(unittest.TestCase):
                     self.assertEqual(location, node.location)
                     self.assertEqual(label, node.label)
                     self.assertTrue(node.wrapped.IsSame(wrapped))
+
+    def test_names_read_back_unchanged_in_every_reader(self) -> None:
+        # OCCT writes non-ASCII as its UTF-8 bytes read as Latin-1, and its
+        # reader misreads an escaped quote before "," ")" or a double quote
+        # (the part goes missing, or the file does not parse).
+        names = [
+            "Tách trà", "pin Ø10", "Bügel_ä", "日本", "bolt_🔩", "post (6')", "a', b", "x('',y)", "ab'\",c",
+            "ab'\")", "post 6'\" (big)", "'\"Bob\", cup", "it's", '6" pipe', "back\\slash", "plain",
+            "L" * 60 + " post (6') " + "M" * 70 + " end'),x",
+        ]
+        parts = []
+        for index, name in enumerate(names):
+            part = build123d.Pos(10 * index, 0, 0) * build123d.Solid.make_box(2, 3, 4)
+            part.label = name
+            parts.append(part)
+        step_path = self.root / "names.step"
+
+        written = export_build123d_step_scene(build123d.Compound(children=parts, label="Bộ ấm"), step_path)
+        converted = _explorer_converter().convert_step(step_path)
+
+        self.assertTrue(step_path.read_bytes().isascii())
+        self.assertEqual([], converted["warnings"])
+        self.assertEqual(["Bộ ấm", *names], [node["label"] for node in converted["nodes"]])
+        for scene in (written, load_step_scene(step_path)):
+            self.assertEqual(["Bộ ấm"], [root.name for root in scene.roots])
+            children = scene.roots[0].children
+            self.assertEqual(names, [node.name for node in children])
+            self.assertEqual(names, [node.source_name for node in children])
+            self.assertEqual([10.0 * index for index in range(len(names))], [node.transform[3] for node in children])
+
+    def test_plain_names_keep_occt_spelling(self) -> None:
+        part = build123d.Solid.make_box(2, 3, 4)
+        part.label = "plain (big)"
+        step_path = self.root / "plain.step"
+
+        export_build123d_step_scene(build123d.Compound(children=[part], label="plain"), step_path)
+
+        self.assertIn(b"'plain (big)'", step_path.read_bytes())
+        self.assertNotIn(b"\\X", step_path.read_bytes())
 
     def test_unnamed_labels_do_not_crash_scene_loading(self) -> None:
         # OCP's TDF_Label.FindAttribute dereferences null for an absent name and

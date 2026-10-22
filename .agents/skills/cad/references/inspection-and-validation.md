@@ -79,6 +79,8 @@ Plane options:
 
 Use lower plane limits and compact facts for normal validation. Use topology enumeration only for selector discovery, complex debugging, or when a feature cannot be verified through facts/planes/measurements.
 
+`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2`, and face and edge numbers, can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse a saved `@cad` path, which can silently resolve to a different part.
+
 ## Measurement checks
 
 Use `measure` for bounding distances, clearances, offsets, part spacing, plate thickness, hole-to-face distances, and alignment verification.

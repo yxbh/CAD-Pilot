@@ -431,41 +431,22 @@ class CadGenerationTests(unittest.TestCase):
         self.assertTrue(script_path.with_suffix(".step").exists())
         self.assertIsNotNone(scene)
 
-    def test_step_generation_refuses_labels_the_step_reader_misreads(self) -> None:
-        # OCCT writes non-ASCII as mojibake, and ends a name early at a quote
-        # followed by "," or ")", dropping the part (or crashing the reader).
-        for index, label in enumerate(["Bügel", "日本", "post (6')", "a', b", "x(' ,y)"]):
-            with self.subTest(label=label):
-                script_path = self.temp_root / f"labelled_{index}.py"
-                script_path.write_text(
-                    "\n".join(
-                        [
-                            "def gen_step():",
-                            "    import build123d",
-                            "    part = build123d.Box(1, 1, 1)",
-                            f"    part.label = {label!r}",
-                            "    return build123d.Compound(children=[part], label='holder')",
-                            "",
-                        ]
-                    ),
-                    encoding="utf-8",
-                )
-                spec = next(spec for spec in cad_generation.list_entry_specs() if spec.source_path == script_path)
-
-                with self.assertRaisesRegex(ValueError, "label"):
-                    cad_generation.run_script_generator(spec, "gen_step")
-                self.assertFalse(script_path.with_suffix(".step").exists())
-
-    def test_step_generation_keeps_plain_apostrophes_in_labels(self) -> None:
-        script_path = self.temp_root / "apostrophe.py"
+    def test_step_generation_keeps_labels_the_step_reader_used_to_misread(self) -> None:
+        # OCCT garbles non-ASCII names and misreads a quote before "," ")" or a
+        # double quote; the writer spells both so they read back unchanged.
+        labels = ["Tách trà", "pin Ø10", "post (6')", "a', b", "ab'\",c", "'\"Bob\", cup", "Helena's cup (big)"]
+        script_path = self.temp_root / "labelled.py"
         script_path.write_text(
             "\n".join(
                 [
                     "def gen_step():",
                     "    import build123d",
-                    "    part = build123d.Box(1, 1, 1)",
-                    "    part.label = \"Helena's cup (big)\"",
-                    "    return build123d.Compound(children=[part], label='holder')",
+                    "    parts = []",
+                    f"    for index, label in enumerate({labels!r}):",
+                    "        part = build123d.Pos(10 * index, 0, 0) * build123d.Box(1, 1, 1)",
+                    "        part.label = label",
+                    "        parts.append(part)",
+                    "    return build123d.Compound(children=parts, label='Bộ ấm trà')",
                     "",
                 ]
             ),
@@ -474,8 +455,12 @@ class CadGenerationTests(unittest.TestCase):
         spec = next(spec for spec in cad_generation.list_entry_specs() if spec.source_path == script_path)
 
         scene = cad_generation.run_script_generator(spec, "gen_step")
+        read_back = cad_generation.load_step_scene(script_path.with_suffix(".step"))
 
-        self.assertEqual(["Helena's cup (big)"], [node.name for node in scene.roots[0].children])
+        self.assertTrue(script_path.with_suffix(".step").read_bytes().isascii())
+        for loaded in (scene, read_back):
+            self.assertEqual(["Bộ ấm trà"], [root.name for root in loaded.roots])
+            self.assertEqual(labels, [node.name for node in loaded.roots[0].children])
 
     def test_bare_assembly_children_return_is_supported(self) -> None:
         self._write_step("leaf")
@@ -1148,10 +1133,15 @@ class CadGenerationTests(unittest.TestCase):
             script_path=script_path,
         )
 
-        self.assertEqual(
-            {"imports/sample_component.step": (0.168627, 0.184314, 0.2, 1.0)},
-            cad_generation._script_step_material_colors(spec),
-        )
+        from common.threemf import _display_color
+
+        colors = cad_generation._script_step_material_colors(spec)
+
+        # Authored as sRGB (#2B2F33), held linear, written back as the same sRGB.
+        self.assertEqual(["imports/sample_component.step"], list(colors))
+        for actual, expected in zip(colors["imports/sample_component.step"], (0.024158, 0.028426, 0.033105, 1.0), strict=True):
+            self.assertAlmostEqual(expected, actual, places=5)
+        self.assertEqual("#2B2F33FF", _display_color(colors["imports/sample_component.step"]))
 
     def test_generate_part_outputs_embeds_selector_artifacts_in_glb(self) -> None:
         step_path = self._write_step("selector-output")

@@ -9,6 +9,11 @@ On Windows the rename can lose to a handle that was let go a moment ago: ``WinEr
 bounded 750 ms ladder; then the temp file is copied to a name nobody holds and the ladder runs
 once more. Every other error, such as a read-only folder or a missing directory, surfaces at
 once. Off Windows ``winerror`` does not exist, so this is exactly ``os.replace``.
+
+A rename puts a new file in place rather than rewriting the old one. :func:`replacing` writes
+through a symlinked output to the file it names and keeps the previous file's permission bits,
+but a hard link to the previous file keeps the old contents, and ownership and ACLs are those of
+the new file.
 """
 
 from __future__ import annotations
@@ -90,15 +95,21 @@ def replace_atomic(temp_path: Path | str, target_path: Path | str) -> None:
 def replacing(target_path: Path | str) -> Iterator[Path]:
     """Yield a temp path beside ``target_path``, and rename it into place if the block succeeds.
 
-    Same directory on purpose: a rename across filesystems is not atomic. The temp file is
-    removed when the block or the rename fails; a cleanup error is suppressed so it cannot mask
-    the failure the caller needs to see.
+    Same directory on purpose: a rename across filesystems is not atomic. A symlinked target is
+    written through to the file it names, so the link survives. The temp file is removed when the
+    block or the rename fails; a cleanup error is suppressed so it cannot mask the failure the
+    caller needs to see.
     """
     target = Path(target_path)
+    if target.is_symlink():
+        target = Path(os.path.realpath(target))
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_name(f"{target.name}{temp_suffix()}")
     try:
         yield temp_path
+        # Keep the previous file's permission bits; a new output keeps the default.
+        with contextlib.suppress(OSError):
+            shutil.copymode(target, temp_path)
         replace_atomic(temp_path, target)
     finally:
         with contextlib.suppress(OSError):

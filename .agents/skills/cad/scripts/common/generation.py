@@ -5,7 +5,6 @@ import contextlib
 import io
 import importlib.util
 import json
-import re
 import shutil
 import sys
 from collections.abc import Callable, Mapping
@@ -70,8 +69,6 @@ from common.step_scene import (
 )
 
 GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
-# OCCT's STEP reader ends a name early at a quote followed by "," or ")".
-_MISREAD_LABEL_QUOTE = re.compile(r"'[ ]*[,)]")
 
 
 @dataclass(frozen=True)
@@ -563,31 +560,9 @@ def _write_part_step_payload(
             f"{_display_path(script_path)} gen_step() envelope field 'shape' must be a build123d Shape, "
             f"got {type(shape).__name__}"
         )
-    _validate_step_labels(shape, script_path=script_path)
     scene = export_build123d_step_scene(shape, output_path)
     logger.debug(f"wrote STEP: {_display_path(output_path)}")
     return scene
-
-
-def _validate_step_labels(shape: object, *, script_path: Path) -> None:
-    pending = [shape]
-    while pending:
-        node = pending.pop()
-        pending.extend(getattr(node, "children", None) or ())
-        label = getattr(node, "label", None)
-        if not label:
-            continue
-        label = str(label)
-        if not label.isascii():
-            raise ValueError(
-                f"{_display_path(script_path)} gen_step() label {label!r} has non-ASCII characters, "
-                "which STEP readers give back garbled; use plain ASCII letters, digits and punctuation"
-            )
-        if _MISREAD_LABEL_QUOTE.search(label):
-            raise ValueError(
-                f"{_display_path(script_path)} gen_step() label {label!r} has a quote followed by ',' or ')', "
-                "where STEP readers cut the name short and lose the part; remove or move the quote"
-            )
 
 
 def _write_assembly_step_payload(envelope: dict[str, object], *, output_path: Path, script_path: Path) -> LoadedStepScene:
@@ -774,8 +749,18 @@ def _script_step_material_colors(spec: EntrySpec) -> dict[str, ColorRGBA]:
         except Exception:
             color = None
         if color is not None:
-            colors[Path(raw_step_path).as_posix()] = color
+            colors[Path(raw_step_path).as_posix()] = _linear_from_srgb(color)
     return colors
+
+
+def _linear_from_srgb(color: ColorRGBA) -> ColorRGBA:
+    # URDF material colours are authored like hex colours, in sRGB; the scene,
+    # GLB and 3MF writers take linear RGB.
+    def channel(value: float) -> float:
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue, alpha = color
+    return (channel(red), channel(green), channel(blue), alpha)
 
 
 def _color_key(color: ColorRGBA) -> tuple[int, int, int, int]:

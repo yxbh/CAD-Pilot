@@ -133,6 +133,25 @@ class ReplaceAtomicTests(unittest.TestCase):
         self.assertEqual(b"new", target.read_bytes())
         self.assertEqual([target.name], [path.name for path in target.parent.iterdir()])
 
+    @unittest.skipIf(os.name == "nt", "creating symlinks needs extra rights on Windows")
+    def test_replacing_writes_through_a_symlink_and_keeps_permissions(self) -> None:
+        shared = self.root / "shared" / "part.stl"
+        shared.parent.mkdir()
+        shared.write_bytes(b"old")
+        shared.chmod(0o640)
+        link = self.root / "project" / "part.stl"
+        link.parent.mkdir()
+        link.symlink_to(shared)
+
+        with atomic_replace.replacing(link) as temp_path:
+            self.assertEqual(shared.parent.resolve(), temp_path.parent)
+            temp_path.write_bytes(b"new")
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(b"new", shared.read_bytes())
+        self.assertEqual(0o640, shared.stat().st_mode & 0o777)
+        self.assertEqual(["part.stl"], [path.name for path in shared.parent.iterdir()])
+
 
 class ArtifactWritersReplaceAtomicallyTests(unittest.TestCase):
     def setUp(self) -> None:
