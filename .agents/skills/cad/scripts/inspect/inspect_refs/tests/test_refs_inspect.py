@@ -351,6 +351,16 @@ class InspectRefsSyntaxTests(unittest.TestCase):
             selectors,
         )
 
+    def test_parse_selector_strips_only_a_leading_hash(self) -> None:
+        # A later "#" is selector text, not the token marker: removing the
+        # first one anywhere turned "o1#" into occurrence o1.
+        self.assertEqual("o1.f2", refs_syntax.parse_selector("#o1.f2").canonical)
+        for selector in ("o1#f2", "o1#", "eye#shank"):
+            with self.subTest(selector=selector):
+                parsed = refs_syntax.parse_selector(selector)
+                self.assertEqual(("opaque", selector), (parsed.selector_type, parsed.canonical))
+
+
 class InspectRefsTests(unittest.TestCase):
     def setUp(self) -> None:
         self._isolated_roots = IsolatedCadRoots(self, prefix="refs-inspect-")
@@ -381,9 +391,11 @@ class InspectRefsTests(unittest.TestCase):
         include_selector: bool = True,
         include_index: bool = True,
         current_hash: str | None = None,
+        strip_selector_keys: tuple[str, ...] = (),
     ):
         resolved_step_path = step_path or self.step_path
         topology_manifest = {**manifest, "schemaVersion": 1}
+        selector_manifest = {key: value for key, value in topology_manifest.items() if key not in strip_selector_keys}
         self._touch_glb(resolved_step_path)
         stack = contextlib.ExitStack()
         with stack:
@@ -405,7 +417,7 @@ class InspectRefsTests(unittest.TestCase):
                     step_targets,
                     "read_step_topology_bundle_from_glb",
                     return_value=(
-                        SelectorBundle(manifest=topology_manifest, buffers=buffers or {})
+                        SelectorBundle(manifest=selector_manifest, buffers=buffers or {})
                         if include_selector
                         else None
                     ),
@@ -422,6 +434,19 @@ class InspectRefsTests(unittest.TestCase):
         self.assertEqual(1, token["summary"]["occurrenceCount"])
         self.assertEqual(2, token["summary"]["faceCount"])
         self.assertEqual([], token["selections"])
+
+    def test_facts_kind_falls_back_to_index_manifest_for_assembly(self) -> None:
+        # Artifacts written before the selector manifest carried entryKind
+        # still report an assembly from the index manifest.
+        manifest = {**_refs_manifest(self.cad_ref), "entryKind": "assembly"}
+
+        with self._mock_glb_topology(manifest, strip_selector_keys=("entryKind", "assembly")):
+            result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]", facts=True)
+
+        self.assertTrue(result["ok"])
+        token = result["tokens"][0]
+        self.assertEqual("assembly", token["summary"]["kind"])
+        self.assertEqual("assembly", token["entryFacts"]["kind"])
 
     def test_context_provider_can_supply_in_memory_entry_context(self) -> None:
         requested_profiles = []
@@ -665,6 +690,42 @@ class InspectRefsTests(unittest.TestCase):
         planes = result["tokens"][0]["planes"]
         self.assertEqual(1, len(planes))
         self.assertEqual("z", planes[0]["axis"])
+
+    def test_a_manifest_without_tallies_reports_no_counts(self) -> None:
+        # selector_count floors a missing tally at 0; passed on as fact, a
+        # six-faced box read as an empty document. Unknown is not zero.
+        from common.reporting import entry_summary_payload
+
+        manifest = {
+            "bbox": {"min": [0.0, 0.0, 0.0], "max": [10.0, 10.0, 10.0]},
+            "stats": {"occurrenceCount": 1, "shapeCount": 1},
+        }
+
+        payload = entry_summary_payload(manifest, kind="part")
+
+        self.assertEqual(1, payload["shapeCount"])
+        self.assertNotIn("faceCount", payload)
+        self.assertNotIn("edgeCount", payload)
+
+    def test_refs_text_omits_counts_it_does_not_have(self) -> None:
+        result = {
+            "ok": True,
+            "tokens": [{"cadPath": "plate", "summary": {"kind": "part"}, "selections": []}],
+            "errors": [],
+        }
+
+        text = inspect_cli._format_refs_text(result, quiet=False, verbose=False)
+
+        self.assertEqual("plate", text)
+
+    def test_refs_text_keeps_counts_it_has(self) -> None:
+        result = {
+            "ok": True,
+            "tokens": [{"cadPath": "plate", "summary": {"faceCount": 6, "edgeCount": 12}, "selections": []}],
+            "errors": [],
+        }
+
+        self.assertEqual("plate faces=6 edges=12", inspect_cli._format_refs_text(result, quiet=False, verbose=False))
 
     def test_diff_planes_returns_entry_planes(self) -> None:
         with self._mock_glb_topology(_refs_manifest(self.cad_ref)):

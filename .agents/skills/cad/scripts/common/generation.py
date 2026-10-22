@@ -749,8 +749,18 @@ def _script_step_material_colors(spec: EntrySpec) -> dict[str, ColorRGBA]:
         except Exception:
             color = None
         if color is not None:
-            colors[Path(raw_step_path).as_posix()] = color
+            colors[Path(raw_step_path).as_posix()] = _linear_from_srgb(color)
     return colors
+
+
+def _linear_from_srgb(color: ColorRGBA) -> ColorRGBA:
+    # URDF material colours are authored like hex colours, in sRGB; the scene,
+    # GLB and 3MF writers take linear RGB.
+    def channel(value: float) -> float:
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue, alpha = color
+    return (channel(red), channel(green), channel(blue), alpha)
 
 
 def _color_key(color: ColorRGBA) -> tuple[int, int, int, int]:

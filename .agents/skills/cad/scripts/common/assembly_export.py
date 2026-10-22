@@ -24,7 +24,7 @@ from common.catalog import (
 )
 from common.glb import read_step_topology_manifest_from_glb
 from common.render import existing_part_glb_path, part_glb_path
-from common.step_export import create_bin_xcaf_doc, export_xcaf_doc_step_scene
+from common.step_export import ascii_name, create_bin_xcaf_doc, export_xcaf_doc_step_scene
 from common.step_scene import LoadedStepScene, load_step_scene, occurrence_selector_id
 
 
@@ -486,7 +486,7 @@ class _DirectXcafAssemblyWriter:
         from OCP.TCollection import TCollection_ExtendedString
         from OCP.TDataStd import TDataStd_Name
 
-        TDataStd_Name.Set_s(label, TCollection_ExtendedString(str(name)))
+        TDataStd_Name.Set_s(label, TCollection_ExtendedString(ascii_name(str(name))))
 
     def _set_label_color(self, label: object, color: object | None) -> None:
         if color is None:
@@ -752,6 +752,7 @@ class _DirectXcafAssemblyWriter:
             return definition_label
         definition_label = self.shape_tool.AddShape(shape.wrapped, False)
         self.shape_definitions[key] = definition_label
+        self._set_label_name(definition_label, getattr(shape, "label", None))
         self._set_label_color(definition_label, getattr(shape, "color", None))
         return definition_label
 

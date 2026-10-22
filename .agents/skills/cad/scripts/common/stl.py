@@ -4,6 +4,7 @@ from pathlib import Path
 
 from OCP.StlAPI import StlAPI_Writer
 
+from common.atomic_replace import replacing
 from common.render import REPO_ROOT, part_stl_path
 from common.step_scene import (
     LoadedStepScene,
@@ -25,9 +26,9 @@ def export_part_stl_from_scene(step_path: Path, scene: LoadedStepScene, *, targe
     return target_path
 
 def export_shape_stl(shape: object, target_path: Path) -> Path:
-    target_path.parent.mkdir(parents=True, exist_ok=True)
     writer = StlAPI_Writer()
     writer.ASCIIMode = False
-    if not writer.Write(shape, str(target_path)):
-        raise RuntimeError(f"Failed to write STL output: {_display_path(target_path)}")
+    with replacing(target_path) as temp_path:
+        if not writer.Write(shape, str(temp_path)):
+            raise RuntimeError(f"Failed to write STL output: {_display_path(target_path)}")
     return target_path

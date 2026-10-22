@@ -80,6 +80,8 @@ Plane options:
 
 Use lower plane limits and compact facts for normal validation. Use topology enumeration only for selector discovery, complex debugging, or when a feature cannot be verified through facts/planes/measurements.
 
+`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2`, and face and edge numbers, can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse a saved `@cad` path, which can silently resolve to a different part.
+
 ## Measurement checks
 
 Use `measure` for signed offsets along one axis: part spacing, plate thickness between parallel faces, hole-centre-to-face distances, and alignment verification. It is not a clearance check: the gap between two bodies is a minimum distance, which needs the Python check below.

@@ -12,6 +12,8 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
 from common.glb import (
+    STEP_TOPOLOGY_EXTENSION,
+    _GlbBuilder,
     export_assembly_glb_from_scene,
     export_part_glb_from_scene,
     read_step_topology_bundle_from_glb,
@@ -278,6 +280,50 @@ class GlbExportTests(unittest.TestCase):
             ]
             self.assertEqual(prototype_key, _shape_hash(shape))
             self.assertIn([0.168627, 0.184314, 0.2, 1.0], colors)
+
+
+def _decode_view(builder: _GlbBuilder, view_index: int) -> dict[str, object]:
+    view = builder.json["bufferViews"][view_index]
+    start = int(view["byteOffset"])
+    return json.loads(bytes(builder.binary[start : start + int(view["byteLength"])]).decode("utf-8"))
+
+
+def _bundle_manifest(*, assembly: bool) -> dict[str, object]:
+    manifest: dict[str, object] = {
+        "cadPath": "tmp/sample",
+        "stepPath": "tmp/sample.step",
+        "stepHash": "hash-123",
+        "sourceKind": "step",
+        "sourcePath": "tmp/sample.step",
+        "bbox": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]},
+        "stats": {"occurrenceCount": 3, "leafOccurrenceCount": 2},
+    }
+    if assembly:
+        manifest["assembly"] = {"id": "o1"}
+    return manifest
+
+
+class GlbSelectorManifestEntryKindTests(unittest.TestCase):
+    # The selector manifest drops the "assembly" tree, so without its own
+    # entryKind a selector-profile read fell back to reporting "part".
+    def _write_step_topology(self, manifest: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+        builder = _GlbBuilder()
+        builder.add_step_topology(SelectorBundle(manifest=manifest), include_selector_topology=True)
+        extension = builder.json["extensions"][STEP_TOPOLOGY_EXTENSION]
+        return extension, _decode_view(builder, extension["selectorView"])
+
+    def test_assembly_manifest_stamps_selector_entry_kind(self) -> None:
+        extension, selector_manifest = self._write_step_topology(_bundle_manifest(assembly=True))
+
+        self.assertEqual("assembly", extension["entryKind"])
+        self.assertEqual("assembly", selector_manifest["entryKind"])
+        self.assertNotIn("assembly", selector_manifest)
+
+    def test_part_manifest_stamps_selector_entry_kind(self) -> None:
+        extension, selector_manifest = self._write_step_topology(_bundle_manifest(assembly=False))
+
+        self.assertEqual("part", extension["entryKind"])
+        self.assertEqual("part", selector_manifest["entryKind"])
 
 
 if __name__ == "__main__":

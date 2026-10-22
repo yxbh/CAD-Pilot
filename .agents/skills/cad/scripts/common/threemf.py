@@ -13,6 +13,7 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
 
+from common.atomic_replace import replacing
 from common.render import REPO_ROOT, part_3mf_path
 from common.step_scene import ColorRGBA, LoadedStepScene, OccurrenceNode, _shape_hash, occurrence_selector_id
 
@@ -21,7 +22,8 @@ CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 MODEL_REL_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
-DEFAULT_MATERIAL: ColorRGBA = (0.9568627451, 0.9568627451, 0.9607843137, 1.0)
+# Colours here are linear RGB, as the scene and GLB hold them; this is #F4F4F5.
+DEFAULT_MATERIAL: ColorRGBA = (0.9046611744, 0.9046611744, 0.9130986518, 1.0)
 MATERIAL_RESOURCE_ID = "1"
 
 ET.register_namespace("", CORE_NS)
@@ -42,7 +44,13 @@ class _MaterialRegistry:
 
     @staticmethod
     def color_key(color: ColorRGBA) -> tuple[int, int, int, int]:
-        return tuple(max(0, min(255, int(round(channel * 255.0)))) for channel in _normalize_rgba(color))
+        red, green, blue, alpha = _normalize_rgba(color)
+        return (
+            _srgb_byte_from_linear(red),
+            _srgb_byte_from_linear(green),
+            _srgb_byte_from_linear(blue),
+            _byte_from_unit_channel(alpha),
+        )
 
     def index(self, color: ColorRGBA, *, name: str | None = None) -> int:
         normalized = _normalize_rgba(color)
@@ -104,6 +112,19 @@ def _normalize_rgba(color: ColorRGBA | tuple[float, float, float] | None) -> Col
         max(0.0, min(1.0, float(blue))),
         max(0.0, min(1.0, float(alpha))),
     )
+
+
+def _byte_from_unit_channel(channel: float) -> int:
+    return max(0, min(255, int(round(channel * 255.0))))
+
+
+def _srgb_byte_from_linear(channel: float) -> int:
+    # 3MF displaycolor is sRGB; scene colours are linear.
+    if channel <= 0.0031308:
+        encoded = 12.92 * channel
+    else:
+        encoded = 1.055 * math.pow(channel, 1.0 / 2.4) - 0.055
+    return _byte_from_unit_channel(encoded)
 
 
 def _display_color(color: ColorRGBA) -> str:
@@ -515,13 +536,13 @@ def _relationships_xml() -> bytes:
 
 
 def _write_package(target_path: Path, model_xml: bytes) -> Path:
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as package:
-        package.writestr("[Content_Types].xml", _content_types_xml())
-        package.writestr("_rels/.rels", _relationships_xml())
-        package.writestr("3D/3dmodel.model", model_xml)
-    if not target_path.exists() or target_path.stat().st_size <= 0:
-        raise RuntimeError(f"Failed to write 3MF output: {_display_path(target_path)}")
+    with replacing(target_path) as temp_path:
+        with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as package:
+            package.writestr("[Content_Types].xml", _content_types_xml())
+            package.writestr("_rels/.rels", _relationships_xml())
+            package.writestr("3D/3dmodel.model", model_xml)
+        if not temp_path.exists() or temp_path.stat().st_size <= 0:
+            raise RuntimeError(f"Failed to write 3MF output: {_display_path(target_path)}")
     return target_path
 
 

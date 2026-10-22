@@ -71,7 +71,10 @@ def normalize_cad_path(raw_cad_path: str) -> str | None:
 
 
 def parse_selector(raw_selector: str, *, inherited_occurrence_id: str = "") -> ParsedSelector | None:
-    selector = str(raw_selector or "").strip().replace("#", "", 1)
+    # Only a leading "#" is the token marker; a later one is selector text.
+    selector = str(raw_selector or "").strip()
+    if selector.startswith("#"):
+        selector = selector[1:]
     if not selector:
         return None
 
