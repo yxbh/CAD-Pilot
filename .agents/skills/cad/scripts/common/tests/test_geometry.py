@@ -292,28 +292,36 @@ class GeometryDiagnosticsTests(unittest.TestCase):
             with self.assertRaisesRegex(GeometryError, "without diagnostics"):
                 self_intersections(self.box)
 
-    def test_self_intersection_check_runs_the_kernel_once(self):
-        # BRepAlgoAPI_Check(shape, bTestSE, bTestSI) performs the check in its
-        # constructor; a further Perform() repeats the whole boolean analysis.
+    def test_self_intersection_check_runs_the_kernel_once_in_parallel(self):
+        # BRepAlgoAPI_Check(shape, bTestSE, bTestSI) performs the check serially
+        # in its constructor, and a further Perform() repeats the whole boolean
+        # analysis. An empty checker given the data performs once, in parallel.
         from OCP.BRepAlgoAPI import BRepAlgoAPI_Check as real_check
-        performs = []
+        performs, constructed = [], []
 
         class Counted:
             def __init__(self, *args):
+                constructed.append(args)
                 self._checker = real_check(*args)
 
             def Perform(self, *args):
-                performs.append(args)
+                performs.append(self._checker.RunParallel())
                 return self._checker.Perform(*args)
 
             def __getattr__(self, name):
                 return getattr(self._checker, name)
 
-        with mock.patch("OCP.BRepAlgoAPI.BRepAlgoAPI_Check", Counted):
-            issues = self_intersections(_overlapping_boxes())
-        self.assertEqual(performs, [])
-        self.assertTrue(issues)
-        self.assertTrue(all(i.code == "BOPAlgo_SelfIntersect" and i.entities for i in issues))
+        def counted(check):
+            constructed.clear()
+            performs.clear()
+            with mock.patch("OCP.BRepAlgoAPI.BRepAlgoAPI_Check", Counted):
+                result = check(_overlapping_boxes())
+            self.assertEqual(constructed, [()])
+            self.assertEqual(performs, [True])
+            return result
+
+        self.assertTrue(counted(self_intersections))
+        self.assertIs(counted(is_sound), False)
 
 
 class IsSoundTests(unittest.TestCase):

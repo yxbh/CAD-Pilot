@@ -46,6 +46,13 @@ class StepCliTests(unittest.TestCase):
 
         self.assertTrue(generate.call_args.kwargs["verbose"])
 
+    def test_checks_solids_unless_told_not_to(self) -> None:
+        with mock.patch.object(cli, "generate_step_targets", return_value=0) as generate:
+            cli.main(["parts/sample.py"])
+            self.assertTrue(generate.call_args.kwargs["check_solids"])
+            cli.main(["parts/sample.py", "--no-solid-check"])
+            self.assertFalse(generate.call_args.kwargs["check_solids"])
+
     def test_passes_output_flag(self) -> None:
         with mock.patch.object(cli, "generate_step_targets", return_value=0) as generate:
             self.assertEqual(0, cli.main(["parts/sample.py", "-o", "STEP/sample.step"]))
@@ -109,6 +116,7 @@ class StepCliTests(unittest.TestCase):
         self.assertIn("--output", help_text)
         self.assertIn("--mesh-tolerance", help_text)
         self.assertIn("--verbose", help_text)
+        self.assertIn("--no-solid-check", help_text)
 
 
 if __name__ == "__main__":

@@ -218,6 +218,22 @@ def overlap_volume(a: Solid, b: Solid) -> float:
         raise GeometryError(f"intersection computation failed: {exc}") from exc
 
 
+def _argument_check(shape, *, small_edges: bool):
+    """A performed ``BRepAlgoAPI_Check``, run once on the kernel's worker threads.
+
+    The constructor that takes a shape performs the check serially; setting
+    the data on an empty checker instead lets it run in parallel, which is
+    several times faster on parts with many faces.
+    """
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Check
+
+    checker = BRepAlgoAPI_Check()
+    checker.SetData(shape, small_edges, True)
+    checker.SetRunParallel(True)
+    checker.Perform()
+    return checker
+
+
 def _verdict_input(shape):
     """The native shape a pass/fail verdict is about, or None for a null shape.
 
@@ -242,23 +258,36 @@ def is_sound(shape: Shape) -> bool:
     ``GeometryError``. Closure, solid count and signed volume are separate
     questions; the faulty entities are ``self_intersections``'s.
     """
-    from OCP.BOPAlgo import BOPAlgo_CheckStatus
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Check
-
     wrapped = _verdict_input(shape)
     if wrapped is None:
         return False  # BRepAlgoAPI_Check on a null shape: BOPAlgo_BadType
+    return not _argument_faults(wrapped)
+
+
+def _argument_faults(wrapped) -> tuple[str, ...]:
+    """``is_sound``'s check of a native shape, from one run of the kernel.
+
+    Returns the status name of each fault the kernel reports, such as
+    ``BOPAlgo_SelfIntersect`` once per crossing pair, ``BOPAlgo_TooSmallEdge``
+    or ``BOPAlgo_NotValid``; empty when the shape is sound. It needs no
+    build123d wrapper, so a worker process can check shapes read from a STEP
+    file without importing build123d.
+    """
+    from OCP.BOPAlgo import BOPAlgo_CheckStatus
+
     inconclusive = (BOPAlgo_CheckStatus.BOPAlgo_CheckUnknown, BOPAlgo_CheckStatus.BOPAlgo_OperationAborted)
     try:
-        # The constructor performs the check (self-intersections and small
-        # edges both on, the kernel's defaults); Perform() would run it again.
-        checker = BRepAlgoAPI_Check(wrapped)
+        # Self-intersections and small edges both on, the kernel's defaults.
+        checker = _argument_check(wrapped, small_edges=True)
         if checker.HasErrors():
             raise GeometryError("boolean argument checker failed")
-        for result in _items(checker.Result()):
-            if result.GetCheckStatus() in inconclusive:
-                raise GeometryError(f"boolean argument check was inconclusive: {result.GetCheckStatus().name}")
-        return bool(checker.IsValid())
+        statuses = [result.GetCheckStatus() for result in _items(checker.Result())]
+        for status in statuses:
+            if status in inconclusive:
+                raise GeometryError(f"boolean argument check was inconclusive: {status.name}")
+        if checker.IsValid():
+            return ()
+        return tuple(status.name for status in statuses) or ("invalid",)
     except GeometryError:
         raise
     except Exception as exc:
@@ -393,13 +422,11 @@ def self_intersections(shape: Shape) -> tuple[GeometryIssue, ...]:
     entities are owned copies. Inconclusive/failed checks raise an exception.
     """
     from OCP.BOPAlgo import BOPAlgo_CheckStatus
-    from OCP.BRepAlgoAPI import BRepAlgoAPI_Check
 
     wrapped = _wrapped(shape)
     try:
         private = _copy(wrapped)
-        # This constructor performs the check; Perform() would run it again.
-        checker = BRepAlgoAPI_Check(private, False, True)
+        checker = _argument_check(private, small_edges=False)
         if checker.HasErrors():
             raise GeometryError("self-intersection checker failed")
         issues = []

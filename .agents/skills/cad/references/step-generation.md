@@ -53,6 +53,14 @@ Direct targets can use sidecar mesh flags, but generator targets remain preferre
 
 Use `rendering-and-explorer.md` to show the generated STEP in the maintained CAD Explorer.
 
+## Solid checks
+
+`scripts/step` checks the solids of each generated part and prints a warning naming the part, and its source file, when it finds a problem: faces that do not enclose a volume, an open shell, an inside-out solid, or a solid the boolean kernel's argument check rejects (`common.geometry.is_sound`), with the number of self-intersections. The STEP, hidden GLB and requested STL/3MF are still written; the warnings are not a gate. A self-intersecting solid's STL and 3MF cannot be guaranteed closed, and later booleans or slicers can fail on it, so repair it as `repair-loop.md` describes before printing.
+
+The kernel check runs in a separate process while the meshes are exported, once per unique solid, so placed copies share a check. When the kernel cannot finish on the solid as modelled, it retries the solid as read back from the written STEP, and a fault found only there is reported as such. Most parts add well under a second, but the kernel can take seconds on large spline-heavy parts and minutes on a few shapes, such as a swept coil whose turns overlap, so each solid gets 10 s and each generated part 30 s in all. A solid that runs out of time, or that the kernel cannot finish even on the read-back, is reported in a `notice: could not check` line; treat it as unverified, not as sound. Pass `--no-solid-check` to skip the check.
+
+Assemblies that only place other STEP files are not checked again: each generated part is checked when its own source is generated, and direct STEP/STP targets, such as vendor parts, are not checked.
+
 ## Post-generation inspection
 
 Run lightweight inspection after generation with `scripts/inspect`.
@@ -89,6 +97,7 @@ Before running the command:
 After running the command:
 
 - Confirm the process succeeded.
+- Read any warnings and notices; treat a solid warning as a defect to repair, and a `could not check` notice as an unverified part.
 - Confirm the STEP file exists and is non-empty.
 - Run the relevant `scripts/inspect` command and parse its output.
 - Show the STEP in CAD Explorer using `rendering-and-explorer.md`, or report why it is unavailable. After a visible geometry change, capture and look at it yourself as its Self-review section describes.

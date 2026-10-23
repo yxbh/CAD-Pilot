@@ -600,7 +600,7 @@ class CadGenerationTests(unittest.TestCase):
         second_path = self._write_step("second")
         calls: list[str] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             self.assertIn(spec.step_path.resolve(), entries_by_step_path)
             calls.append(spec.cad_ref)
 
@@ -617,7 +617,7 @@ class CadGenerationTests(unittest.TestCase):
         output_path = self.temp_root / "custom" / "flat-output.step"
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None):
+        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None, **_):
             self.assertIn(output_path.resolve(), entries_by_step_path)
             self.assertIsNotNone(preloaded_scene)
             self.assertEqual(output_path.resolve(), preloaded_scene.step_path)
@@ -647,7 +647,7 @@ class CadGenerationTests(unittest.TestCase):
         output_path = self.temp_root / "custom" / "flat-output.step"
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None):
+        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_part_outputs", side_effect=fake_generate):
@@ -690,7 +690,7 @@ class CadGenerationTests(unittest.TestCase):
         )
         calls: list[str] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             self.assertNotIn(assembly_path.with_suffix(".step").resolve(), entries_by_step_path)
             calls.append(spec.cad_ref)
 
@@ -713,7 +713,7 @@ class CadGenerationTests(unittest.TestCase):
         )
         calls: list[str] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec.kind)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -819,7 +819,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("source")
         calls: list[Path | None] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec.stl_path)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -837,7 +837,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("source")
         calls: list[Path | None] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec.three_mf_path)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -855,7 +855,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("source")
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -871,7 +871,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("source")
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -907,7 +907,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("source")
         calls: list[Path | None] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec.stl_path)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -935,7 +935,7 @@ class CadGenerationTests(unittest.TestCase):
         script_path = self._generator_script("generated")
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -960,7 +960,7 @@ class CadGenerationTests(unittest.TestCase):
         script_path = self._generator_script("generated")
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
@@ -1090,7 +1090,7 @@ class CadGenerationTests(unittest.TestCase):
         step_path = self._write_step("imported-heavy")
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=fake_generate):
