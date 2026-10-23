@@ -258,21 +258,36 @@ def is_sound(shape: Shape) -> bool:
     ``GeometryError``. Closure, solid count and signed volume are separate
     questions; the faulty entities are ``self_intersections``'s.
     """
-    from OCP.BOPAlgo import BOPAlgo_CheckStatus
-
     wrapped = _verdict_input(shape)
     if wrapped is None:
         return False  # BRepAlgoAPI_Check on a null shape: BOPAlgo_BadType
+    return not _argument_faults(wrapped)
+
+
+def _argument_faults(wrapped) -> tuple[str, ...]:
+    """``is_sound``'s check of a native shape, from one run of the kernel.
+
+    Returns the status name of each fault the kernel reports, such as
+    ``BOPAlgo_SelfIntersect`` once per crossing pair, ``BOPAlgo_TooSmallEdge``
+    or ``BOPAlgo_NotValid``; empty when the shape is sound. It needs no
+    build123d wrapper, so a worker process can check shapes read from a STEP
+    file without importing build123d.
+    """
+    from OCP.BOPAlgo import BOPAlgo_CheckStatus
+
     inconclusive = (BOPAlgo_CheckStatus.BOPAlgo_CheckUnknown, BOPAlgo_CheckStatus.BOPAlgo_OperationAborted)
     try:
         # Self-intersections and small edges both on, the kernel's defaults.
         checker = _argument_check(wrapped, small_edges=True)
         if checker.HasErrors():
             raise GeometryError("boolean argument checker failed")
-        for result in _items(checker.Result()):
-            if result.GetCheckStatus() in inconclusive:
-                raise GeometryError(f"boolean argument check was inconclusive: {result.GetCheckStatus().name}")
-        return bool(checker.IsValid())
+        statuses = [result.GetCheckStatus() for result in _items(checker.Result())]
+        for status in statuses:
+            if status in inconclusive:
+                raise GeometryError(f"boolean argument check was inconclusive: {status.name}")
+        if checker.IsValid():
+            return ()
+        return tuple(status.name for status in statuses) or ("invalid",)
     except GeometryError:
         raise
     except Exception as exc:

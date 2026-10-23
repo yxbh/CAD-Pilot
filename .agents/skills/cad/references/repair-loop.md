@@ -1,6 +1,6 @@
 # Repair loop
 
-Read this file when generation, export, inspection, positioning, Explorer viewing or capture, or documentation validation fails, or when `scripts/step` warns that a part is not a sound solid.
+Read this file when generation, export, inspection, positioning, Explorer viewing or capture, or documentation validation fails, or when `scripts/step` warns about a part's solid.
 
 ## Loop
 
@@ -65,6 +65,22 @@ Fix:
 - for a sweep, compare the profile's reach on the inside of each bend with the path's tightest bend radius; on a planar path, a sketch on `path ^ 0` puts its local X, the first dimension of a `Rectangle`, in the bend plane
 - ease the tightest bend of the path, or turn or reshape the profile so its inner side stays within the bend radius; changing a specified dimension is a design decision, so report the limit and ask
 - regenerate and confirm the warning is gone before exporting meshes for printing
+
+### Open or inside-out solid
+
+`scripts/step` warns that a part `is not a closed solid` (faces that do not enclose a volume, or an open shell) or `is inside out` (a solid whose faces point inward, so its volume is negative).
+
+Likely causes:
+
+- a face, shell or sketch returned where a solid was intended
+- faces assembled into a shell by hand without closing it
+- a solid built from reversed faces, or reversed after construction
+
+Fix:
+
+- return the solid from the builder (`part.part`, an extrusion or a revolve), not its faces or sketch
+- check `.solids()`, `is_valid` and the sign of `.volume` on the returned shape and its intermediates
+- rebuild the feature from a closed profile rather than reversing or patching faces
 
 ### Fillet or chamfer failure
 

@@ -38,7 +38,7 @@ from common.catalog import (
     source_from_path,
 )
 from common.cli_logging import CliLogger
-from common.geometry import GeometryError, is_sound, self_intersections
+from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
 from common.glb import read_step_topology_manifest_from_glb
 from common.metadata import (
@@ -1061,6 +1061,7 @@ def _generate_step_outputs(
     *,
     entries_by_step_path: dict[Path, EntrySpec],
     logger: CliLogger | None = None,
+    check_solids: bool = True,
 ) -> GeneratedStepResult:
     preloaded_scene: LoadedStepScene | None = None
     if spec.source == "generated":
@@ -1071,57 +1072,87 @@ def _generate_step_outputs(
     }
     if logger is not None:
         output_kwargs["logger"] = logger
-    result = _generate_part_outputs(spec, **output_kwargs)
-    if preloaded_scene is not None:
-        _warn_unsound_solids(spec, preloaded_scene, logger=logger or CliLogger("cad"))
+    # Assemblies only place other STEP files: generated parts are checked when
+    # their own source is generated, and imported STEP files are not checked.
+    findings: list[str] = []
+    kernel_check: KernelCheck | None = None
+    if check_solids and preloaded_scene is not None and spec.kind == "part":
+        try:
+            findings = cheap_findings(preloaded_scene, spec.source_ref)
+            kernel_check = KernelCheck(spec.step_path, preloaded_scene, spec.source_ref)
+        except Exception as exc:  # a check that cannot start must not stop generation
+            (logger or CliLogger("cad")).info(f"notice: could not check the solids in {spec.source_ref}: {exc}.")
+    try:
+        result = _generate_part_outputs(spec, **output_kwargs)
+    except BaseException:
+        if kernel_check is not None:
+            kernel_check.cancel()
+        raise
+    if findings or kernel_check is not None:
+        _report_solid_checks(spec, findings, kernel_check, logger=logger or CliLogger("cad"))
     return result
 
 
-def _warn_unsound_solids(spec: EntrySpec, scene: LoadedStepScene, *, logger: CliLogger) -> None:
-    """Warn about generated solids that the boolean kernel's argument check rejects.
+_UNSOUND_CONSEQUENCE = "Slicers and later booleans may fail on it; the outputs were still written."
+_SKIP_HINT = "Pass --no-solid-check to skip the check."
 
-    A warning, not a gate: it runs after the outputs are written. Each unique
-    solid is checked once, however many times an assembly places it. A check
-    the kernel cannot complete (for example, a face pair it fails to
-    intersect) is no verdict, so it is only reported in verbose output.
+
+def _unsound_reason(faults: Sequence[str]) -> str:
+    crossings = sum(1 for fault in faults if fault == "BOPAlgo_SelfIntersect")
+    if crossings:
+        return (
+            f"{crossings} self-intersection{'' if crossings == 1 else 's'}, "
+            "where its surfaces cross or fold through each other"
+        )
+    if "BOPAlgo_NotValid" in faults:
+        return "its topology is invalid"
+    if "BOPAlgo_TooSmallEdge" in faults:
+        return "it has edges too small for the boolean kernel"
+    return f"the boolean kernel rejects it ({', '.join(sorted(set(faults)))})"
+
+
+def _report_solid_checks(
+    spec: EntrySpec,
+    findings: Sequence[str],
+    kernel_check: KernelCheck | None,
+    *,
+    logger: CliLogger,
+) -> None:
+    """Warn about generated solids that are open, inside out or rejected by the boolean kernel.
+
+    A warning, not a gate: it is reported after the outputs are written. A
+    part the kernel cannot finish checking, or not within its time budget, is
+    reported as unchecked.
     """
-    from build123d import Solid
-    from OCP.TopAbs import TopAbs_SOLID
-    from OCP.TopExp import TopExp
-    from OCP.TopoDS import TopoDS
-    from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
-
+    for finding in findings:
+        logger.warning(f"{finding}. {_UNSOUND_CONSEQUENCE}")
+    if kernel_check is None:
+        return
     with logger.timed(f"check solids {spec.source_ref}"):
-        for key, shape in scene.prototype_shapes.items():
-            solid_map = IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
-            TopExp.MapShapes_s(shape, TopAbs_SOLID, solid_map)
-            name = scene.prototype_names.get(key) or spec.cad_ref
-            for index in range(1, solid_map.Extent() + 1):
-                label = f'part "{name}"'
-                if solid_map.Extent() > 1:
-                    label += f" (solid {index} of {solid_map.Extent()})"
-                solid = Solid(TopoDS.Solid(solid_map.FindKey(index)))
-                try:
-                    if is_sound(solid):
-                        continue
-                except GeometryError as exc:
-                    logger.debug(f"could not check whether {label} is a sound solid: {exc}")
-                    continue
-                try:
-                    crossings = len(self_intersections(solid))
-                except (GeometryError, ValueError):
-                    crossings = 0  # e.g. invalid topology, which the kernel will not intersect
-                if crossings:
-                    reason = (
-                        f"{crossings} self-intersection{'' if crossings == 1 else 's'}, "
-                        "where its surfaces cross or fold through each other"
-                    )
-                else:
-                    reason = "the boolean kernel rejects its topology or edges"
-                logger.warning(
-                    f"{label} is not a sound solid: {reason}. "
-                    "Slicers and later booleans may fail on it; the outputs were still written."
-                )
+        report = kernel_check.report()
+    for solid in report.solids:
+        if solid.verdict == "unsound":
+            where = " as read back from its STEP" if solid.from_step else ""
+            logger.warning(
+                f"{solid.label} is not a sound solid{where}: {_unsound_reason(solid.faults)}. {_UNSOUND_CONSEQUENCE}"
+            )
+        elif solid.verdict == "inconclusive":
+            logger.info(f"notice: could not check whether {solid.label} is a sound solid: the boolean kernel could not finish.")
+            logger.debug(f"{solid.label}: {solid.detail}")
+        elif solid.verdict == "timeout":
+            logger.info(
+                f"notice: could not check whether {solid.label} is a sound solid within {kernel_check.part_budget:g} s. "
+                f"{_SKIP_HINT}"
+            )
+    if report.failure is not None:
+        logger.info(f"notice: could not check the solids in {spec.source_ref}: {report.failure}.")
+    elif report.unchecked:
+        what = "solid was" if report.unchecked == 1 else "solids were"
+        logger.info(
+            f"notice: {report.unchecked} {what} not checked in {spec.source_ref} within {kernel_check.total_budget:g} s. "
+            f"{_SKIP_HINT}"
+        )
+    logger.debug(f"checked {len(report.solids)} solid(s) in {spec.source_ref}")
 
 
 def _generate_step_outputs_for_cli(
@@ -1129,10 +1160,14 @@ def _generate_step_outputs_for_cli(
     *,
     entries_by_step_path: dict[Path, EntrySpec],
     logger: CliLogger,
+    check_solids: bool = True,
 ) -> GeneratedStepResult:
-    if logger.verbose:
-        return _generate_step_outputs(spec, entries_by_step_path=entries_by_step_path, logger=logger)
-    return _generate_step_outputs(spec, entries_by_step_path=entries_by_step_path)
+    return _generate_step_outputs(
+        spec,
+        entries_by_step_path=entries_by_step_path,
+        logger=logger,
+        check_solids=check_solids,
+    )
 
 
 def _selected_specs_for_targets(
@@ -1337,6 +1372,7 @@ def generate_step_targets(
     step_options: StepImportOptions | None = None,
     output: str | Path | None = None,
     verbose: bool = False,
+    check_solids: bool = True,
 ) -> int:
     tool_name = "scripts/step"
     if direct_step_kind is not None and direct_step_kind not in {"part", "assembly"}:
@@ -1370,6 +1406,7 @@ def generate_step_targets(
             spec,
             entries_by_step_path=entries_by_step_path,
             logger=logger,
+            check_solids=check_solids,
         ),
         logger=logger,
     )

@@ -58,7 +58,7 @@ CURVED_WALL = textwrap.dedent(
 # A revolved bowl hollowed to an open rim, every edge filleted, and a handle
 # swept from a rounded rectangle. The profile's 6 mm side lies in the bend
 # plane, so its inner side runs 3 mm from the path; the handle's tightest bend
-# has a radius of about 4.3 mm.
+# has a radius of about 4.9 mm, and both of its ends are set into the wall.
 TEACUP = textwrap.dedent(
     """\
     import build123d as bd
@@ -77,21 +77,22 @@ TEACUP = textwrap.dedent(
             bd.offset(amount=-WALL, openings=cup.faces().sort_by(bd.Axis.Z)[-1])
             bd.fillet(cup.edges(), radius=WALL * 0.45)
             with bd.BuildLine(bd.Plane.XZ) as path:
-                bd.Spline({handle}, tangents=((1, 0.2), (-1, 0.1)))
+                bd.Spline({handle})
             with bd.BuildSketch(path.line ^ 0):
                 bd.RectangleRounded(WALL * 2.4, 9, WALL * 0.6)
             bd.sweep()
         return cup.part
     """
 )
-SOUND_HANDLE = "(38, 18), (64, 26), (68, 50), (42, 64)"
+SOUND_HANDLE = "(33.2, 18), (64, 26), (68, 50), (42, 64), tangents=((1, -0.35), (-1, 0.1))"
 # The same cup with a handle whose top bends around a radius of about 2.7 mm,
 # less than the profile's 3 mm inner offset: the inner side of the sweep folds
 # back through itself. The kernel accepts the faces one by one, but the solid
 # self-intersects, and its mesh nodes on either side of the fold land within
 # rounding distance of each other.
-FOLDED_HANDLE = "(38, 22), (62, 30), (64, 52), (42, 60)"
-UNSOUND_WARNING = 'part "{name}" is not a sound solid'
+FOLDED_HANDLE = "(38, 22), (62, 30), (64, 52), (42, 60), tangents=((1, 0.2), (-1, 0.1))"
+# What scripts/step prints about a solid it cannot vouch for.
+SOLID_PROBLEMS = ("not a sound solid", "not a closed solid", "inside out", "could not check")
 
 FIXTURES = {
     "plate_10": (PLATE.format(x=10.0), ()),
@@ -149,7 +150,7 @@ class MeshExportManifoldTests(unittest.TestCase):
             source, options = FIXTURES[name]
             (cls.project / f"{name}.py").write_text(source, encoding="utf-8")
             return subprocess.run(
-                [sys.executable, str(SCRIPTS_ROOT / "step"), f"{name}.py", "--stl", f"{name}.stl", "--3mf", f"{name}.3mf", *options],
+                [sys.executable, str(SCRIPTS_ROOT / "step"), f"{name}.py", "--stl", f"{name}.stl", "--3mf", f"{name}.3mf", "--verbose", *options],
                 cwd=cls.project,
                 capture_output=True,
                 text=True,
@@ -193,6 +194,9 @@ class MeshExportManifoldTests(unittest.TestCase):
     def assertExportsManifold(self, name: str) -> None:
         self.assertExported(name)
         self.assertMeshesManifold(name)
+        output = self.runs[name].stderr
+        self.assertIn(f"checked 1 solid(s) in {name}.py", output, "the solid check ran")
+        self.assertEqual([], [line for line in output.splitlines() if any(problem in line for problem in SOLID_PROBLEMS)])
 
     def test_plate_with_one_hole(self) -> None:
         for name in ("plate_10", "plate_20", "plate_10_fine"):
@@ -208,13 +212,12 @@ class MeshExportManifoldTests(unittest.TestCase):
         for name in ("teacup", "teacup_fine"):
             with self.subTest(name=name):
                 self.assertExportsManifold(name)
-                self.assertNotIn(UNSOUND_WARNING.format(name=name), self.runs[name].stderr)
 
     def test_folded_handle_is_reported_but_still_exported(self) -> None:
         self.assertExported("teacup_folded")
         self.assertRegex(
             self.runs["teacup_folded"].stderr,
-            UNSOUND_WARNING.format(name="teacup_folded") + r": \d+ self-intersections?, where its surfaces cross or fold",
+            r"warning: teacup_folded\.py is not a sound solid: \d+ self-intersections?, where its surfaces cross or fold",
         )
 
 

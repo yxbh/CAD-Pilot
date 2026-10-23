@@ -61,6 +61,12 @@ def _add_step_arguments(parser: argparse.ArgumentParser) -> None:
         help="Positive shared mesh angular deflection for GLB, topology, STL, and 3MF artifacts.",
     )
     parser.add_argument(
+        "--no-solid-check",
+        dest="check_solids",
+        action="store_false",
+        help="Skip checking generated solids for self-intersections, open shells and inside-out faces.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Show detailed progress and timing information.",
@@ -104,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         step_options=_step_import_options_from_args(args, parser=parser),
         output=args.output,
         verbose=bool(args.verbose),
+        check_solids=bool(args.check_solids),
     )
 
 
