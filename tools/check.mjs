@@ -28,12 +28,14 @@ if (job) {
   console.log(`Share ${share}: about ${Math.round(python)} s of Python tests, ${Math.round(core)} s of Explorer tests and ${Math.round(browser)} s of browser scenarios on a CI runner`);
   console.log(`  Python: ${job.python.join(" ") || "none"}\n  Explorer: ${[...job.core, ...job.browser].join(" ") || "none"}`);
 }
-// The Python environment is synced once (inexactly, like `uv run`) before the suites that use it start together;
-// the Explorer is built once before its suites, which then must not rebuild into the same folder. conftest.py keeps
-// a class with setUpClass on one pytest worker and spreads every other test. Every test stage also records its test
-// files' times beside the logs, where tools/durations.mjs reads them from a CI run.
+// The Python environment is synced once (inexactly, like `uv run`) before the suites that use it start together, and
+// its bytecode compiled then, while the Explorer builds: otherwise the suites' first processes each compile the same
+// CAD libraries at once, several seconds apiece on a fresh CI runner. The Explorer is built once before its suites,
+// which then must not rebuild into the same folder. conftest.py keeps a class with setUpClass on one pytest worker and
+// spreads every other test. Every test stage also records its test files' times beside the logs, where
+// tools/durations.mjs reads them from a CI run.
 const durations = (name) => path.join(logs, `${name.replace(/\W+/g, "-")}.durations.json`);
-const env = { name: "python env", command: "uv", args: ["sync", "--inexact"] };
+const env = { name: "python env", command: "uv", args: ["sync", "--inexact", "--compile-bytecode"] };
 const build = { name: "explorer build", command: node, args: ["explorer/scripts/build.mjs"] };
 const explorer = (name, ...files) => ({
   name, command: node, needs: [env.name, build.name],
