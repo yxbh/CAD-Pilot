@@ -31,8 +31,23 @@ export async function findChromium({ env = process.env, platform = process.platf
 
 // Hardware WebGL where the platform's ANGLE backend is dependable; software WebGL is the fallback when it is not.
 const gpuFlags = { darwin: ["--use-angle=metal"], win32: ["--use-angle=d3d11"] };
-const softwareFlags = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
+const softwareFlags = ["--use-angle=swiftshader"];
+// Every launch also lets Chromium switch to software WebGL by itself when it finds no usable GPU (CI runners, remote
+// desktops), as Playwright launches it. The flag is "unsafe" for untrusted pages; this browser only loads the viewer's own.
+const commonFlags = [
+  "--headless", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+  "--mute-audio", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1280,800",
+  "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--enable-unsafe-swiftshader",
+];
+// Playwright's headless shell has no setuid sandbox helper, so on Linux its sandbox needs unprivileged user namespaces,
+// which Ubuntu 23.10+ restricts through AppArmor ("No usable sandbox!"). There it runs without the sandbox, as Playwright
+// launches it by default everywhere: it only ever loads the viewer's own tokened page on 127.0.0.1.
+const sandboxFlags = { linux: ["--no-sandbox"] };
 const profilePrefix = "cad-explorer-renderer-";
+
+// Windows can hold a browser's files for a moment after it exits (its helper processes end a little later), so a
+// profile's removal retries with a growing delay.
+const removeProfile = (profile) => rm(profile, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 }).catch(() => {});
 
 // A viewer killed outright cannot remove its renderer's profile; the next renderer removes profiles whose owner is gone.
 export async function sweepProfiles(root = os.tmpdir(), alive = (pid) => {
@@ -40,7 +55,7 @@ export async function sweepProfiles(root = os.tmpdir(), alive = (pid) => {
 }) {
   for (const name of (await readdir(root).catch(() => [])).filter((entry) => entry.startsWith(profilePrefix))) {
     const owner = Number(await readFile(path.join(root, name, "owner"), "utf8").catch(() => ""));
-    if (Number.isInteger(owner) && owner > 0 && !alive(owner)) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+    if (Number.isInteger(owner) && owner > 0 && !alive(owner)) await removeProfile(path.join(root, name));
   }
 }
 
@@ -49,6 +64,12 @@ function devtools(browser) {
   const pending = new Map();
   let buffer = "";
   let next = 0;
+  // A browser that crashes can reset its pipes; that fails the commands in flight, not this process.
+  const broken = (error) => {
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  };
+  for (const stream of browser.stdio.slice(2)) stream?.on("error", broken);
   browser.stdio[4].on("data", (chunk) => {
     buffer += chunk.toString("utf8");
     for (let end = buffer.indexOf("\0"); end >= 0; end = buffer.indexOf("\0")) {
@@ -84,13 +105,17 @@ function stopReason(code, signal, stderr) {
  * blank page and opens the viewer over its debugging pipe, so the capability URL never appears in its command line,
  * and it exits by itself when this process ends, however it ends. Each browser has its own temporary profile.
  */
-export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_000, find = findChromium, launch = spawn, onExit = () => {}, tmp = os.tmpdir() }) {
+export function createHeadlessRenderer({
+  url, log = () => {}, idleMs = 2 * 60_000, find = findChromium, launch = spawn, onExit = () => {}, tmp = os.tmpdir(), platform = process.platform,
+}) {
   let child = null;
   let starting = null;
   let stopping = null;
   let software = false;
   let idle = null;
   let closed = false;
+  // Profiles still being removed, including those of browsers that crashed; close() waits for them.
+  const removals = new Set();
 
   const touch = () => {
     clearTimeout(idle);
@@ -100,14 +125,13 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_00
   // An intentional stop: the browser's exit is expected, so it is not reported as a failure.
   async function stop(browser) {
     if (browser.exitCode === null && browser.signalCode === null) {
-      const exited = new Promise((resolve) => browser.once("exit", resolve));
       browser.kill();
       // A browser wedged by its GPU process may ignore the polite signal.
       const force = setTimeout(() => browser.kill("SIGKILL"), 5000);
-      await exited;
+      await browser.exited;
       clearTimeout(force);
     }
-    await rm(browser.profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    await browser.removed;
   }
   function halt() {
     clearTimeout(idle);
@@ -125,17 +149,19 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_00
     await writeFile(path.join(profile, "owner"), String(process.pid));
     let stderr = "";
     const browser = launch(executable, [
-      "--headless", `--user-data-dir=${profile}`, "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
-      "--disable-extensions", "--mute-audio", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1280,800",
-      "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-      ...(software ? softwareFlags : gpuFlags[process.platform] ?? []),
+      ...commonFlags, `--user-data-dir=${profile}`, ...(sandboxFlags[platform] ?? []),
+      ...(software ? softwareFlags : gpuFlags[platform] ?? []),
       "about:blank",
     ], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
-    browser.profile = profile;
+    // A browser that could not be spawned reports an error and never exits.
+    browser.exited = new Promise((resolve) => { browser.once("exit", resolve); browser.once("error", resolve); });
+    browser.removed = browser.exited.then(() => removeProfile(profile));
+    removals.add(browser.removed);
+    void browser.removed.then(() => removals.delete(browser.removed));
+    const send = devtools(browser);
     child = browser;
     browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-8000); });
     browser.once("exit", (code, signal) => {
-      void rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
       if (child !== browser) return;
       child = null;
       const reason = stopReason(code, signal, stderr);
@@ -147,7 +173,7 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_00
         browser.once("spawn", resolve);
         browser.once("error", (error) => reject(new PrototypeError("renderer_failed", `Headless renderer did not start: ${error.message}`, 503)));
       });
-      await devtools(browser)("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
+      await send("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
         throw new PrototypeError("renderer_failed", `Headless renderer did not open the viewer: ${error.message}`, 503);
       });
     } catch (error) {
@@ -186,7 +212,8 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_00
     async close() {
       closed = true;
       if (starting) await starting.catch(() => {});
-      return halt();
+      await halt();
+      await Promise.all(removals);
     },
   };
 }

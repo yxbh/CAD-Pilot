@@ -63,11 +63,16 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
   const tmp = await scratch(t);
   const { launches, launch } = fakeBrowser();
   const exits = [];
-  const renderer = createHeadlessRenderer({ url: "http://127.0.0.1:1/secret-token/", idleMs: 50, find: async () => "/chrome", launch, tmp, onExit: (error) => exits.push(error) });
+  const renderer = createHeadlessRenderer({
+    url: "http://127.0.0.1:1/secret-token/", idleMs: 50, find: async () => "/chrome", launch, tmp, platform: "win32", onExit: (error) => exits.push(error),
+  });
   await Promise.all([renderer.ensure(), renderer.ensure()]);
   assert.equal(launches.length, 1);
   assert.ok(renderer.running);
   assert.ok(launches[0].args.includes("--remote-debugging-pipe"), "Chromium exits with this process through its pipe");
+  // Hardware ANGLE first; Chromium may still switch to software WebGL itself on a machine without a usable GPU.
+  assert.ok(launches[0].args.includes("--use-angle=d3d11") && launches[0].args.includes("--enable-unsafe-swiftshader"));
+  assert.ok(!launches[0].args.includes("--no-sandbox"), "the sandbox stays on where it works");
   // The capability URL is sent over the pipe, never on a command line other local users can read.
   assert.equal(launches[0].args.at(-1), "about:blank");
   assert.ok(launches[0].args.every((arg) => !arg.includes("secret-token")));
@@ -82,10 +87,12 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
   await renderer.ensure();
   assert.equal(await renderer.fallBack(), true);
   assert.equal(launches.length, 3);
-  assert.ok(launches[2].args.includes("--use-angle=swiftshader"));
+  assert.ok(launches[2].args.includes("--use-angle=swiftshader") && !launches[2].args.includes("--use-angle=d3d11"));
   assert.equal(await renderer.fallBack(), false, "software rendering is the last resort");
-  // Page console output is not a reason; the exit signal is.
+  // Page console output is not a reason; the exit signal is. A crashing browser resets its pipes, which must not end this process.
   launches[2].stderr.emit("data", Buffer.from('[1:2:INFO:CONSOLE(7)] "THREE.Clock: This module has been deprecated."\n'));
+  launches[2].stdio[4].destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+  launches[2].stdio[3].destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
   launches[2].signalCode = "SIGKILL";
   launches[2].emit("exit", null, "SIGKILL");
   assert.equal(renderer.running, false);
@@ -97,7 +104,31 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
   launches[0].emit("exit", 1, null);
   assert.match(exits[1].message, /exit code 1: GPU process crashed/);
   await renderer.close();
+  assert.deepEqual(await profiles(tmp), [], "closing waits for a crashed browser's profile to be removed");
   await assert.rejects(renderer.ensure(), { code: "closed" });
+});
+
+test("on Linux the renderer runs without the sandbox, and a browser that resets its pipe fails its start, not the process", async (t) => {
+  const tmp = await scratch(t);
+  const { launches, launch } = fakeBrowser();
+  let reset = false;
+  const resetting = (...args) => {
+    const child = launch(...args);
+    if (reset) child.stdio[3].prependListener("data", () => child.stdio[4].destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" })));
+    return child;
+  };
+  const renderer = createHeadlessRenderer({ url: "http://127.0.0.1:1/t/", find: async () => "/chrome", launch: resetting, tmp, platform: "linux" });
+  await renderer.ensure();
+  assert.ok(launches[0].args.includes("--no-sandbox"));
+  assert.ok(launches[0].args.every((arg) => !arg.startsWith("--use-angle=")), "Linux keeps Chromium's own ANGLE choice");
+  await renderer.fallBack();
+  assert.ok(launches[1].args.includes("--no-sandbox") && launches[1].args.includes("--use-angle=swiftshader"));
+  await renderer.stop();
+  reset = true;
+  await assert.rejects(renderer.ensure(), (error) => error.code === "renderer_failed" && /did not open the viewer: read ECONNRESET/.test(error.message));
+  assert.equal(renderer.running, false);
+  await renderer.close();
+  assert.deepEqual(await profiles(tmp), []);
 });
 
 test("each browser owns its profile: a stop racing a start keeps the new one, and orphaned profiles are swept", async (t) => {

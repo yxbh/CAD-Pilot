@@ -30,9 +30,28 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
   useEffect(() => { applied.current = surface; }, [surface]);
   const lastReport = useRef<RenderReport | null>(null);
   const capture = useRef<(() => ViewCapture) | null>(null);
+  // A graphics failure is reported once: the server answers it by restarting the browser in software rendering.
+  const graphicsReported = useRef(false);
   const fail = useCallback((text: string) => {
-    if (text) void host.reportRenderError(text, graphicsFailure(text)).catch(noop);
+    if (!text) return;
+    const graphics = graphicsFailure(text);
+    if (graphics && graphicsReported.current) return;
+    graphicsReported.current ||= graphics;
+    void host.reportRenderError(text, graphics).catch(noop);
   }, [host]);
+  // three.js fails to create a WebGL context inside react-three-fiber's asynchronous setup, where no error boundary sees
+  // it. Report it, or the server would wait for a frame that never comes instead of retrying in software.
+  useEffect(() => {
+    const report = (reason: unknown) => { const text = message(reason); if (graphicsFailure(text)) fail(text); };
+    const rejected = (event: PromiseRejectionEvent) => report(event.reason);
+    const thrown = (event: ErrorEvent) => report(event.error ?? event.message);
+    window.addEventListener("unhandledrejection", rejected);
+    window.addEventListener("error", thrown);
+    return () => {
+      window.removeEventListener("unhandledrejection", rejected);
+      window.removeEventListener("error", thrown);
+    };
+  }, [fail]);
   const accept = useCallback((incoming: ViewState) => {
     latest.current = newestState(latest.current, incoming);
     setState(latest.current);
