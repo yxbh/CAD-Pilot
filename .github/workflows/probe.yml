@@ -1,0 +1,14 @@
+name: Probe
+on: pull_request
+jobs:
+  probe:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: which node; node --version; echo "$RUNNER_TOOL_CACHE"; ls "$RUNNER_TOOL_CACHE/node" || true; nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo $NUMBER_OF_PROCESSORS
