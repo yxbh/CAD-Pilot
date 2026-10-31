@@ -101,7 +101,8 @@ class BrowserSession:
                 f"State did not settle: {current}; errors={self.errors}; "
                 f"alerts={self.page.get_by_role('alert').all_text_contents()}"
             )
-            self.page.wait_for_timeout(50)
+            # Short polls: most waits are for one rendered frame, so a long interval would add up across a scenario.
+            self.page.wait_for_timeout(10)
 
     def settled(self):
         return self.wait(lambda state: state.get("rendered") and state["rendered"]["revision"] == state["revision"])
