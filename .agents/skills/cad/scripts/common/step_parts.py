@@ -104,6 +104,7 @@ class _Root:
 
 
 def label_pattern(glob: str) -> re.Pattern[str]:
+    """A part name pattern as CAD Explorer reads one everywhere: * and ? are the only wildcards, all else is literal."""
     return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
 
 
