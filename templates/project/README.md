@@ -1,14 +1,8 @@
 # CAD-Pilot Design Project
 
-This starter contains a small mounting plate to verify generation and viewing. Replace the sample after discussing your own design in brief.md.
+This starter holds a small mounting plate that checks generation and viewing. Replace it after describing your own design in brief.md.
 
-The template layout is a proposed convention, not a mandatory structure. For existing projects, preserve their layout and instructions instead of reorganizing them. The starter's brief.md, source/, outputs/, and reviews/ are defaults that can be adapted.
-
-Open this folder and explicitly provide the shared workbench path, or add both folders to a multi-root workspace. Existing `.cad-pilot.local.json` and `.cad-pilot.code-workspace` files can still locate the toolkit, but are optional. No global skills or settings are installed.
-
-Use the workbench's Python interpreter to invoke the cad skill's `scripts/step` and `scripts/inspect` launchers from this project's root, following the direct commands in the workbench README.md. Choose the STEP destination with `-o`, using the same project-relative forward-slash path when inspecting it. Mesh sidecar paths are relative to the STEP directory. Keep review screenshots and decisions in the project's chosen review location; create `outputs/` or `reviews/` only when needed.
-
-For viewing, the shared visual-review skill uses the maintained CAD Explorer with this project as the explicit root: the `cad-explorer` canvas in the Copilot desktop, or the workbench's `explorer/scripts/explorer.mjs` viewer in other hosts such as Claude Code. Providing a workbench path alone does not register its project-scoped extension. The Explorer's `cadproto:v2` references and the `@cad` references that `scripts/inspect` reports are not interchangeable.
+The layout (brief.md, source/, outputs/, reviews/) is a proposed convention; adapt it as you like. Agents working here use the CAD-Pilot workbench's skills, which its README shows how to make available in every project; AGENTS.md tells them where the requirements and files are.
 
 ## Instruction Provenance
 

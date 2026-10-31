@@ -1,126 +1,75 @@
 # Inspection and validation
 
-Read this file for every generated STEP artifact and whenever the user asks for geometry facts, references, dimensions, mating, diffing, or frame inspection.
-
-## Principle
-
-Use programmatic geometry checks as the validation source of truth. Use CAD Explorer views and captures for visual review, not as substitutes for measurements, facts, planes, labels, or positioning checks.
+Read this for every generated STEP and whenever the user asks for geometry facts, references, dimensions, mating, clearance, diffing or frames. Programmatic checks of the saved STEP are the source of truth; captures are for your own look (`self-review.md`), not a substitute.
 
 ## Tool
 
-The launcher lives in the CAD skill directory:
-
 ```bash
-python scripts/inspect {refs|parts|hygiene|clearance|diff|frame|measure|mate|worker|batch} ...
+python <cad>/scripts/inspect {refs|parts|hygiene|clearance|diff|frame|measure|mate|worker|batch} ...
 ```
 
-Inspection targets are resolved from the command cwd unless absolute. Keep the root model in `SKILL.md` explicit when choosing whether to run from the workspace root or the skill directory.
+Targets are `path/to/model.step`, `path/to/entry` or `@cad[path/to/entry#selector]`, relative to the current folder unless absolute. Output is JSON unless `--format text`. `hygiene` and `clearance` exit 1 when they find something, 2 on an error and 0 when clean; a part `hygiene` could not check is an error and the result is not `clean`.
 
-Any STEP file can be inspected: one `scripts/step` wrote, a download, another CAD program's export, or a file outside the design root given by an absolute or `../` path. A STEP without a current sidecar from `scripts/step` is read and indexed on first use, which takes a few seconds for a large model, into the per-user cache, and the index is reused until the file changes. The cache is `CAD_PILOT_CACHE` when set, otherwise `~/Library/Caches/cad-pilot` on macOS, `%LOCALAPPDATA%\cad-pilot\Cache` on Windows and `$XDG_CACHE_HOME/cad-pilot` (default `~/.cache/cad-pilot`) on Linux; entries unused for 30 days are removed, and deleting any of them only means the next inspect indexes that STEP again. A STEP saved over while it is being read is not indexed; run the command again. Part sizes and centres come from the exact geometry, so they are the same whether the STEP has a sidecar or was indexed into the cache. Nothing is written beside the STEP, so there is no need to run `scripts/step --kind` just to inspect a file.
-
-`hygiene` and `clearance` exit with status 1 when they find something, 2 on an error and 0 when the check is clean. A part `hygiene` could not check is an error, listed under `errors`, and the result is not `clean`. Paths may be written with either separator, with `./` or an inner `..`, as for `scripts/step`.
-
-Common data-output flags on most commands:
-
-- `--format json|text`; default is machine-readable output.
-- `--quiet`
-- `--verbose`
-
-Accepted target forms:
-
-```text
-@cad[path/to/entry#selector]
-path/to/entry
-path/to/entry.step
-```
-
-## Relationship to build123d joints
-
-If the source uses build123d `Joint` objects, validate the generated STEP exactly as you would validate explicit `Location` placements. Source-level joints express and compute placement during generation; CLI `inspect mate` verifies the exported result by returning a translation delta between selected references. Do not confuse CLI `mate` with build123d `Joint.connect_to()`. Use `positioning.md` for authoritative source-authoring rules.
+Any STEP can be inspected: one `scripts/step` wrote, a download, another CAD program's export, or a file outside the design root by an absolute or `../` path. Without a current sidecar from `scripts/step`, the STEP is indexed on first use (seconds for a large model) into the per-user cache: `CAD_PILOT_CACHE`, else `~/Library/Caches/cad-pilot` on macOS, `%LOCALAPPDATA%\cad-pilot\Cache` on Windows and `$XDG_CACHE_HOME/cad-pilot` on Linux. Entries unused for 30 days are removed, and deleting one only means the next inspect indexes again. A STEP saved over while it is read is not indexed; run the command again. Part sizes come from the exact geometry either way, and nothing is written beside the STEP.
 
 ## Choosing checks
 
-Choose checks from the requirements: the dimensions the user gave, the fits and clearances that matter, the topology the part needs, and what the edit could have disturbed. There is no fixed sequence or universal report. Typical tools:
+Choose from the requirements: the dimensions the user gave, the fits and clearances that matter, the topology the part needs and what the edit could have disturbed. Check the saved STEP, not parameter constants or the in-memory shape; placement, export and labelling happen after `gen_step()` returns.
 
-- Generation completed and the STEP/STP file exists; a failed generation leaves nothing to check.
-- `parts` lists every part with its name, size, centre and occurrence ref; use it instead of reading names out of the STEP text.
-- `refs --facts --planes --positioning` gives scale, solid counts, labels, major planes and selectors to measure from. `refs --detail` on a selector gives its geometry, including a circle edge's or cylinder face's radius and true centre or axis under `params`.
-- `hygiene` finds what makes a part look or print like pieces stuck together: faces left split on one surface, extra solids, slivers, open, non-manifold or invalid geometry, and sharp edges against the project's comfort radius.
-- `clearance` gives the minimum distance and any overlap between parts, as assembled and in every pose the generator declares.
-- `measure` and `mate` give one-axis offsets and read-only alignment deltas between selections. Read `positioning.md` for what they do not show.
-- `frame` gives the world frame of an occurrence or selected reference.
-- `diff` compares before/after geometry for modifications.
-- A short Python check on the saved STEP measures what the CLI cannot, such as mass properties or the gap between particular faces of parts that touch elsewhere.
-- Your own look at Explorer captures catches what nobody thought to measure (see `rendering-and-explorer.md`). Turn every visual concern into a measurement before claiming it is resolved.
+- `parts`: every part's name, size, centre and occurrence ref; use it instead of reading names out of the STEP text.
+- `refs --facts --planes --positioning`: scale, solid counts, labels, major planes and selectors to measure from. `refs --detail` on a selector gives its geometry, including a circle edge's or cylinder face's radius and true centre or axis under `params`.
+- `hygiene`: what makes a part look or print like pieces stuck together.
+- `clearance`: minimum distance and overlap between parts, as assembled and in every declared pose.
+- `measure` and `mate`: one-axis offsets and read-only alignment deltas; `positioning.md` says what they do not show.
+- `frame`: the world frame of an occurrence or selection. `diff`: before/after geometry, when a change could have disturbed unrelated features.
+- A short Python check on the saved STEP for what the CLI cannot measure.
 
-Check the saved STEP rather than parameter constants or the in-memory shape: placement, export and labelling happen after `gen_step()` returns.
+Measure the feature that defines a dimension: a hole by its circle's radius and centre, a wall by the distance between its faces, a direction by a face normal.
 
-## Reference discovery
-
-Compact facts and planes:
+## References
 
 ```bash
-python scripts/inspect refs path/to/model.step \
-  --facts --planes --positioning
+python <cad>/scripts/inspect refs path/to/model.step --facts --planes --positioning
+python <cad>/scripts/inspect refs '@cad[path/to/model.step#selector]' --detail --positioning
+python <cad>/scripts/inspect refs path/to/model.step --topology
 ```
 
-Detailed selector inspection:
+Enumerate `--topology` only for selector discovery or debugging; it is expensive on large models. `--plane-limit`, `--plane-min-area-ratio` and `--plane-coordinate-tolerance` tune plane grouping.
 
-```bash
-python scripts/inspect refs '@cad[path/to/model.step#selector]' \
-  --detail --positioning
-```
-
-Topology enumeration, only when needed:
-
-```bash
-python scripts/inspect refs path/to/model.step --topology
-```
-
-Plane options:
-
-```bash
---plane-coordinate-tolerance FLOAT
---plane-min-area-ratio FLOAT
---plane-limit INT
-```
-
-Use lower plane limits and compact facts for normal validation. Use topology enumeration only for selector discovery, complex debugging, or when a feature cannot be verified through facts/planes/measurements.
-
-`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2`, and face and edge numbers, can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse a saved `@cad` path, which can silently resolve to a different part.
+`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2` and face and edge numbers can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse or translate a saved `@cad` path, which can silently resolve to a different part.
 
 ## Parts
 
 ```bash
-python scripts/inspect parts path/to/model.step --format text
+python <cad>/scripts/inspect parts path/to/model.step --format text
 ```
 
-Each part has its name and the path of groups someone labelled, size, bounding-box centre, the placement origin of its local frame, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. `scripts/step` writes a part nobody labelled under its group's name, `kit 1`, `kit 2`, and warns about it then; in a STEP from elsewhere, a part with no name is listed the same way and marked unlabelled. A name a CAD kernel made up, such as `COMPOUND` from build123d's `import_step` or `=>[0:1:1:3]`, counts as no name. A group nobody labelled is not written with a name, is left out of part paths and never matches a pattern; its parts are named after the group above it. CAD Explorer shows the same names. Part names are what `hygiene --parts`, `clearance`, `gen_poses()` and CAD Explorer's assembly steps match, with `*` and `?` as wildcards and a labelled group's name covering its parts; the file's own name is not a group, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` written for an anchor's parts cannot catch an `Anchor v3` root.
+Each part has its name and the path of labelled groups, size, bounding-box centre, local-frame origin, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. A part with no name, or a name a kernel made up (`COMPOUND`, `=>[0:1:1:3]`), is named after its group (`kit 1`, `kit 2`) and, in a STEP from elsewhere, marked unlabelled; an unlabelled group is left out of part paths. CAD Explorer shows the same names. `hygiene --parts`, `clearance`, `gen_poses()` and the Explorer's assembly steps match these names with `*` and `?`; a labelled group's name covers its parts, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` cannot catch an `Anchor v3` root.
 
 ## Geometry hygiene
 
 ```bash
-python scripts/inspect hygiene path/to/model.step --round 1 --format text
+python <cad>/scripts/inspect hygiene path/to/model.step --round 1 --format text
 ```
 
-Each finding names the part, says what is wrong in plain words, and gives the `@cad` refs of the faces and edges involved, plus a world position for edges:
+Each finding names the part, says what is wrong in plain words and gives the `@cad` refs of the faces and edges involved, with a world position for edges:
 
-- `solids`: a part is several separate solids, for example pieces that touch without being fused.
-- `split-face`: two or more faces lie on one surface, the seam a viewer shows across a flat face.
-- `sliver-face` and `short-edge`: faces narrower and edges shorter than `--sliver` (0.05 mm by default), usually left by a Boolean between nearly coincident faces.
+- `solids`: a part is several separate solids, such as pieces that touch without being fused.
+- `split-face`: several faces on one surface, the seam a viewer shows across a flat face.
+- `sliver-face` and `short-edge`: narrower or shorter than `--sliver` (0.05 mm), usually left by a Boolean between nearly coincident faces.
 - `open-edge`, `non-manifold`, `no-solid` and `invalid`: geometry that does not enclose a volume properly or fails the kernel's validity check.
-- `sharp-edge` and `small-round`: with `--round R`, the project's comfort radius, convex edges whose faces meet at 15 degrees or more, and rounds smaller than R, measured by how sharply the rounded face curves across its tangent edge, spline fillets included. Without `--round` they are counted per part, not reported.
+- `sharp-edge` and `small-round`: with `--round R`, the project's comfort radius, convex edges whose faces meet at 15 degrees or more, and rounds tighter than R (spline fillets included). Without `--round` they are only counted.
 
-Use `--parts` to check some parts only. Parts with the same shape are checked once. A finding is a prompt to look, not a verdict: a crisp edge or a part made of several solids can be intended. Self-intersection is checked by `scripts/step` at generation, not here. `build123d-modeling.md` covers fusing before rounding and merging split faces.
+`--parts` limits it to some parts; parts with the same shape are checked once. A finding is a prompt to look, not a verdict: a crisp edge or several solids can be intended. Self-intersection is checked by `scripts/step` at generation. `build123d-modeling.md` covers fusing before rounding and merging split faces.
 
 ## Clearance and poses
 
 ```bash
-python scripts/inspect clearance path/to/model.step --format text
-python scripts/inspect clearance path/to/model.step --poses path/to/model.py --format text
+python <cad>/scripts/inspect clearance path/to/model.step --format text
+python <cad>/scripts/inspect clearance path/to/model.step --poses path/to/model.py --format text
 ```
 
-Without `--poses` it checks every pair of parts, or pairs among `--parts`, as assembled. With `--poses` it also checks every pose the generator's `gen_poses()` declares beside `gen_step()`. A pose moves named parts from where the STEP places them, by a build123d `Location` in world coordinates or an `(x, y, z)` offset in mm, so hinges, slides, insertion paths and lock positions are a list of poses:
+Without `--poses` it checks every pair of parts (or pairs among `--parts`) as assembled. With `--poses` it also checks every pose the generator's `gen_poses()` declares beside `gen_step()`. A pose moves named parts from their STEP placement by a build123d `Location` in world coordinates or an `(x, y, z)` offset in mm, so hinges, slides, insertion paths and lock positions are lists of poses:
 
 ```python
 def gen_poses():
@@ -135,107 +84,51 @@ def gen_poses():
     }
 ```
 
-A plain list of poses also works. `--min-gap` overrides the declared gaps. Each pair is reported worst first with its status: `overlap` with the largest shared volume and the poses where it happens; `tight` when closer than its required gap, touching included; `touching` for contact without overlap when no gap is required; `clear` otherwise. Distances are exact B-rep minimum distances with a pair of closest points. A pair is measured again only in poses that move one of its parts relative to the other, and a pair whose bounding boxes stay farther apart than `--horizon` (5 mm by default, or the pair's gap if larger) is reported as clear by at least that distance rather than measured.
+A plain list of poses also works, and `--min-gap` overrides the declared gaps. Each pair is reported worst first: `overlap` with the largest shared volume and the poses where it happens; `tight` when closer than its required gap, touching included; `touching` for contact without overlap when no gap is required; `clear` otherwise. Distances are exact B-rep minimum distances with a pair of closest points. A pair is measured again only in poses that move one of its parts relative to the other, and a pair whose bounding boxes stay farther apart than `--horizon` (5 mm, or the pair's gap if larger) is reported clear by at least that distance.
 
-It is a rigid check of the listed poses: it does not model flexing, threads, gravity or motion between poses, so sample a path finely enough for the features it passes. Parts that touch on purpose, such as a lid resting on a rim, report `touching`; when a gap between other faces of the same two parts matters, measure it with a Python check on those faces.
+It checks the listed poses only, rigidly: no flexing, threads, gravity or motion between poses, so sample a path finely enough for the features it passes, and report which poses were not checked. Use clearance for "at least this gap" requirements and overlap for "must not intersect", and list deliberate press fits or contacts you excluded rather than inferring exclusions from the hierarchy. Parts that touch on purpose, such as a lid on a rim, report `touching`; when a gap between other faces of those parts matters, measure those faces in Python.
 
-## Measurement checks
-
-Use `measure` for signed offsets along one axis: part spacing, plate thickness between parallel faces, hole-centre-to-face distances, and alignment verification. It is not a clearance check: the gap between two bodies is a minimum distance, which `clearance` reports.
+## Measure, mate, frame and diff
 
 ```bash
-python scripts/inspect measure \
-  --from '@cad[path/to/model.step#selector_a]' \
-  --to '@cad[path/to/model.step#selector_b]' \
-  --axis x
+python <cad>/scripts/inspect measure --from '@cad[path/to/model.step#a]' --to '@cad[path/to/model.step#b]' --axis x
+python <cad>/scripts/inspect mate --moving '@cad[path/to/assembly.step#moving]' --target '@cad[path/to/assembly.step#target]' --mode flush --axis z
+python <cad>/scripts/inspect frame '@cad[path/to/model.step#selector]'
+python <cad>/scripts/inspect diff path/to/before.step path/to/after.step --planes
 ```
 
-Axis may be inferred when possible, but specify `x`, `y`, or `z` for deterministic checks.
-
-## Mating checks
-
-Use CLI `mate` when two exported STEP references should be flush or centered. It returns a read-only translation delta (along one axis in flush mode) and the relationship between the selections' directions; read `positioning.md` for what that does not show. It does not edit source files and does not replace native build123d joints in source. When source uses build123d `Joint`/`connect_to()` placement, still validate the resulting exported geometry with `refs --positioning`, `frame`, `measure`, or CLI `mate`.
-
-```bash
-python scripts/inspect mate \
-  --moving '@cad[path/to/assembly.step#moving_selector]' \
-  --target '@cad[path/to/assembly.step#target_selector]' \
-  --mode flush \
-  --axis z
-```
-
-Apply any required correction in the Python source using build123d joint definitions, `.connect_to()` calls, `Location`, parameter changes, or assembly child placement. Regenerate and re-inspect.
-
-## Frame inspection
-
-Use `frame` to validate occurrence transforms and selected-reference world frames:
-
-```bash
-python scripts/inspect frame '@cad[path/to/model.step#selector]'
-```
-
-Frame output is useful for assemblies, part-local-to-world conversion, and placement debugging.
-
-## Diff checks
-
-For modification tasks, compare before and after artifacts:
-
-```bash
-python scripts/inspect diff path/to/before.step path/to/after.step --planes
-```
-
-Use diff when a repair, feature addition, or source edit could affect unrelated geometry.
+`measure` gives signed offsets along one axis (spacing, plate thickness, hole-centre-to-face distances); give `--axis` for deterministic checks. It is not a clearance check. `mate` returns a read-only translation delta and the selections' direction relationship; apply any correction in source and regenerate. `frame` validates occurrence transforms and part-local-to-world conversion. Use `diff` when a repair or edit could affect unrelated geometry, and rerun the measurements that should not have changed.
 
 ## Python checks on the saved STEP
 
-`scripts/inspect` reports each selection's geometry (`refs --detail`), one-axis offsets between selections, and clearance and overlap between whole parts. For mass properties, or the gap between particular faces of parts that touch elsewhere, write a short build123d script that reads the saved STEP. Run it from the design root with the workbench's Python interpreter. Put a throwaway check in a temporary folder outside the project, such as the system temp directory, or in a scratch folder the project already ignores. Keep a check worth rerunning in the project's existing test or check location. Never put checks in the skill directory or in the project's source or output folders.
+For mass properties, or the gap between particular faces of parts that touch elsewhere, write a short build123d script that reads the saved STEP and run it from the design root with the tools' interpreter. Put a throwaway check in the system temp folder or a scratch folder the project ignores, and one worth rerunning in the project's existing test location; never in the skill directory or the project's source or output folders.
 
 ```python
 import sys
 
-from build123d import import_step
+from build123d import Axis, Compound, import_step
 
 assembly = import_step(sys.argv[1])
 parts = {child.label: child for child in assembly.children}
 base, lid = parts["base"], parts["lid"]
 
-
-def overlap_mm3(a, b):
-    common = a & b  # None when the bodies do not overlap
-    return 0.0 if common is None else sum(solid.volume for solid in common.solids())
-
-
-gap, on_base, on_lid = base.distance_to_with_closest_points(lid)
-print(f"base-lid minimum clearance: {gap:.3f} mm, between {on_base} and {on_lid}")
-print(f"base-lid overlap: {overlap_mm3(base, lid):.3f} mm3")
-print("all solids valid:", all(solid.is_valid for solid in assembly.solids()))
+# The lid rests on the rim, so the parts touch; the gap that matters is between the lid's lip (below Z = 5)
+# and the base's inner walls (inside X = ±19).
+lip = Compound(lid.faces().filter_by(Axis.Z, reverse=True).filter_by(lambda face: face.center().Z < 5))
+walls = Compound(base.faces().filter_by(Axis.Z, reverse=True).filter_by(lambda face: abs(face.center().X) < 19))
+gap, on_lip, on_wall = lip.distance_to_with_closest_points(walls)
+print(f"lip to inner walls: minimum {gap:.3f} mm, between {on_lip} and {on_wall}")
 ```
 
 Notes for build123d 0.13:
 
-- The top-level children of an imported assembly keep their labels and world placement. Deeper levels can come back with generic names such as `ASSEMBLY` or `SOLID`, and their `.children` report placements relative to their parent. Measure world geometry through `.solids()`, and use `scripts/inspect refs` to identify nested occurrences.
-- `distance_to_with_closest_points` returns the minimum distance and one pair of closest points. It is zero for touching and for overlapping bodies alike, and it does not measure how deep an overlap goes. When parts touch on purpose, such as a lid resting on a rim, measure clearance between the specific faces that must stay apart: select them from `lid.faces()` and `base.faces()` by position or normal, and wrap each list in `Compound(...)` before measuring.
-- Overlap volume is exact for the bodies given and zero for mere contact. Minimum clearance and overlap volume are different measurements: use clearance for "at least this gap" requirements and overlap for "these must not intersect" requirements, and report which one ran.
-- A reversed solid passes `is_valid` with a negative `.volume`, and an assembly total can hide it. STEP export and re-import report it as positive, so the saved STEP cannot show it. Check `.volume` on each solid of the in-memory shape instead, for example `[solid.volume for solid in runpy.run_path("models/enclosure.py")["gen_step"]().solids()]`.
-- A check proves only the pose in the saved STEP. For a hinge, slider or lid with several positions, declare the poses in `gen_poses()` and run `clearance --poses`, or report which poses were not checked.
-- Choose pairs from the question, such as a moving part against the parts it passes, and list deliberate press fits or contacts you excluded. Do not infer exclusions from the assembly hierarchy.
-
-Measure the feature that defines the dimension: a circle edge's or cylinder face's radius and centre for holes and patterns (`params` in `refs --detail`, or `arc_center` and `radius` in Python), the distance between two faces for a wall, a face normal for direction. A bounding box is an envelope, and its centre is not a datum; see `positioning.md` for what CLI `mate` and `measure` do and do not show.
-
-## Showing the model in CAD Explorer
-
-For every final response involving a STEP/STP artifact, show it in the maintained CAD Explorer when the host can display it, and return the Explorer URL. Use `rendering-and-explorer.md` and the visual-review skill to open it. If an important selector was inspected, return the textual `@cad[...]` reference beside the Explorer URL.
+- An imported assembly's top-level children keep their labels and world placement. Deeper levels can come back with generic names such as `ASSEMBLY` or `SOLID`, and their `.children` report placements relative to their parent; measure world geometry through `.solids()` and identify nested occurrences with `scripts/inspect`.
+- `distance_to_with_closest_points` is zero for touching and overlapping bodies alike and says nothing about overlap depth. Select specific faces by position or normal and wrap each list in `Compound(...)` before measuring.
+- A reversed solid reads as positive after STEP export, so the saved STEP cannot show it; see Validity in `build123d-modeling.md`.
 
 ## Reporting checks
 
-Report only checks that actually ran or are directly supported by tool output. For each one, say what was measured (labels or selectors), the value with units, and the threshold or requirement it was compared against. Say where a threshold came from: the user's requirement, a drawing callout, or your own provisional choice.
-
-- A failed or inconclusive computation is not a pass. Report it as failed or not checked, with the error.
-- A requirement or relationship nobody tested has no verdict. List it as not checked rather than leaving it out.
-- One pose proves only that pose; name the poses checked.
-- Keep kinds of evidence apart: kernel validity, measured requirements, your visual review, the user's visual approval, slicer checks and physical tests each support only their own claims.
-
-Shape the report to the task. A single plate needs a few lines; an assembly with fits needs its interfaces. For example:
+Follow the skill's Non-negotiables for what a reported check must say. Shape the report to the task: a single plate needs a few lines, an assembly with fits needs its interfaces.
 
 ```text
 Checks (models/enclosure.step):
@@ -243,17 +136,9 @@ Checks (models/enclosure.step):
 - Overall size: 120.00 × 80.00 × 35.00 mm (required 120 × 80 × 35).
 - Lid seating: base top / lid underside Z delta 0.00 mm, faces opposed.
 - Screw holes: circle centres at (±52, ±32) mm, offsets ≤ 0.01 mm from the bosses; radius 1.25 mm (provisional, printer fit not confirmed).
-- Lid lip to base inner walls: minimum clearance between those faces 0.30 mm (provisional target ≥ 0.30 mm); no overlap between the bodies.
+- Lid lip to base inner walls: minimum clearance between those faces 0.30 mm (provisional target ≥ 0.30 mm); clearance reports no overlap.
 - Visual review: iso and front-section captures checked the bosses and wall; no concerns.
 - Not checked: snap-fit deflection, print orientation, physical fit.
 ```
 
-The values above are illustrative, not defaults.
-
-Do not claim:
-
-- structural safety
-- process certification
-- tolerance compliance
-- manufacturability beyond geometric plausibility
-unless the relevant analysis or manufacturing data was explicitly performed.
+The values are illustrative, not defaults.
