@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from common.assembly_composition import build_linked_assembly_composition, build_native_assembly_composition
 from common.assembly_spec import AssemblyInstanceSpec, AssemblyNodeSpec, AssemblySpec
-from common.glb_topology import read_step_topology_manifest_from_glb
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION, read_step_topology_manifest_from_glb
 from common.render import part_glb_path
 from common.tests.cad_test_roots import IsolatedCadRoots
 
@@ -22,7 +22,7 @@ def _pad4(payload: bytes, *, byte: bytes = b"\0") -> bytes:
 
 def _write_topology_glb(path: Path, manifest: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_payload = json.dumps({"schemaVersion": 1, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
+    manifest_payload = json.dumps({"schemaVersion": STEP_TOPOLOGY_SCHEMA_VERSION, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
     binary = _pad4(manifest_payload)
     gltf = {
         "asset": {"version": "2.0"},
@@ -31,7 +31,7 @@ def _write_topology_glb(path: Path, manifest: dict[str, object]) -> None:
         "extensionsUsed": ["STEP_topology"],
         "extensions": {
             "STEP_topology": {
-                "schemaVersion": 1,
+                "schemaVersion": STEP_TOPOLOGY_SCHEMA_VERSION,
                 "indexView": 0,
                 "entryKind": "assembly" if manifest.get("assembly") else "part",
                 "encoding": "utf-8",

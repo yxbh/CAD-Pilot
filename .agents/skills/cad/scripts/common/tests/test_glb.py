@@ -12,7 +12,12 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
 from common.glb import _GlbBuilder, export_assembly_glb_from_scene, export_part_glb_from_scene
-from common.glb_topology import STEP_TOPOLOGY_EXTENSION, read_step_topology_bundle_from_glb, read_step_topology_manifest_from_glb
+from common.glb_topology import (
+    STEP_TOPOLOGY_EXTENSION,
+    STEP_TOPOLOGY_SCHEMA_VERSION,
+    read_step_topology_bundle_from_glb,
+    read_step_topology_manifest_from_glb,
+)
 from common.step_scene import LoadedStepScene, OccurrenceNode, SelectorBundle, _shape_hash
 
 
@@ -116,7 +121,7 @@ class GlbExportTests(unittest.TestCase):
             embedded = read_step_topology_bundle_from_glb(glb_path)
             self.assertIsNotNone(embedded)
             assert embedded is not None
-            self.assertEqual(1, embedded.manifest["schemaVersion"])
+            self.assertEqual(STEP_TOPOLOGY_SCHEMA_VERSION, embedded.manifest["schemaVersion"])
             self.assertEqual("fixtures/box", embedded.manifest["cadRef"])
             self.assertEqual([7, 11], list(embedded.buffers["edgeIds"]))
 
@@ -318,6 +323,17 @@ class GlbSelectorManifestEntryKindTests(unittest.TestCase):
 
         self.assertEqual("part", extension["entryKind"])
         self.assertEqual("part", selector_manifest["entryKind"])
+
+    def test_a_topology_index_from_another_schema_version_is_not_read(self) -> None:
+        # A sidecar written by an earlier scripts/step describes the STEP by older rules, so readers treat it as absent.
+        builder = _GlbBuilder()
+        builder.add_step_topology(SelectorBundle(manifest=_bundle_manifest(assembly=False)), include_selector_topology=True)
+        builder.json["extensions"][STEP_TOPOLOGY_EXTENSION]["schemaVersion"] = STEP_TOPOLOGY_SCHEMA_VERSION - 1
+        with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
+            glb_path = builder.write(Path(temp_dir) / ".sample.step.glb")
+
+            self.assertIsNone(read_step_topology_manifest_from_glb(glb_path))
+            self.assertIsNone(read_step_topology_bundle_from_glb(glb_path))
 
 
 if __name__ == "__main__":

@@ -152,9 +152,6 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
 
 
 TOPOLOGY_CACHE = "topology"
-# Bump when the selector extraction in step_scene or the GLB topology changes how a STEP is numbered or
-# described: cached indexes are named by it, so an old index is never read for the new numbering.
-TOPOLOGY_INDEX_VERSION = 2
 
 
 def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False) -> StepTopologyArtifact:
@@ -168,7 +165,7 @@ def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False)
     stamp = _file_stamp(target.step_path)
     step_hash = sha256_file(target.step_path)
     sidecar = existing_part_glb_path(target.step_path)
-    cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{TOPOLOGY_INDEX_VERSION}.glb")
+    cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{STEP_TOPOLOGY_SCHEMA_VERSION}.glb")
     for glb_path in (sidecar, cached):
         artifact = _current_topology(target, glb_path, step_hash, require_selector=require_selector)
         if artifact is not None:
