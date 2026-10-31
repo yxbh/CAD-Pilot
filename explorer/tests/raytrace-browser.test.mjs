@@ -9,7 +9,7 @@ test("the ray-traced view is set from the page's appearance settings and traced 
     assert.deepEqual(report.pageErrors, []);
     assert.equal(report.appearance, "raytraced");
     assert.equal(report.studioPressed, "true", "Ray traced is Studio's light, traced");
-    assert.match(report.status, /Preparing the ray-traced view|Compiling the path tracer|Ray traced · \d+ of 512 samples/);
+    assert.match(report.status, /Preparing the ray-traced view|Compiling the path tracer|Ray traced · \d+ of 512 samples|Ray tracing needs a GPU/);
 
     // With the page closed, the background renderer traces the image to the samples asked for: it compiles the tracer
     // first, which software WebGL takes about a minute over and says so.

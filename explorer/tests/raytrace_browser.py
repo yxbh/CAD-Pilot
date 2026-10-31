@@ -1,7 +1,7 @@
 """The ray-traced view in a real browser: the page's Appearance settings set it and its sample counter shows.
 
-The page is closed before the path tracer has compiled, which takes about a minute in software WebGL; the test's
-capture traces in the background renderer instead.
+Without a GPU the page keeps the Studio view and says so, as compiling the tracer in software would hold the browser's
+GPU process for a minute or more; the test's capture traces in the background renderer, which has a browser of its own.
 """
 
 import argparse

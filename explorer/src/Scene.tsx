@@ -26,7 +26,7 @@ import {
   visibleFacePoint, visibleFaceTriangleCount,
 } from "./section.ts";
 import { ANALYSIS_COLORS, defaultAnalysis, FAULT_COLORS, type AnalysisLegend, type AnalysisSettings } from "../shared/analysis.mjs";
-import { PAGE_SAMPLES, traceLimits } from "../shared/raytrace.mjs";
+import { traceLimits } from "../shared/raytrace.mjs";
 import { createTraceStore, RayTraced, TraceStatus, type TraceControl } from "./raytrace/RayTraced.tsx";
 import { AnalysisShading } from "./analysis/material.ts";
 import { useAnalysis, type AnalysisView } from "./analysis/useAnalysis.ts";
@@ -638,7 +638,7 @@ export default function Scene(props: Props) {
           : <SectionOutline key={`section:${placement.node.id}`} placement={placement} origin={origin} section={section} order={10 + index * 3} />
       ))}
       {stepPosition !== null && <SequenceTrails placements={shown} origin={origin} />}
-      {traced && <RayTraced limit={props.headless ? 0 : PAGE_SAMPLES} tiles={props.headless ? 1 : 2} background={props.background ?? STUDIO_BACKGROUND}
+      {traced && <RayTraced page={!props.headless} background={props.background ?? STUDIO_BACKGROUND}
         floor={props.background ? null : studioFloor(stageBounds)} control={trace} store={traceStore} />}
       <Rig {...props} placements={placements} resources={resources} analysis={analysis} trace={trace} axes={axes} />
     </Canvas>

@@ -9,11 +9,11 @@ import {
 } from "three";
 import { WebGLPathTracer } from "three-gpu-pathtracer";
 import { GenerateMeshBVHWorker } from "three-mesh-bvh/worker";
-import { SOFTWARE_SECONDS, type TraceLimits, type TraceReport } from "../../shared/raytrace.mjs";
+import { PAGE_SAMPLES, SOFTWARE_SECONDS, type TraceLimits, type TraceReport } from "../../shared/raytrace.mjs";
 import { makeDenoiser } from "./denoiser.ts";
 import { softboxStudio } from "./studio.ts";
 
-export type TraceProgress = { phase: "preparing" | "compiling" | "tracing" | "resting"; samples: number; limit: number };
+export type TraceProgress = { phase: "preparing" | "compiling" | "tracing" | "resting" | "software"; samples: number; limit: number };
 export type TraceControl = {
   /** Traces until the samples or seconds of tracing, whichever comes first, and leaves the result drawn on the canvas. */
   settle(limits: TraceLimits): Promise<TraceReport>;
@@ -37,7 +37,8 @@ export type TraceStore = ReturnType<typeof createTraceStore>;
 
 export function TraceStatus({ store }: { store: TraceStore }) {
   const progress = useSyncExternalStore(store.subscribe, store.get);
-  const text = progress.phase === "preparing" ? "Preparing the ray-traced view..."
+  const text = progress.phase === "software" ? "Ray tracing needs a GPU. This browser draws in software, so the view stays Studio's; renders and captures still trace."
+    : progress.phase === "preparing" ? "Preparing the ray-traced view..."
     : progress.phase === "compiling" ? "Compiling the path tracer..."
       : `Ray traced · ${progress.samples} of ${progress.limit} samples${progress.phase === "resting" ? "" : "..."}`;
   return <div className="trace-status" role="status">{text}</div>;
@@ -76,16 +77,20 @@ function patchShader(material: ShaderMaterial) {
 const FLOOR = new MeshStandardMaterial({ color: "#26313d", roughness: 0.92, metalness: 0 });
 
 /**
- * limit: the samples to refine to on its own (a page's view; 0 traces only for captures). tiles: how many pieces each
- * way a sample is traced in, a frame each, so a page keeps answering. floor: where Studio's floor lies, or null for a
- * custom background. control receives settle() for captures; store, the progress.
+ * page: a person's view, which refines on its own in tiles (a frame each, so the page keeps answering); the background
+ * renderer traces whole samples, and only for captures. floor: where Studio's floor lies, or null for a custom
+ * background. control receives settle() for captures; store, the progress.
  */
-export function RayTraced({ limit, tiles, background, floor, control, store }: {
-  limit: number; tiles: number; background: string; floor: { z: number; size: number; center: [number, number] } | null;
+export function RayTraced({ page, background, floor, control, store }: {
+  page: boolean; background: string; floor: { z: number; size: number; center: [number, number] } | null;
   control: RefObject<TraceControl | null>; store: TraceStore;
 }) {
   const { gl, scene, camera, invalidate } = useThree();
   const name = useMemo(() => rendererName(gl.getContext()), [gl]);
+  const software = SOFTWARE.test(name);
+  // A page without a GPU keeps the Studio view: software WebGL compiles the tracer in the browser's one GPU process,
+  // holding every tab's drawing for a minute or more.
+  const idle = page && software;
   const parts = useMemo(() => {
     const traced = new Scene();
     traced.environment = softboxStudio();
@@ -121,9 +126,8 @@ export function RayTraced({ limit, tiles, background, floor, control, store }: {
   const sync = useRef({ shape: "", look: "", camera: "", ready: false, building: false, stale: false });
   const goal = useRef<{ samples: number; seconds: number; since: number; resolve: (report: TraceReport) => void } | null>(null);
   const clock = useRef({ traced: 0, last: 0 });
-  const limitRef = useRef(limit);
-  limitRef.current = limit;
-  parts.tracer.tiles.set(tiles, tiles);
+  const limit = page ? PAGE_SAMPLES : 0;
+  parts.tracer.tiles.setScalar(page ? 2 : 1);
   // Geometry shared with the view's surfaces, without the attributes the tracer adds to what it is given.
   const proxies = useMemo(() => new WeakMap<BufferGeometry, BufferGeometry>(), []);
   const floorGeometry = useMemo(() => new PlaneGeometry(1, 1), []);
@@ -132,7 +136,6 @@ export function RayTraced({ limit, tiles, background, floor, control, store }: {
   useEffect(() => {
     control.current = {
       settle: (limits) => new Promise((resolve) => {
-        const software = SOFTWARE.test(name);
         goal.current = {
           samples: limits.samples, seconds: software ? Math.min(limits.seconds, SOFTWARE_SECONDS) : limits.seconds, since: performance.now(),
           resolve: (report) => resolve({ ...report, software, renderer: name }),
@@ -142,7 +145,7 @@ export function RayTraced({ limit, tiles, background, floor, control, store }: {
       }),
     };
     return () => { control.current = null; };
-  }, [control, name, invalidate]);
+  }, [control, name, software, invalidate]);
 
   function rebuild(surfaces: Mesh[]) {
     const { traced, tracer } = parts;
@@ -178,6 +181,15 @@ export function RayTraced({ limit, tiles, background, floor, control, store }: {
   }
 
   useFrame(() => {
+    if (idle) {
+      gl.render(scene, camera);
+      store.set({ phase: "software", samples: 0, limit: 0 });
+      // The page's own capture is the Studio view it shows.
+      const waiting = goal.current;
+      goal.current = null;
+      waiting?.resolve({ samples: 0, asked: waiting.samples, seconds: 0, waited: 0, stopped: "time", software, renderer: name });
+      return;
+    }
     const { tracer } = parts;
     const state = sync.current;
     // The parts drawn, where they are, and how their materials look.
@@ -205,7 +217,7 @@ export function RayTraced({ limit, tiles, background, floor, control, store }: {
       state.camera = view;
       tracer.setCamera(camera);
     }
-    const target = goal.current?.samples ?? limitRef.current;
+    const target = goal.current?.samples ?? limit;
     if (!state.ready || target === 0) {
       // Until the scene is ready, or with nothing to trace, the Studio view.
       gl.render(scene, camera);
