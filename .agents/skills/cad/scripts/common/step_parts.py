@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from common.part_names import tree_names
+from common.part_names import root_name, tree_names
 
 
 @dataclass(frozen=True)
@@ -46,11 +46,6 @@ class StepParts:
         from common.cad_ref_syntax import build_cad_token
 
         return build_cad_token(self.cad_path, self.selector(part, entity))
-
-
-def root_name(cad_path: str) -> str:
-    """What a STEP's unlabelled root is called: the STEP's file name without its suffix, which ends its cad path."""
-    return cad_path.rsplit("/", 1)[-1]
 
 
 def load_step_parts(step_path: Path, cad_path: str | None = None) -> StepParts:

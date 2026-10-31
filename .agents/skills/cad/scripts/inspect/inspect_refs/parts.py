@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from common import cad_ref_syntax as syntax
-from common.part_names import tree_names
+from common.part_names import root_name, tree_names
 from common.selector_types import SelectorProfile
-from common.step_parts import root_name
 
 from . import lookup
 from .inspect import EntryContextProvider, load_entry_context_for_target

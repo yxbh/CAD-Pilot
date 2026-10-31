@@ -10,7 +10,8 @@ label of digits alone, such as ``608``, also counts as none, since other
 writers put numeric ids where a name belongs. The STEP writer, the part
 listings and CAD Explorer's STEP converter use these same rules, so a fallback
 name read back from a STEP file matches the one it was written with and the
-one the viewer shows.
+one the viewer shows. An unlabelled root is named after its STEP file, as
+``root_name`` gives it.
 """
 
 from __future__ import annotations
@@ -37,6 +38,16 @@ def own_label(name: object) -> str | None:
             or text.lower().replace("_", " ").startswith("open cascade step translator")):  # build123d's import_step spells it with _
         return None
     return text
+
+
+def root_name(path: str) -> str:
+    """What a STEP's unlabelled root is called: its file name without ``.step`` or ``.stp``.
+
+    ``path`` is a STEP file's name or path, or a cad path (a STEP's path without its suffix), with ``/`` separators.
+    """
+    name = path.rsplit("/", 1)[-1]
+    stem, dot, suffix = name.rpartition(".")
+    return stem if dot and stem and suffix.lower() in {"step", "stp"} else name
 
 
 def child_name(label: object, *, group: str, index: int, siblings: int) -> str:

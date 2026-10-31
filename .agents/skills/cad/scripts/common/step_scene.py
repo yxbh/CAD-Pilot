@@ -56,7 +56,7 @@ from common.glb_mesh_payload import (
 )
 from common.cache import sha256_file
 from common.metadata import DEFAULT_MESH_ANGULAR_TOLERANCE
-from common.part_names import own_label
+from common.part_names import own_label, root_name
 from common.selector_types import SelectorBundle, SelectorProfile
 
 
@@ -939,12 +939,13 @@ def _load_fallback_occurrence_tree(
     if shape.IsNull():
         raise RuntimeError(f"STEP file produced no shape: {step_path}")
     prototype_key = _shape_hash(shape)
+    name = root_name(step_path.name)
     return (
         [
             OccurrenceNode(
                 path=(1,),
-                name=step_path.stem,
-                source_name=step_path.stem,
+                name=name,
+                source_name=name,
                 transform=_identity_transform_matrix(),
                 prototype_key=prototype_key,
                 local_transform=_identity_transform_matrix(),
@@ -952,7 +953,7 @@ def _load_fallback_occurrence_tree(
             )
         ],
         {prototype_key: shape},
-        {prototype_key: step_path.stem},
+        {prototype_key: name},
         {},
         {},
     )

@@ -1,6 +1,6 @@
 import unittest
 
-from common.part_names import own_label
+from common.part_names import own_label, root_name
 
 
 class OwnLabelTests(unittest.TestCase):
@@ -15,6 +15,15 @@ class OwnLabelTests(unittest.TestCase):
                      "Open CASCADE STEP translator 7.8 1", "Open_CASCADE_STEP_translator_7.8_1"):
             with self.subTest(name=name):
                 self.assertIsNone(own_label(name))
+
+
+
+class RootNameTests(unittest.TestCase):
+    def test_a_step_file_name_and_its_cad_path_give_the_same_root_name(self) -> None:
+        for path, expected in (("lamp.step", "lamp"), ("Jig v2.STP", "Jig v2"), ("parts/model.v2.step", "model.v2"),
+                               ("parts/model.v2", "model.v2"), ("/abs/kit", "kit"), ("../downloads/vendor kit", "vendor kit")):
+            with self.subTest(path=path):
+                self.assertEqual(expected, root_name(path))
 
 
 if __name__ == "__main__":

@@ -12,8 +12,8 @@ from common.assembly_spec import (
 )
 from common.cache import sha256_file
 from common.glb_topology import read_step_topology_manifest_from_glb
+from common.part_names import root_name
 from common.render import part_glb_path, relative_to_repo
-from common.step_parts import root_name
 
 
 ASSEMBLY_COMPOSITION_SCHEMA_VERSION = 1
