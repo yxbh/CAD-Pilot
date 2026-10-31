@@ -8,7 +8,7 @@ runs:
   using: composite
   steps:
     # uv.lock and explorer/package-lock.json stay local, so each run resolves the Python dependencies afresh, and the
-    # Explorer's packages are resolved afresh once a day on each system.
+    # Explorer's packages are resolved afresh at most once a day on each system.
     - uses: astral-sh/setup-uv@v10.3.3
       with:
         # Downloading the wheels from PyPI takes less time than restoring them from an Actions cache, and saving one.
@@ -34,8 +34,9 @@ runs:
           Windows) echo "browsers=$LOCALAPPDATA\\ms-playwright" ;;
           *) echo "browsers=$HOME/.cache/ms-playwright" ;;
         esac >> "$GITHUB_OUTPUT"
-    # The day's first job on each system installs the packages the manifest allows then; later jobs that day restore
-    # that tree instead of installing it again. No package is built for a Node version, so the key leaves it out.
+    # A job that finds no tree from earlier that day installs the packages the manifest allows then; later jobs restore
+    # it instead of installing it again. Actions caches are per branch, so a pull request reuses its own tree or main's.
+    # No package is built for a Node version, so the key leaves it out.
     - if: inputs.explorer == 'true'
       id: packages
       uses: actions/cache@v6
