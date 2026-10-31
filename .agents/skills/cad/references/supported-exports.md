@@ -1,72 +1,24 @@
-# Supported exports
+# STL and 3MF sidecars
 
-Read this file when the user requests STL or 3MF output from CAD geometry. Read `dxf.md` for DXF output, because DXF uses a separate `gen_dxf()` source contract.
+Read this when the user wants STL or 3MF meshes of CAD geometry. DXF uses its own `gen_dxf()` contract (`dxf.md`). A sidecar 3MF holds geometry only; a Bambu Studio project with plates, printer, filament and supports comes from `scripts/print` (`print.md`).
 
-## Policy
-
-STL and 3MF are mesh sidecars, not substitutes for STEP. A sidecar 3MF holds geometry only; for a Bambu Studio project with plates, printer, filament and support settings, use `scripts/print` (see `print.md`). Generate and validate STEP first, then export requested sidecars from the same `scripts/step` run. Do not view or inspect STL or 3MF in place of the STEP; show or inspect the STEP when visual review is needed.
-
-A mesh is only as closed as its solid. When `scripts/step` warns that a part is not a sound or closed solid, or is inside out, its meshes can have zero-area triangles, open edges or inward-facing triangles, for example where a swept handle folds through itself; repair the source as `repair-loop.md` describes before sending the mesh to a slicer. A `could not check` notice leaves the part unverified.
-
-## Tool
-
-Use `scripts/step` with a generated Python source:
+Meshes are sidecars of the STEP, not substitutes: generate and check the STEP first, write the meshes from the same `scripts/step` run, and show or inspect the STEP rather than a mesh.
 
 ```bash
-python scripts/step path/to/model.py \
-  --stl meshes/model.stl \
-  --3mf meshes/model.3mf
+python <cad>/scripts/step models/bracket.py -o models/bracket.step --stl bracket.stl --3mf bracket.3mf
 ```
 
-When a generator exists, use the generator form. Use direct STEP/STP targets only when the generator is unavailable or the user explicitly identifies that file as the target:
+Sidecar paths must be relative `.stl` or `.3mf` paths, resolved from the STEP's folder. A direct STEP target takes the same flags (`step-generation.md`).
 
-```bash
-python scripts/step --kind part path/to/model.step \
-  --stl meshes/model.stl \
-  --3mf meshes/model.3mf
-```
-
-Sidecar paths must be relative `.stl` or `.3mf` paths and are resolved beside the STEP output.
+A mesh is only as closed as its solid. When `scripts/step` warns that a part is not a sound or closed solid, or is inside out, its meshes can have zero-area triangles, open edges or inward-facing triangles; repair the source (`repair-loop.md`) before sending the mesh to a slicer. A `could not check` notice leaves the part unverified.
 
 ## Mesh tolerance
 
-Meshes are fine by default: every edge is divided until the mesh is within 0.006 of that edge's size of the true surface, and within 0.1 radians of its direction. The two flags can only make meshes finer. A value at or above the default changes nothing, so a looser tolerance cannot shrink a file:
+Meshes are fine by default: every edge is divided until the mesh is within 0.006 of that edge's size of the true surface, and within 0.1 radians of its direction. The two flags only make meshes finer; a value at or above the default changes nothing, so a looser tolerance cannot shrink a file:
 
 ```bash
 --mesh-tolerance FRACTION    # below 0.006, such as 0.0004 for small curved parts
 --mesh-angular-tolerance RAD # below 0.1
 ```
 
-Use them when facets show on small curved features in the slicer or in visual review.
-
-## Workflow
-
-1. Generate STEP from `gen_step()` with the requested sidecar flag(s).
-2. Run facts/planes/positioning inspection on the STEP.
-3. Return the STEP, requested sidecar files, and the STEP's CAD Explorer URL.
-
-Example:
-
-```bash
-python scripts/step models/bracket.py \
-  --stl meshes/bracket.stl \
-  --mesh-tolerance 0.002 \
-  --mesh-angular-tolerance 0.05
-
-python scripts/inspect refs models/bracket.step --facts --planes --positioning
-```
-
-## Reporting
-
-```text
-Files:
-- STEP: models/bracket.step
-- STL: meshes/bracket.stl
-
-CAD Explorer:
-- <URL printed by explorer.mjs open for models/bracket.step>
-
-Validation:
-- STEP checks: <what ran, with values and thresholds>; STL/3MF generated as requested sidecars.
-- Self-review: <captures checked after a geometry change, or skipped because only the export changed>.
-```
+Use them when facets show on small curved features in the slicer or in visual review. Report the mesh files with the STEP checks; a mesh written as requested is not a separate check.
