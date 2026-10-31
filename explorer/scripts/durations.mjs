@@ -31,7 +31,8 @@ try {
       for (const [name, value] of Object.entries(seconds)) ((recorded[platform] ??= {})[name] ??= []).push(value);
     }
   }
-  if (!Object.keys(recorded).length) throw new Error(`Run ${runs.join(", ")} recorded no Explorer test durations.`);
+  const named = `${runs.length === 1 ? "run" : "runs"} ${runs.join(", ")}`;
+  if (!Object.keys(recorded).length) throw new Error(`The check logs of ${named} hold no Explorer test durations.`);
   const measured = Object.fromEntries(Object.entries(recorded).map(([platform, files]) => [
     platform, Object.fromEntries(Object.entries(files).map(([name, values]) => [name, values.reduce((sum, value) => sum + value, 0) / values.length])),
   ]));
@@ -48,7 +49,7 @@ try {
   ]));
   await writeFile(table, `${JSON.stringify(durations, null, 2)}\n`);
   const counts = Object.entries(measured).map(([platform, seconds]) => `${platform} ${files.filter((file) => file in seconds).length} of ${files.length} files`);
-  console.log(`Wrote ${path.relative(process.cwd(), table)} from ${runs.length === 1 ? "run" : "runs"} ${runs.join(", ")}: ${counts.join(", ")}`);
+  console.log(`Wrote ${path.relative(process.cwd(), table)} from ${named}: ${counts.join(", ")}`);
 } finally {
   await rm(folder, { recursive: true, force: true });
 }
