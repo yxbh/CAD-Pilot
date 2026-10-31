@@ -9,19 +9,21 @@ const USAGE = "Usage: node scripts/test.mjs core|browser|shard <i>/<n> [--no-bui
 // slowest sets a run's time), used to give shards similar work. The core suite is one unit and each browser file
 // another; a unit not listed counts as the median. Refresh from a run's per-test times when a file's time changes a lot.
 const SECONDS = {
-  "edge-browser.test.mjs": 76,
-  "camera-browser.test.mjs": 75,
-  "review-recovery-browser.test.mjs": 59,
-  "explode-camera-browser.test.mjs": 55,
-  core: 52,
-  "import-warnings-browser.test.mjs": 36,
+  "camera-browser.test.mjs": 115,
+  "edge-browser.test.mjs": 84,
+  "review-recovery-browser.test.mjs": 75,
+  core: 72,
+  "explode-camera-browser.test.mjs": 58,
+  "launcher-browser.test.mjs": 53,
+  "assembly-browser.test.mjs": 47,
+  "cleanup-persistence-browser.test.mjs": 38,
+  "import-warnings-browser.test.mjs": 38,
   "studio-views-browser.test.mjs": 33,
-  "assembly-browser.test.mjs": 30,
-  "cleanup-persistence-browser.test.mjs": 23,
-  "section-browser.test.mjs": 19,
-  "viewer-browser.test.mjs": 16,
-  "render-reports-browser.test.mjs": 15,
-};
+  "section-browser.test.mjs": 29,
+  "render-reports-browser.test.mjs": 21,
+  "viewer-browser.test.mjs": 21,
+  "renderer-browser.test.mjs": 6,
+}
 
 const args = process.argv.slice(2);
 const [mode, part] = args.filter((arg) => !arg.startsWith("--"));
