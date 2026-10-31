@@ -80,21 +80,26 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
     [["Target.createTarget", "http://127.0.0.1:1/secret-token/?renderer=headless"]]);
   const [profile] = await profiles(tmp);
   assert.equal(await readFile(path.join(tmp, profile, "owner"), "utf8"), String(process.pid));
-  await delay(120);
-  assert.equal(renderer.running, false, "an idle renderer stops");
-  assert.deepEqual(await profiles(tmp), [], "a stopped browser's profile is removed");
+  // An idle renderer stops after idleMs and then removes its profile; a busy runner can take longer than that to get there.
+  for (let waited = 0; renderer.running || (await profiles(tmp)).length; waited += 20) {
+    assert.ok(waited < 10_000, `the idle renderer is still ${renderer.running ? "running" : "removing its profile"}`);
+    await delay(20);
+  }
   assert.deepEqual(exits, [], "an intentional stop is not a failure");
   await renderer.ensure();
-  assert.equal(await renderer.fallBack(), true);
-  assert.equal(launches.length, 3);
-  assert.ok(launches[2].args.includes("--use-angle=swiftshader") && !launches[2].args.includes("--use-angle=d3d11"));
-  assert.equal(await renderer.fallBack(), false, "software rendering is the last resort");
+  // Windows falls back to Direct3D's software rasterizer, then to SwiftShader, which ships with Chromium.
+  for (const flag of ["--use-angle=d3d11-warp", "--use-angle=swiftshader"]) {
+    assert.equal(await renderer.fallBack(), true);
+    assert.deepEqual(launches.at(-1).args.filter((arg) => arg.startsWith("--use-angle=")), [flag]);
+  }
+  assert.equal(launches.length, 4);
+  assert.equal(await renderer.fallBack(), false, "SwiftShader is the last resort");
   // Page console output is not a reason; the exit signal is. A crashing browser resets its pipes, which must not end this process.
-  launches[2].stderr.emit("data", Buffer.from('[1:2:INFO:CONSOLE(7)] "THREE.Clock: This module has been deprecated."\n'));
-  launches[2].stdio[4].destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
-  launches[2].stdio[3].destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
-  launches[2].signalCode = "SIGKILL";
-  launches[2].emit("exit", null, "SIGKILL");
+  launches[3].stderr.emit("data", Buffer.from('[1:2:INFO:CONSOLE(7)] "THREE.Clock: This module has been deprecated."\n'));
+  launches[3].stdio[4].destroy(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+  launches[3].stdio[3].destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+  launches[3].signalCode = "SIGKILL";
+  launches[3].emit("exit", null, "SIGKILL");
   assert.equal(renderer.running, false);
   assert.match(exits[0].message, /stopped \(signal SIGKILL\)/);
   assert.doesNotMatch(exits[0].message, /THREE/);

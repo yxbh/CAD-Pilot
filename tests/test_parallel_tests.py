@@ -1,5 +1,6 @@
-"""The workbench's pytest-xdist scheduling (conftest.py), run on stand-in tests."""
+"""The workbench's pytest-xdist scheduling and CI shares (conftest.py), run on stand-in tests."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -114,3 +115,17 @@ def test_an_explicit_distribution_mode_keeps_xdists_own(tmp_path):
     run = _pytest(tmp_path, {"test_stand_ins.py": STAND_INS}, "-n", "2", "--dist", "each")
     assert run.returncode == 0, run.stdout + run.stderr
     assert "18 passed" in run.stdout, "each test runs on every worker"
+
+
+def test_shares_run_each_test_file_once_and_record_what_it_took(tmp_path):
+    files = {f"test_{name}.py": "def test_one():\n    pass\n" for name in "abcde"}
+    recorded = []
+    # Recorded alone and through pytest-xdist's workers, which pass their reports on.
+    for share, workers in (("1/2", ()), ("2/2", ("-n", "2"))):
+        target = tmp_path / "logs" / f"{share.replace('/', '-')}.json"
+        run = _pytest(tmp_path, files, "--share", share, "--record-durations", str(target), *workers)
+        assert run.returncode == 0, run.stdout + run.stderr
+        report = json.loads(target.read_text(encoding="utf-8"))
+        assert report["platform"] == sys.platform and all(seconds >= 0 for seconds in report["seconds"].values())
+        recorded.append(set(report["seconds"]))
+    assert recorded[0].isdisjoint(recorded[1]) and recorded[0] | recorded[1] == set(files), recorded

@@ -24,9 +24,9 @@ const cwd = fileURLToPath(new URL("../", import.meta.url));
 const tests = (await readdir(new URL("../tests/", import.meta.url))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
 const isBrowser = (file) => file.endsWith("-browser.test.mjs");
 
-// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which
-// scripts/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with the least
-// time so far; a file not listed counts as the median of its kind, browser or core.
+// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which the
+// workbench's tools/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with
+// the least time so far; a file not listed counts as the median of its kind, browser or core.
 const measured = JSON.parse(await readFile(new URL("../tests/durations.json", import.meta.url), "utf8"))[process.platform] ?? {};
 const median = (browser) => {
   const kind = Object.entries(measured).filter(([name]) => isBrowser(name) === browser).map(([, seconds]) => seconds).sort((a, b) => a - b);
@@ -74,13 +74,15 @@ function run(name, files, filesAtOnce, concurrency) {
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
-// Browser scenarios render with software WebGL and build Python fixtures, so only a few files run at once: a quarter
-// of the cores, at most three. Each test process starts one Python host and Chromium for its scenarios
-// (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its whole
-// shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
+// Browser scenarios render WebGL, in software where there is no GPU, and build Python fixtures, so only a few files
+// run at once: a quarter of the cores, at most three. Each test process starts one Python host and Chromium for its
+// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its
+// whole shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
 const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
-const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
+// Node 22 knows the one-process option only by its experimental name.
+const isolation = Number(process.versions.node.split(".")[0]) >= 24 ? "--test-isolation" : "--experimental-test-isolation";
+const browserOptions = browserFilesAtOnce === 1 ? [`${isolation}=none`] : [`--test-concurrency=${browserFilesAtOnce}`];
 const statuses = [
   run("core", files.filter((file) => !isBrowser(file)), coreFilesAtOnce, [`--test-concurrency=${coreFilesAtOnce}`]),
   run("browser", files.filter(isBrowser), browserFilesAtOnce, browserOptions),

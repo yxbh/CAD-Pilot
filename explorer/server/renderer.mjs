@@ -29,11 +29,17 @@ export async function findChromium({ env = process.env, platform = process.platf
   throw new PrototypeError("renderer_missing", missing, 503);
 }
 
-// Hardware WebGL where the platform's ANGLE backend is dependable; software WebGL is the fallback when it is not.
-const gpuFlags = { darwin: ["--use-angle=metal"], win32: ["--use-angle=d3d11"] };
-const softwareFlags = ["--use-angle=swiftshader"];
-// Every launch also lets Chromium switch to software WebGL by itself when it finds no usable GPU (CI runners, remote
-// desktops), as Playwright launches it. The flag is "unsafe" for untrusted pages; this browser only loads the viewer's own.
+// The ANGLE backends a background browser tries in turn, each when the one before could not create a WebGL context:
+// hardware where the platform's backend is dependable, then software. On Windows the software steps are Direct3D's own
+// rasterizer (WARP), which draws the viewer two to three times faster than SwiftShader on the same cores, then
+// SwiftShader, which ships with Chromium. tests/browser_session.py launches the scenarios' Chromium down the same steps.
+const backends = {
+  darwin: [["--use-angle=metal"], ["--use-angle=swiftshader"]],
+  win32: [["--use-angle=d3d11"], ["--use-angle=d3d11-warp"], ["--use-angle=swiftshader"]],
+};
+export const webglBackends = (platform) => backends[platform] ?? [[], ["--use-angle=swiftshader"]];
+// Every launch allows SwiftShader, which Chromium may also switch to by itself when it finds no usable GPU, as Playwright
+// launches it. The flag is "unsafe" for untrusted pages; this browser only loads the viewer's own.
 const commonFlags = [
   "--headless", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check", "--disable-extensions",
   "--mute-audio", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1280,800",
@@ -123,7 +129,8 @@ export function createHeadlessRenderer({
   let child = null;
   let starting = null;
   let stopping = null;
-  let software = false;
+  // Which of the platform's WebGL backends the next browser starts with.
+  let backend = 0;
   let idle = null;
   let closed = false;
   // Profiles still being removed, including those of browsers that crashed; close() waits for them.
@@ -162,7 +169,7 @@ export function createHeadlessRenderer({
     let stderr = "";
     const browser = launch(executable, [
       ...commonFlags, `--user-data-dir=${profile}`, ...(sandboxFlags[platform] ?? []),
-      ...(software ? softwareFlags : gpuFlags[platform] ?? []),
+      ...webglBackends(platform)[backend],
       "about:blank",
     ], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
     // A browser that could not be spawned reports an error and never exits.
@@ -208,11 +215,11 @@ export function createHeadlessRenderer({
       return starting;
     },
     touch,
-    // A page that could not create a WebGL context restarts once with software rendering.
+    // A page that could not create a WebGL context restarts with the platform's next backend, while there is one.
     async fallBack() {
-      if (software || closed) return false;
-      software = true;
-      log("Explorer headless renderer: hardware WebGL is unavailable; retrying with software rendering.");
+      if (closed || backend + 1 >= webglBackends(platform).length) return false;
+      backend += 1;
+      log(`Explorer headless renderer: WebGL is unavailable; retrying with ${webglBackends(platform)[backend].join(" ")}.`);
       await starting?.catch(() => {});
       await halt();
       await this.ensure();

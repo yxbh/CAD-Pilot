@@ -8,7 +8,7 @@ Meshes are sidecars of the STEP, not substitutes: generate and check the STEP fi
 python <cad>/scripts/step models/bracket.py -o models/bracket.step --stl bracket.stl --3mf bracket.3mf
 ```
 
-Sidecar paths must be relative `.stl` or `.3mf` paths, resolved from the STEP's folder. A direct STEP target takes the same flags (`step-generation.md`).
+`--stl` takes a `.stl` path and `--3mf` a `.3mf` path, placed as the skill's Running the tools says. A direct STEP target takes the same flags (`step-generation.md`).
 
 A mesh is only as closed as its solid. When `scripts/step` warns that a part is not a sound or closed solid, or is inside out, its meshes can have zero-area triangles, open edges or inward-facing triangles; repair the source (`repair-loop.md`) before sending the mesh to a slicer. A `could not check` notice leaves the part unverified.
 
