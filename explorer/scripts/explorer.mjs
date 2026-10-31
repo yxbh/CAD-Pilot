@@ -50,8 +50,8 @@ const COMMAND_FLAGS = {
   prune: ["dry-run", "all", "copilot"],
   render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide"],
 };
-
-const TAKES_NO_ARGUMENTS = new Set(["state", "stop", "actions", "prune"]);
+// The most arguments each command reads; open and render say what theirs are, and do and inspect take any number.
+const MOST_ARGUMENTS = { state: 0, stop: 0, actions: 0, prune: 0, capture: 1 };
 
 function parseArguments(argv) {
   const positional = [];
@@ -147,7 +147,9 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   if (command === "help") return USAGE;
   const unread = Object.keys(flags).filter((flag) => flags[flag] !== undefined && COMMAND_FLAGS[command] && !COMMAND_FLAGS[command].includes(flag));
   if (unread.length) throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.`);
-  if (TAKES_NO_ARGUMENTS.has(command) && args.length) throw new PrototypeError("bad_arguments", `${command} takes no arguments, got ${args.join(" ")}`);
+  if (args.length > MOST_ARGUMENTS[command]) {
+    throw new PrototypeError("bad_arguments", `${command} takes ${MOST_ARGUMENTS[command] ? "one path" : "no arguments"}, got ${args.join(" ")}`);
+  }
   if (command === "actions") {
     return actionNames().map((name) => {
       const { description, inputSchema } = COMMANDS[name];

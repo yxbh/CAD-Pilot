@@ -319,9 +319,9 @@ async function startOwnedService({
     }
   }
 
-  // Added files come back from their caches, whichever way the view starts. One whose copy is gone from the store is
-  // read again from its project file when that still holds what was added; otherwise it is left out, and state says
-  // which and why: its file is missing, has changed since, or could not be read.
+  // Added files come back from their caches, whichever way the view starts. One whose model is gone from the store is
+  // rebuilt from what was added; otherwise it is left out, and state says which and why: its project file is missing,
+  // holds something else now, or could not be read.
   async function restoreAddedFiles() {
     const restored = [];
     const dropped = [];
@@ -337,23 +337,34 @@ async function startOwnedService({
         restored.push({ ...document, model: loaded });
       } catch (error) {
         try {
-          if (!document.file) throw error;
-          const resolved = await validateModelPath(path.resolve(project, document.file), project);
-          const reread = await importDocument(document.id, { resolved, displayName: name }, document.options);
-          // Snapshots are named by their content, so a different name means the file holds something else now.
-          if (path.basename(reread.inputFile) !== path.basename(document.inputFile)) {
-            throw new PrototypeError("file_changed", `${document.file} has changed since it was added`);
-          }
-          restored.push(reread);
-          log(`Explorer read ${document.file} again: ${publicError(error)}`);
+          restored.push(await rebuildAddedFile(document, name));
+          log(`Explorer rebuilt ${name}: ${publicError(error)}`);
         } catch (failure) {
           log(`Explorer left ${name} out of the view: ${publicError(failure)}`);
-          const reason = { file_not_found: "missing", file_changed: "changed" }[failure.code] ?? "unreadable";
+          // A file over the size limit is not the one that was added, which was within it.
+          const reason = { file_not_found: "missing", file_changed: "changed", too_large: "changed" }[failure.code] ?? "unreadable";
           dropped.push({ id: document.id, name, file: document.file, ...(document.file ? { reason } : {}) });
         }
       }
     }
     return { restored, dropped };
+  }
+
+  // What was added is Explorer's copy of its source while the store has it, else its project file while that holds the
+  // same bytes: copies are named by the SHA-256 of their content.
+  async function rebuildAddedFile(document, name) {
+    const added = path.basename(document.inputFile);
+    const same = (bytes) => `${hash(bytes)}${path.extname(added)}` === added;
+    const stored = isInside(uploadDir, document.inputFile) ? await readFile(document.inputFile).catch(() => null) : null;
+    if (stored && same(stored)) {
+      const rebuilt = await importDocument(document.id, { resolved: document.inputFile, bytes: stored, displayName: name }, document.options);
+      return { ...rebuilt, file: document.file };
+    }
+    if (!document.file) throw new PrototypeError("source_gone", `Explorer no longer has a copy of ${name}`);
+    const resolved = await validateModelPath(path.resolve(project, document.file), project);
+    const bytes = await readFile(resolved);
+    if (!same(bytes)) throw new PrototypeError("file_changed", `${document.file} has changed since it was added`);
+    return importDocument(document.id, { resolved, bytes, displayName: name }, document.options);
   }
 
   async function loadSnapshot(snapshot, source, options = {}) {

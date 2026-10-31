@@ -113,6 +113,7 @@ test("open reads --units and --up, and each command refuses options it does not 
   // A misspelt option is refused, not read as an argument: prune --dryrun must not prune.
   await assert.rejects(run(["prune", "--dryrun"], { cwd: directory }), /Unknown option --dryrun/);
   await assert.rejects(run(["actions", "extra"], { cwd: directory }), /actions takes no arguments, got extra/);
+  await assert.rejects(run(["capture", "reviews/a.png", "reviews/b.png"], { cwd: directory }), /capture takes one path, got reviews\/a\.png reviews\/b\.png/);
   assert.equal(opened.length, 2);
 });
 

@@ -204,39 +204,60 @@ test("a running mesh view keeps serving its geometry after storage cleanup remov
   assert.equal((await geometry.arrayBuffer()).byteLength, model.geometry.bytes);
 });
 
-test("added files whose copies are gone are read again from the project, or named so they can be added back", { timeout: 180_000 }, async (t) => {
+test("added files whose models are gone are rebuilt from what was added, or left out with the reason", { timeout: 180_000 }, async (t) => {
   const root = await project(t);
   const { createService, runtimeRoot } = await createTestRuntime(t);
   let service = await createService({ projectRoot: root, viewId: "dropped", file: "box.stl", log: () => {} });
   await service.initialize();
   await service.execute("add_file", { file: "open.stl" });
-  const upload = await fetch(`${service.url}api/upload`, { method: "POST", headers: { "x-file-name": "scan.stl", "x-explorer-add": "1" }, body: boxStl({ scale: 2 }) });
+  const opened = boxStl({ skip: 1 });
+  const scanned = boxStl({ scale: 2 });
+  const upload = await fetch(`${service.url}api/upload`, { method: "POST", headers: { "x-file-name": "scan.stl", "x-explorer-add": "1" }, body: scanned });
   assert.equal(upload.status, 200);
   // The revision a person is told about is the main file's own, however many files are added beside it.
-  const main = createHash("sha256").update(boxStl()).digest("hex");
-  assert.notEqual(service.getState().documentRevision, main);
-  assert.equal((await service.summary()).model.revision, main.slice(0, 12));
-  const removeCopies = async (entries) => {
+  const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  assert.notEqual(service.getState().documentRevision, sha256(boxStl()));
+  assert.equal((await service.summary()).model.revision, sha256(boxStl()).slice(0, 12));
+  const added = service.getState().documents.slice(1).map(({ id, name, topologyRevision }) => [id, name, topologyRevision]);
+  const removeModels = async (entries) => {
     for (const { topologyRevision } of entries) for (const extension of ["json", "bin"]) await rm(path.join(runtimeRoot, "models", `${topologyRevision}.${extension}`), { force: true });
   };
-  await removeCopies(service.getState().documents.slice(1));
+  const removeSources = async (...sources) => {
+    for (const bytes of sources) await rm(path.join(runtimeRoot, "inputs", `${sha256(bytes)}.stl`), { force: true });
+  };
+  await removeModels(service.getState().documents.slice(1));
   await service.close();
 
-  // The added project file is read again; the upload, which has no project file, is named in the note.
+  // Explorer's copies of the added sources rebuild them, the upload too, even after the project file has changed.
+  await writeFile(path.join(root, "open.stl"), boxStl({ scale: 3 }));
   service = await createService({ projectRoot: root, viewId: "dropped", file: "box.stl", log: () => {} });
   await service.initialize();
   let state = service.getState();
   assert.equal(state.error, "");
+  assert.deepEqual(state.documents.slice(1).map(({ id, name, topologyRevision }) => [id, name, topologyRevision]), added);
+  assert.deepEqual(state.droppedFiles, []);
+  await writeFile(path.join(root, "open.stl"), opened);
+  await removeModels(state.documents.slice(1));
+  await removeSources(opened, scanned);
+  await service.close();
+
+  // Without those copies, the project file is read again while it holds the same bytes; the upload, which has no
+  // project file, is named in the note.
+  service = await createService({ projectRoot: root, viewId: "dropped", file: "box.stl", log: () => {} });
+  await service.initialize();
+  state = service.getState();
   assert.deepEqual(state.documents.map(({ id, name }) => [id, name]), [["main", "box.stl"], ["ref1", "open.stl"]]);
   assert.deepEqual(state.droppedFiles, [{ id: "ref2", name: "scan.stl", file: "" }]);
   assert.match((await service.summary()).note, /^Left out of the view because Explorer no longer has a copy \(scan\.stl: it was uploaded, so upload it again\)\./);
   state = await service.execute("load_file", { file: "box.stl" });
   assert.deepEqual(state.droppedFiles, [], "a later load has nothing left out to report");
-  await removeCopies(state.documents.slice(1));
+  await removeModels(state.documents.slice(1));
+  await removeSources(opened);
   await service.close();
 
   // A project file that holds something else now is not shown in place of what was added.
-  await writeFile(path.join(root, "open.stl"), boxStl({ scale: 3 }));
+  const changed = boxStl({ scale: 3 });
+  await writeFile(path.join(root, "open.stl"), changed);
   service = await createService({ projectRoot: root, viewId: "dropped", log: () => {} });
   await service.initialize();
   assert.deepEqual(service.getState().droppedFiles, [{ id: "ref1", name: "open.stl", file: "open.stl", reason: "changed" }]);
@@ -244,7 +265,8 @@ test("added files whose copies are gone are read again from the project, or name
 
   // Once the project file is gone, the note says so rather than naming a path that is not there.
   await service.execute("add_file", { file: "open.stl" });
-  await removeCopies(service.getState().documents.slice(1));
+  await removeModels(service.getState().documents.slice(1));
+  await removeSources(changed);
   await service.close();
   await rm(path.join(root, "open.stl"));
   service = await createService({ projectRoot: root, viewId: "dropped", log: () => {} });
