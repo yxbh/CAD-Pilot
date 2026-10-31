@@ -10,9 +10,10 @@ from common.assembly_spec import (
     assembly_spec_children,
     multiply_transforms,
 )
-from common.glb_topology import read_step_topology_manifest_from_glb
 from common.cache import sha256_file
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.render import existing_part_glb_path, part_glb_path, relative_to_repo
+from common.step_parts import root_name
 
 
 ASSEMBLY_COMPOSITION_SCHEMA_VERSION = 1
@@ -996,7 +997,7 @@ def _assembly_root_node(cad_ref: str, root_occurrence: dict[str, Any], children:
 def _root_display_name(cad_ref: str, root_occurrence: Mapping[str, Any]) -> str:
     display_name = str(root_occurrence.get("name") or "").strip()
     if not display_name or display_name.lower() == "root":
-        return cad_ref.rsplit("/", 1)[-1]
+        return root_name(cad_ref)
     return display_name
 
 
@@ -1130,11 +1131,12 @@ def _counts_have_values(counts: Mapping[str, int]) -> bool:
 
 
 def _occurrence_display_name(row: Mapping[str, Any]) -> str:
-    name = str(row.get("name") or "").strip()
-    source_name = str(row.get("sourceName") or "").strip()
-    if name and not (name.startswith("=>[") and name.endswith("]")):
-        return name
-    return source_name or name or str(row.get("path") or row.get("id") or "component").strip()
+    # Index rows carry only names someone chose (part_names.own_label), never a writer's made-up one.
+    return (
+        str(row.get("name") or "").strip()
+        or str(row.get("sourceName") or "").strip()
+        or str(row.get("path") or row.get("id") or "component").strip()
+    )
 
 
 def _row_transform(row: Mapping[str, Any]) -> tuple[float, ...]:
