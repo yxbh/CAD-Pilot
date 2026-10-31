@@ -3,7 +3,7 @@
 // run on main, or the mean over the runs given, since a file's time on one runner can be a third off its time on
 // another. Needs the GitHub CLI, signed in.
 import { execFileSync } from "node:child_process";
-import { glob, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { glob, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,13 +35,19 @@ try {
   const measured = Object.fromEntries(Object.entries(recorded).map(([platform, files]) => [
     platform, Object.fromEntries(Object.entries(files).map(([name, values]) => [name, values.reduce((sum, value) => sum + value, 0) / values.length])),
   ]));
-  // A platform the run did not measure keeps its earlier times.
-  const durations = { ...JSON.parse(await readFile(table, "utf8").catch(() => "{}")), ...measured };
-  const sorted = Object.fromEntries(Object.keys(durations).sort().map((platform) => [platform, Object.fromEntries(
-    Object.entries(durations[platform]).sort(([a], [b]) => a.localeCompare(b)).map(([file, seconds]) => [file, Math.round(seconds * 10) / 10]),
-  )]));
-  await writeFile(table, `${JSON.stringify(sorted, null, 2)}\n`);
-  const counts = Object.entries(measured).map(([platform, seconds]) => `${platform} ${Object.keys(seconds).length} files`);
+  // A file the runs did not measure on a platform, such as one in a shard that stopped early, keeps its earlier time
+  // there; a file that no longer exists is dropped.
+  const previous = JSON.parse(await readFile(table, "utf8").catch(() => "{}"));
+  const files = (await readdir(path.join(explorerRoot, "tests"))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
+  const durations = Object.fromEntries([...new Set([...Object.keys(previous), ...Object.keys(measured)])].sort().map((platform) => [
+    platform,
+    Object.fromEntries(files.flatMap((file) => {
+      const seconds = measured[platform]?.[file] ?? previous[platform]?.[file];
+      return seconds === undefined ? [] : [[file, Math.round(seconds * 10) / 10]];
+    })),
+  ]));
+  await writeFile(table, `${JSON.stringify(durations, null, 2)}\n`);
+  const counts = Object.entries(measured).map(([platform, seconds]) => `${platform} ${files.filter((file) => file in seconds).length} of ${files.length} files`);
   console.log(`Wrote ${path.relative(process.cwd(), table)} from ${runs.length === 1 ? "run" : "runs"} ${runs.join(", ")}: ${counts.join(", ")}`);
 } finally {
   await rm(folder, { recursive: true, force: true });

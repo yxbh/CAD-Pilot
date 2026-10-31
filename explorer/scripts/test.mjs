@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,14 +53,14 @@ if (options.values.list) {
 // running suites at the same time, so they must not rebuild into the same folder.
 if (!options.values["no-build"]) await buildExplorer();
 
-// With --durations, each run also reports its files' times (scripts/durations-reporter.mjs). Core files run several at
-// a time, so a run's times are scaled to its wall-clock time: each file is recorded at the share of its shard's time it
-// accounts for, which is what the shards are balanced by.
+// With --durations, each run also reports its files' times (scripts/durations-reporter.mjs), and each file is recorded
+// at what it adds to its shard's time: its tests' time over the number of files run at once, plus an equal share of
+// the rest of the run's wall-clock time (starting the files' processes, imports and fixtures), which tests do not see.
 const reports = options.values.durations ? await mkdtemp(path.join(tmpdir(), "explorer-durations-")) : null;
-const walls = {};
+const timed = {};
 // A test that sets no timeout of its own fails after two minutes, so a hang names itself instead of holding a CI job
 // until the job's own limit.
-function run(name, files, concurrency) {
+function run(name, files, filesAtOnce, concurrency) {
   if (!files.length) return 0;
   const reporters = reports ? [
     "--test-reporter=spec", "--test-reporter-destination=stdout",
@@ -68,32 +68,35 @@ function run(name, files, concurrency) {
   ] : [];
   const start = performance.now();
   const result = spawnSync(process.execPath, ["--test", "--test-timeout=120000", ...reporters, ...concurrency, ...files.map((file) => `tests/${file}`)], { cwd, stdio: "inherit" });
-  walls[name] = (performance.now() - start) / 1000;
+  timed[name] = { wall: (performance.now() - start) / 1000, filesAtOnce };
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
 // Browser scenarios render with software WebGL and build Python fixtures, so only a few files run at once: a quarter
 // of the cores, at most three. Each test process starts one Python host and Chromium for its scenarios
 // (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its whole
-// shard shares a single host. Core files use Node's default concurrency.
+// shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
+const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
 const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
 const statuses = [
-  run("core", files.filter((file) => !isBrowser(file)), []),
-  run("browser", files.filter(isBrowser), browserOptions),
+  run("core", files.filter((file) => !isBrowser(file)), coreFilesAtOnce, [`--test-concurrency=${coreFilesAtOnce}`]),
+  run("browser", files.filter(isBrowser), browserFilesAtOnce, browserOptions),
 ];
 if (reports) {
   const seconds = {};
-  for (const [name, wall] of Object.entries(walls)) {
+  for (const [name, { wall, filesAtOnce }] of Object.entries(timed)) {
     let measured;
     try {
       ({ seconds: measured } = JSON.parse(await readFile(path.join(reports, `${name}.json`), "utf8")));
     } catch {
       continue; // A run that was stopped may have left no report, or part of one; its exit status fails the check.
     }
-    const total = Object.values(measured).reduce((sum, value) => sum + value, 0);
-    for (const [file, value] of Object.entries(measured)) seconds[file] = total ? (value * wall) / total : 0;
+    const entries = Object.entries(measured);
+    const rest = Math.max(0, wall - entries.reduce((sum, [, value]) => sum + value, 0) / filesAtOnce);
+    for (const [file, value] of entries) seconds[file] = value / filesAtOnce + rest / entries.length;
   }
+  await mkdir(path.dirname(options.values.durations), { recursive: true });
   await writeFile(options.values.durations, `${JSON.stringify({ platform: process.platform, seconds })}\n`);
   await rm(reports, { recursive: true, force: true });
 }
