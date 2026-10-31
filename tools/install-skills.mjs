@@ -22,20 +22,21 @@ const names = readdirSync(skills, { withFileTypes: true })
 if (existsSync(path.join(root, ".git")) && statSync(path.join(root, ".git")).isFile()) {
   console.warn(`${root} is a linked worktree: run this from the main checkout again once you are done with it`);
 }
-const isSkillLink = (target, name) => {
-  const parts = path.resolve(folder, target).split(/[\\/]+/);
-  return parts.slice(-3).join("/") === `.agents/skills/${name}`;
-};
-// The skills folder itself linked to a checkout's .agents/skills already loads that checkout's skills, and what is
-// inside it are that checkout's own skill folders, so nothing in it may be replaced or moved.
-if (existsSync(folder) && lstatSync(folder).isSymbolicLink()) {
-  const target = realpathSync(folder);
-  if (target.split(/[\\/]+/).slice(-2).join("/") === ".agents/skills") {
-    console.error(`${folder} is a link to ${target}; remove that link (not the folder it points to) and run this again to link each skill instead`);
-    process.exit(1);
-  }
+// The skills folder, or the folder it links to, must be the user's own: a checkout's .agents/skills holds that
+// checkout's skill folders and its .claude/skills its tracked relative links, and neither may be changed.
+const real = existsSync(folder) ? realpathSync(folder) : folder;
+const checkout = path.dirname(path.dirname(real));
+if (path.basename(real) === "skills" && [".agents", ".claude"].includes(path.basename(path.dirname(real)))
+    && existsSync(path.join(checkout, "tools", "install-skills.mjs"))) {
+  const how = lstatSync(folder).isSymbolicLink() ? "remove that link (not the folder it points to)" : "set CLAUDE_CONFIG_DIR to your own Claude configuration folder";
+  console.error(`${folder} is ${real}, a CAD-Pilot checkout's own skills folder; ${how} and run this again to link each skill instead`);
+  process.exit(1);
 }
 mkdirSync(folder, { recursive: true });
+const isSkillLink = (target, name) => {
+  const parts = path.resolve(real, target).split(/[\\/]+/);
+  return parts.slice(-3).join("/") === `.agents/skills/${name}`;
+};
 let refused = 0;
 for (const name of names) {
   const target = path.join(skills, name);

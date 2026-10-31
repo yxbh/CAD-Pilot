@@ -99,6 +99,7 @@ RULE_HOMES = {
     "print handoff": (SKILLS / "cad/references/print.md", ["print-profile.json", "3MF path every time"]),
     "fit rule": (SKILLS / "fdm-design/SKILL.md", ["The model states the fit"]),
     "dependency locks": (ROOT / "AGENTS.md", ["uv.lock", "package-lock.json"]),
+    "source releases": (ROOT / "AGENTS.md", ["Prepare source releases"]),
 }
 
 
@@ -242,16 +243,25 @@ def test_install_links_the_personal_skills_folder(tmp_path):
     assert (skills / "cad/notes.md").read_text(encoding="utf-8") == "mine"
     assert all(linked(name) for name in _skill_names() if name != "cad")
 
-    # A skills folder that is itself a link to a checkout's skills is reported as such, and no skill in it is touched.
-    linked_checkout = tmp_path / "linked/.agents/skills"
-    (linked_checkout / "cad").mkdir(parents=True)
-    whole = tmp_path / "whole"
-    whole.mkdir()
-    _link_folder(linked_checkout, whole / "skills")
-    result = install(whole)
-    assert result.returncode == 1 and "remove that link" in result.stderr and "move it aside" not in result.stderr
-    assert sorted(entry.name for entry in linked_checkout.iterdir()) == ["cad"]
-    _unlink_folder(whole / "skills")
+    # A skills folder that is itself a link to a checkout's skills, or to its tracked links, is reported as such, and
+    # nothing in it is touched.
+    linked_checkout = tmp_path / "linked"
+    (linked_checkout / "tools").mkdir(parents=True)
+    (linked_checkout / "tools/install-skills.mjs").write_text("", encoding="utf-8")
+    (linked_checkout / ".agents/skills/cad").mkdir(parents=True)
+    (linked_checkout / ".claude/skills").mkdir(parents=True)
+    _link_folder(linked_checkout / ".agents/skills/cad", linked_checkout / ".claude/skills/cad")
+    for skills_of_checkout in (linked_checkout / ".agents/skills", linked_checkout / ".claude/skills"):
+        whole = tmp_path / f"whole{skills_of_checkout.parent.name}"
+        whole.mkdir()
+        _link_folder(skills_of_checkout, whole / "skills")
+        result = install(whole)
+        assert result.returncode == 1 and "remove that link" in result.stderr and "move it aside" not in result.stderr
+        assert sorted(entry.name for entry in skills_of_checkout.iterdir()) == ["cad"]
+        _unlink_folder(whole / "skills")
+    result = install(linked_checkout / ".claude")
+    assert result.returncode == 1 and "set CLAUDE_CONFIG_DIR" in result.stderr
+    assert sorted(entry.name for entry in (linked_checkout / ".claude/skills").iterdir()) == ["cad"]
 
 
 def test_anchors_are_githubs():
