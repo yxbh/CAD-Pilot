@@ -22,8 +22,9 @@ from common.catalog import (
     normalize_cad_ref,
     source_from_path,
 )
-from common.glb import read_step_topology_manifest_from_glb
-from common.render import existing_part_glb_path, part_glb_path
+from common.glb_topology import read_step_topology_manifest_from_glb
+from common.part_names import root_name
+from common.render import part_glb_path
 from common.step_export import ascii_name, create_bin_xcaf_doc, export_xcaf_doc_step_scene
 from common.step_scene import LoadedStepScene, load_step_scene, occurrence_selector_id
 
@@ -99,7 +100,7 @@ class _AssemblyCatalogResolver:
                 kind="part",
                 source_path=resolved,
                 step_path=resolved,
-                glb_path=existing_part_glb_path(resolved) or part_glb_path(resolved),
+                glb_path=part_glb_path(resolved),
             )
         if source.kind == "assembly" and source.script_path is not None:
             try:
@@ -123,7 +124,7 @@ class _AssemblyCatalogResolver:
             source_path=source.source_path,
             step_path=source.step_path,
             stl_path=source.stl_path,
-            glb_path=existing_part_glb_path(source.step_path) or part_glb_path(source.step_path),
+            glb_path=part_glb_path(source.step_path),
         )
 
     def _assembly_spec_for_source(self, source: CadSource) -> AssemblySpec:
@@ -208,7 +209,7 @@ def _load_step_shape(step_path: Path):
 
 
 def _step_has_assembly_artifact(step_path: Path) -> bool:
-    payload = read_step_topology_manifest_from_glb(existing_part_glb_path(step_path) or part_glb_path(step_path))
+    payload = read_step_topology_manifest_from_glb(part_glb_path(step_path))
     if payload is None:
         return False
     root = payload.get("assembly", {}).get("root") if isinstance(payload.get("assembly"), dict) else None
@@ -332,7 +333,7 @@ def _shape_for_part_entry(entry: CatalogEntry, *, use_source_colors: bool, cache
     if cached is not None:
         return cached
     shape = (
-        _load_step_assembly_shape(step_path, label=Path(step_path).stem)
+        _load_step_assembly_shape(step_path, label=root_name(Path(step_path).name))
         if _cached_step_has_assembly_artifact(step_path, cache=cache)
         else _load_step_shape(step_path)
     )
@@ -529,7 +530,7 @@ class _DirectXcafAssemblyWriter:
             return cached
 
         scene = _cached_step_scene(step_path, cache=self.cache)
-        definition_label = self._new_assembly_definition(Path(step_path).stem)
+        definition_label = self._new_assembly_definition(root_name(Path(step_path).name))
         self.step_scene_definitions[key] = definition_label
         if source_color is not None:
             self._set_label_color(definition_label, source_color)
@@ -759,12 +760,12 @@ class _DirectXcafAssemblyWriter:
 
 def export_direct_assembly_step_scene(assembly_spec: AssemblySpec, output_path: Path) -> LoadedStepScene:
     output_path = output_path.expanduser().resolve()
-    writer = _DirectXcafAssemblyWriter(assembly_spec, label=output_path.stem)
+    writer = _DirectXcafAssemblyWriter(assembly_spec, label=root_name(output_path.name))
     doc = writer.build_doc()
     scene = export_xcaf_doc_step_scene(
         doc,
         output_path,
-        label=output_path.stem,
+        label=root_name(output_path.name),
         originating_system="tom-cad direct XCAF assembly",
     )
     return scene

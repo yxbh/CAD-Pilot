@@ -189,7 +189,8 @@ class KernelCheck:
         self._messages: queue.Queue = queue.Queue()
         self._stderr: collections.deque = collections.deque(maxlen=20)
         threading.Thread(target=self._read_stdout, args=(self._process, self._messages), daemon=True).start()
-        threading.Thread(target=self._read_stderr, args=(self._process, self._stderr), daemon=True).start()
+        self._stderr_reader = threading.Thread(target=self._read_stderr, args=(self._process, self._stderr), daemon=True)
+        self._stderr_reader.start()
         try:
             self._process.stdin.write(json.dumps({**self._request, "start": start}))
             self._process.stdin.close()
@@ -255,6 +256,8 @@ class KernelCheck:
             if message is None:
                 self._process.wait()
                 if finished < total:
+                    # Stdout can end before the stderr reader has taken the worker's last line, whatever it says.
+                    self._stderr_reader.join(timeout=5)
                     detail = self._stderr[-1] if self._stderr else f"exit code {self._process.returncode}"
                     result.failure = f"the check stopped unexpectedly ({detail})"
                     result.unchecked = total - finished

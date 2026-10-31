@@ -44,7 +44,7 @@ Enumerate `--topology` only for selector discovery or debugging; it is expensive
 python <cad>/scripts/inspect parts path/to/model.step --format text
 ```
 
-Each part has its name and the path of labelled groups, size, bounding-box centre, local-frame origin, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. A part with no name, or a name a kernel made up (`COMPOUND`, `=>[0:1:1:3]`), is named after its group (`kit 1`, `kit 2`) and, in a STEP from elsewhere, marked unlabelled; an unlabelled group is left out of part paths. CAD Explorer shows the same names. `hygiene --parts`, `clearance`, `gen_poses()` and the Explorer's assembly steps match these names with `*` and `?`; a labelled group's name covers its parts, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` cannot catch an `Anchor v3` root.
+Each part has its name and the path of labelled groups, size, bounding-box centre, local-frame origin, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. A part with no name, a name a kernel made up (`COMPOUND`, `SOLID` and other type names in capitals, `=>[0:1:1:3]`) or a name of digits alone, which other writers use for ids, is named after its group (`kit 1`, `kit 2`) and, in a STEP from elsewhere, marked unlabelled; an unlabelled group is left out of part paths. CAD Explorer shows the same names. `hygiene --parts`, `clearance`, `gen_poses()` and the Explorer's assembly steps match these names with `*` and `?`; a labelled group's name covers its parts, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` cannot catch an `Anchor v3` root.
 
 ## Geometry hygiene
 
