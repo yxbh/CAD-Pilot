@@ -36,6 +36,8 @@ def run(url, output):
             page = browser.new_page(viewport={"width": 1100, "height": 760})
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            # three.js reports a shader that fails to compile on the console.
+            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             page.goto(url)
             session = BrowserSession(page, url, errors)
             parts = len(session.settled()["parts"])

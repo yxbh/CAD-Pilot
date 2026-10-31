@@ -4,7 +4,7 @@ import { useArrangedModel } from "./useArrangedModel.ts";
 import { newestState, type Model, type ViewState } from "./model.ts";
 import { blobDataUrl, type CaptureRequest, type CaptureView, type RenderReport, type ViewerHost } from "./host.ts";
 import { composeReviewImage } from "./drawing/render.ts";
-import { analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
+import { analysisFields, analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
 import { analysisDrawn, type TraceLimits } from "../shared/raytrace.mjs";
 
 const defaultSize = { width: 1280, height: 800 };
@@ -70,10 +70,12 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
       const appearance = trace ? "raytraced" : latest.current.appearance;
-      const drawn = analysisKey(analysisDrawn(appearance, analysis ?? latest.current.analysis));
+      const settings = analysisDrawn(appearance, analysis ?? latest.current.analysis);
+      const drawn = analysisKey(settings);
       if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
           report.background === background && report.analysisKey === drawn && report.appearance === appearance) return;
-      if (frame >= 900 && report?.analysisKey === drawn) break;
+      // Only an analysis view's data is worth waiting longer for.
+      if (frame >= 900 && (report?.analysisKey === drawn || !analysisFields(settings).length)) break;
       await nextFrame();
     }
     throw new Error("The background renderer did not draw the view at the requested size and backdrop");

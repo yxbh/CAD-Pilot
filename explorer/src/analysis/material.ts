@@ -29,11 +29,14 @@ const VERTEX = {
 #if ANALYSIS_MAP == 2 || ANALYSIS_MAP == 3
 attribute float analysisValue;
 varying float vAnalysisValue;
+varying float vAnalysisKnown;
 #endif
 varying vec3 vAnalysisPosition;`,
   "#include <project_vertex>": `#include <project_vertex>
 #if ANALYSIS_MAP == 2 || ANALYSIS_MAP == 3
-vAnalysisValue = analysisValue;
+// A vertex with no value is left out of the blend across its triangles rather than blended in as a huge number.
+vAnalysisKnown = analysisValue > 1e29 ? 0.0 : 1.0;
+vAnalysisValue = analysisValue * vAnalysisKnown;
 #endif
 vAnalysisPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
 };
@@ -52,6 +55,7 @@ uniform vec3 analysisZebraLight;
 uniform vec3 analysisZebraDark;
 #if ANALYSIS_MAP == 2 || ANALYSIS_MAP == 3
 varying float vAnalysisValue;
+varying float vAnalysisKnown;
 #endif
 varying vec3 vAnalysisPosition;
 vec3 analysisRampColor(float t) { return texture(analysisRamp, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb; }`,
@@ -67,7 +71,9 @@ vec3 analysisRampColor(float t) { return texture(analysisRamp, vec2(clamp(t, 0.0
   else if (fromVertical > analysisThreshold + 1e-4) diffuseColor.rgb = analysisRampColor((fromVertical - analysisThreshold) / (PI * 0.5 - analysisThreshold));
 }
 #elif ANALYSIS_MAP == 2 || ANALYSIS_MAP == 3
-diffuseColor.rgb = vAnalysisValue > 1e29 ? analysisNoValue : analysisRampColor((vAnalysisValue - analysisRange.x) / (analysisRange.y - analysisRange.x));
+// Nearer a vertex with no value, no value; elsewhere the blend of the vertices that have one.
+diffuseColor.rgb = vAnalysisKnown < 0.5 ? analysisNoValue
+  : analysisRampColor((vAnalysisValue / vAnalysisKnown - analysisRange.x) / (analysisRange.y - analysisRange.x));
 #endif
 #ifdef ANALYSIS_BACKFACES
 if (!gl_FrontFacing) diffuseColor.rgb = analysisBackface;

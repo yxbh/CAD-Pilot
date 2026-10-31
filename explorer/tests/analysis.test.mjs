@@ -108,7 +108,8 @@ test("render and capture flags spell set_analysis inputs, choosing the map their
   assert.deepEqual(analysisOptions({ curvature: "gaussian:0.01" }), { map: "curvature", curvature: "gaussian", curvatureScale: 0.01 });
   assert.deepEqual(analysisOptions({ overlays: "triangles,normals" }), { triangleEdges: true, backfaces: false, normals: true });
   assert.deepEqual(analysisOptions({ overlays: "none", map: "zebra" }), { map: "zebra", triangleEdges: false, backfaces: false, normals: false });
-  for (const [flags, message] of [[{ wall: "1", map: "zebra" }, /--wall belongs to --map thickness/], [{ map: "heat" }, /--map takes/],
+  for (const [flags, message] of [[{ wall: "1", map: "zebra" }, /--wall belongs to --map thickness, not --map zebra/],
+    [{ overhang: "30", wall: "1" }, /--wall belongs to --map thickness, not --overhang/], [{ map: "heat" }, /--map takes/],
     [{ overlays: "wireframe" }, /--overlays takes/], [{ overlays: "" }, /--overlays takes/], [{ overhang: "steep" }, /--overhang needs a number/],
     [{ overhang: "45:up" }, /--overhang: A build direction/]]) {
     assert.throws(() => analysisOptions(flags), message, JSON.stringify(flags));

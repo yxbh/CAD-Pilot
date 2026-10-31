@@ -111,13 +111,17 @@ const buildDirection = (text, flag) => {
 export function analysisOptions(flags) {
   if (!ANALYSIS_FLAGS.some((flag) => flags[flag] !== undefined)) return undefined;
   const input = {};
+  // The option that chose the map: --overhang, --wall and --curvature each choose their own, so two of them conflict.
+  let chosen = "";
   const choose = (map, flag) => {
-    if (flags.map !== undefined && flags.map !== map) throw new PrototypeError("bad_arguments", `${flag} belongs to --map ${map}, not --map ${flags.map}`);
+    if (input.map !== undefined && input.map !== map) throw new PrototypeError("bad_arguments", `${flag} belongs to --map ${map}, not ${chosen}`);
     input.map = map;
+    chosen = flag;
   };
   if (flags.map !== undefined) {
     if (!ANALYSIS_MAPS.includes(flags.map)) throw new PrototypeError("bad_arguments", `--map takes ${ANALYSIS_MAPS.join(", ")}; got "${flags.map}"`);
     input.map = flags.map;
+    chosen = `--map ${flags.map}`;
   }
   if (flags.overlays !== undefined) {
     const names = flags.overlays === "none" ? [] : flags.overlays.split(",").map((name) => name.trim()).filter(Boolean);
