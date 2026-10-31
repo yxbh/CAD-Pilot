@@ -1,17 +1,16 @@
 """scripts/step reports generated solids it cannot vouch for, and still writes them.
 
 Fake workers stand in for the boolean kernel where a test needs a check that
-hangs or fails; the end-to-end cases run ``scripts/step`` on small models.
+hangs or fails; the end-to-end cases run ``scripts/step`` on small models, the
+models that take the same options in one run.
 """
 
 import io
 import os
-import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -20,11 +19,7 @@ from common import generation as cad_generation
 from common.cli_logging import CliLogger
 from common.solid_check import TIME_SCALE_VARIABLE, CheckedSolid, KernelCheck, KernelReport
 from common.step_scene import LoadedStepScene
-
-
-SCRIPTS_ROOT = Path(__file__).resolve().parents[2]
-# The end-to-end runs share the CPU with other tests, so their kernel checks get four times the default budgets.
-STRETCHED_BUDGETS = {**os.environ, TIME_SCALE_VARIABLE: "4"}
+from common.tests.step_runs import generate, generate_by_options, lines_naming, write_models
 
 # Reads the worker request and defines emit(), like the real worker's protocol.
 FAKE_WORKER = textwrap.dedent(
@@ -224,8 +219,8 @@ ASSEMBLY = textwrap.dedent(
     """\
     def gen_step():
         return {"children": [
-            {"name": "left", "path": "three_handles.step", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]},
-            {"name": "right", "path": "three_handles.step", "transform": [1, 0, 0, 200, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]},
+            {"name": "left", "path": "../three_handles/three_handles.step", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]},
+            {"name": "right", "path": "../three_handles/three_handles.step", "transform": [1, 0, 0, 200, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]},
         ]}
     """
 )
@@ -236,22 +231,9 @@ class StepSolidCheckTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._tempdir = tempfile.TemporaryDirectory(prefix="solid-check-")
         cls.project = Path(cls._tempdir.name)
-
-        def generate(name: str) -> subprocess.CompletedProcess:
-            return subprocess.run(
-                [sys.executable, str(SCRIPTS_ROOT / "step"), f"{name}.py", "--stl", f"{name}.stl", *OPTIONS.get(name, ())],
-                cwd=cls.project,
-                env=STRETCHED_BUDGETS,
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-
-        for name, source in {**MODELS, "handle_pair": ASSEMBLY}.items():
-            (cls.project / f"{name}.py").write_text(source, encoding="utf-8")
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            cls.runs = dict(zip(MODELS, pool.map(generate, MODELS)))
-        cls.runs["handle_pair"] = generate("handle_pair")
+        write_models(cls.project, {**MODELS, "handle_pair": ASSEMBLY})
+        cls.runs = generate_by_options(cls.project, {name: ("--stl", "part.stl", *OPTIONS.get(name, ())) for name in MODELS})
+        cls.runs["handle_pair"] = generate(cls.project, ["handle_pair"], "--stl", "part.stl")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -260,33 +242,38 @@ class StepSolidCheckTests(unittest.TestCase):
     def problems(self, name: str) -> list[str]:
         run = self.runs[name]
         self.assertEqual(0, run.returncode, run.stdout + run.stderr)
-        self.assertTrue((self.project / f"{name}.step").is_file())
+        self.assertTrue((self.project / name / f"{name}.step").is_file())
         # Only scripts/step's own reports: libraries a generator loads (fontconfig on Linux, for one) warn too.
-        return [line for line in run.stderr.splitlines() if line.startswith(("[scripts/step] warning:", "[scripts/step] notice:"))]
+        reports = {
+            model: [line for line in lines if line.startswith(("[scripts/step] warning:", "[scripts/step] notice:"))]
+            for model, lines in lines_naming(run, [*MODELS, "handle_pair"]).items()
+        }
+        self.assertEqual([], reports.get(None, []), "every report names its model")
+        return reports.get(name, [])
 
     def test_fold_found_on_the_written_step(self) -> None:
         problems = self.problems("lettered_block")
         self.assertEqual(1, len(problems), problems)
-        self.assertRegex(problems[0], r"lettered_block\.py is not a sound solid( as read back from its STEP)?: \d+ self-intersection")
+        self.assertRegex(problems[0], r"lettered_block/lettered_block\.py is not a sound solid( as read back from its STEP)?: \d+ self-intersection")
 
     def test_placed_copies_share_one_check(self) -> None:
         problems = self.problems("three_handles")
         self.assertEqual(1, len(problems), problems)
-        self.assertIn("warning: three_handles.py is not a sound solid: ", problems[0])
+        self.assertIn("warning: three_handles/three_handles.py is not a sound solid: ", problems[0])
 
     def test_open_and_inside_out_parts(self) -> None:
         self.assertEqual(
-            ["inside_out.py is inside out: its faces point inward, so its volume is negative."],
+            ["inside_out/inside_out.py is inside out: its faces point inward, so its volume is negative."],
             [line.split("warning: ")[1].split(" Slicers")[0] for line in self.problems("inside_out")],
         )
         self.assertEqual(
-            ["open_box.py is not a closed solid: 5 faces do not enclose a volume."],
+            ["open_box/open_box.py is not a closed solid: 5 faces do not enclose a volume."],
             [line.split("warning: ")[1].split(" Slicers")[0] for line in self.problems("open_box")],
         )
 
     def test_the_check_can_be_skipped(self) -> None:
         self.assertEqual([], self.problems("unchecked_handle"))
-        self.assertTrue((self.project / "unchecked_handle.stl").is_file())
+        self.assertTrue((self.project / "unchecked_handle" / "part.stl").is_file())
 
     def test_assemblies_do_not_recheck_the_parts_they_place(self) -> None:
         self.assertEqual([], self.problems("handle_pair"))
