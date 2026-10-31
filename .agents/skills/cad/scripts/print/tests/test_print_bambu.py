@@ -487,6 +487,8 @@ def test_a_timed_out_run_is_retried_plate_by_plate_until_a_lone_plate_times_out(
     assert first.seconds == 60.0 and first.error is None
     assert second.error == "Bambu Studio did not finish within 1800 s"
     assert third.error.startswith("not sliced: plate 2 alone ran past the 1800 s limit")
+    # The plate may stall the slicer, or the command line may hang whatever it slices.
+    assert "fix or remove it" in third.error and "command line hangs whatever it slices" in third.error
     assert not report.ok
 
 

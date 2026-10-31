@@ -123,7 +123,8 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
             if stalled is not None:
                 plate.error = (
                     f"not sliced: plate {stalled} alone ran past the {timeout:g} s limit, so the plates after it were "
-                    "not tried; fix or remove that plate and slice again"
+                    "not tried. Either that plate stalls the slicer, so fix or remove it, or Bambu Studio's command line "
+                    "hangs whatever it slices; slicing the project in the Bambu Studio app tells which"
                 )
                 continue
             data, sliced, result = run(number)
