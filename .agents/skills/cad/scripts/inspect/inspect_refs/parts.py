@@ -5,6 +5,7 @@ from __future__ import annotations
 from common import cad_ref_syntax as syntax
 from common.part_names import tree_names
 from common.selector_types import SelectorProfile
+from common.step_parts import root_name
 
 from . import lookup
 from .inspect import EntryContextProvider, load_entry_context_for_target
@@ -48,8 +49,7 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
     context = load_entry_context_for_target(target, profile=SelectorProfile.REFS, context_provider=context_provider)
     index = context.selector_index
     assert index is not None
-    root_name = context.cad_path.rsplit("/", 1)[-1]
-    names, paths = occurrence_names(index, root_name=root_name)
+    names, paths = occurrence_names(index, root_name=root_name(context.cad_path))
     shapes_by_occurrence: dict[str, list[dict[str, object]]] = {}
     for shape in index.shapes:
         shapes_by_occurrence.setdefault(str(shape.get("occurrenceId") or ""), []).append(shape)

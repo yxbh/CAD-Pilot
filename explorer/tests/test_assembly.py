@@ -70,7 +70,7 @@ def _document(tmp_path, steps, peg_radius=4.9, check=True):
 def _parts(tmp_path, root):
     step = tmp_path / "parts.step"
     export_build123d_step_scene(root, step)
-    return load_step_parts(step, step.name).parts
+    return load_step_parts(step).parts
 
 
 def _occurrences(parts):
@@ -232,6 +232,18 @@ def test_unlabelled_parts_are_named_as_the_step_names_them(tmp_path):
     parts = _parts(tmp_path, kit)
     steps = assembly.normalize_steps({"steps": [{"title": "Bolt", "parts": ["kit 2"], "from": (0, 0, 30)}]}, parts)
     assert _occurrences(steps[0]["leaves"]) == ["kit 2"]
+
+
+def test_parts_of_an_unlabelled_root_are_named_after_the_step_file(tmp_path):
+    from build123d import Box, Compound, Pos, export_step
+
+    # build123d's own writer labels nothing, as STEPs from elsewhere often do: the root and its parts are named after
+    # the file without its suffix, as `inspect parts` and CAD Explorer name them.
+    source, _ = _write(tmp_path, [{"title": "Bolt", "parts": ["plain 2"], "from": (0, 0, 30)}])
+    step = tmp_path / "outputs" / "plain.step"
+    export_step(Compound(children=[Box(20, 20, 2), Pos(0, 0, 5) * Box(2, 2, 8)]), step)
+    assert _occurrences(load_step_parts(step).parts) == ["plain 1", "plain 2"]
+    assert assembly.build_document(source, step, False, 1.0)["steps"][0]["parts"] == ["plain 2"]
 
 
 def test_groups_count_occurrences_and_no_step_moves_every_part(tmp_path):

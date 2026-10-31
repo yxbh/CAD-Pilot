@@ -232,7 +232,7 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
         raise SequenceError("Sample spacing must be 0.05 to 10 mm")
     raw = _sequence_source(source)
     try:
-        parts = load_step_parts(step_path, step_path.name).parts
+        parts = load_step_parts(step_path).parts
     except Exception as error:  # OCCT read failures surface as many exception types.
         raise SequenceError(f"Could not read the STEP file {step_path}: {error}") from error
     steps = normalize_steps(raw, parts)
