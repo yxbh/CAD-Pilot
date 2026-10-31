@@ -23,7 +23,6 @@ access or friction, and features thinner than the sample spacing can be stepped 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -38,6 +37,7 @@ from OCP.gp import gp_Trsf, gp_Vec
 # The cad skill owns loading generators, naming a STEP's parts and matching patterns to them.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agents" / "skills" / "cad" / "scripts"))
 
+from common.cache import sha256_file  # noqa: E402
 from common.clearance import OVERLAP_TOLERANCE_MM3, shared_volume  # noqa: E402
 from common.generator_module import GeneratorImportError, MissingGeneratorError, call_generator, load_generator  # noqa: E402
 from common.paths import command_line_path  # noqa: E402
@@ -232,6 +232,7 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
         raise SequenceError("Sample spacing must be 0.05 to 10 mm")
     raw = _sequence_source(source)
     try:
+        step_hash = sha256_file(step_path)  # before parsing, so the file is stamped with the bytes its parts came from
         parts = load_step_parts(step_path).parts
     except Exception as error:  # OCCT read failures surface as many exception types.
         raise SequenceError(f"Could not read the STEP file {step_path}: {error}") from error
@@ -240,7 +241,7 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
     document = {
         "format": FORMAT, "version": VERSION, "units": "mm",
         "source": _relative_source(source, step_path),
-        "step": {"file": step_path.name, "sha256": hashlib.sha256(step_path.read_bytes()).hexdigest()},
+        "step": {"file": step_path.name, "sha256": step_hash},
         "steps": [
             {"title": step["title"], **({"note": step["note"]} if step["note"] else {}), "parts": step["parts"], "from": step["from"],
              **({"check": result} if result else {})}
