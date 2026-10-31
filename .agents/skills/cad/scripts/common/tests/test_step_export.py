@@ -10,6 +10,7 @@ from pathlib import Path
 import build123d
 
 from common.step_export import export_build123d_step_scene
+from common.step_parts import load_step_parts, match_parts
 from common.step_scene import load_step_scene, scene_occurrence_shape
 
 
@@ -211,6 +212,23 @@ class StepExportNamingTests(unittest.TestCase):
 
         self.assertIn(b"'plain (big)'", step_path.read_bytes())
         self.assertNotIn(b"\\X", step_path.read_bytes())
+
+    def test_a_part_named_like_a_shape_type_keeps_its_name(self) -> None:
+        # Kernels name unlabelled shapes SHELL or SOLID; a mould's "shell" is someone's choice.
+        shell = build123d.Solid.make_box(2, 3, 4)
+        shell.label = "shell"
+        lid = build123d.Pos(10, 0, 0) * build123d.Solid.make_box(2, 3, 1)
+        lid.label = "Solid"
+        step_path = self.root / "mould.step"
+
+        written = export_build123d_step_scene(build123d.Compound(children=[shell, lid], label="mould"), step_path)
+
+        self.assertEqual((), written.unlabelled_parts)
+        self.assertEqual(["shell", "Solid"], _occurrence_names(step_path.read_bytes()))
+        parts = load_step_parts(step_path).parts
+        self.assertEqual(["shell", "Solid"], [part.name for part in parts])
+        matched, missing = match_parts(["shell"], parts)
+        self.assertEqual((["shell"], []), ([part.name for part in matched], missing))
 
     def test_unnamed_labels_do_not_crash_scene_loading(self) -> None:
         # OCP's TDF_Label.FindAttribute dereferences null for an absent name and

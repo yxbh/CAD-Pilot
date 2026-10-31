@@ -100,6 +100,8 @@ export async function reloadInto(record, file, options = {}) {
 
 // The viewer outlives the command (and the chat session) that started it, so its links stay valid. Its log
 // can contain the tokened URL, so it is owner-only; concurrent starts append rather than truncate each other.
+// It runs from the workbench, told its project, so neither it nor its renderer's browser holds the project folder
+// as a working directory, which Windows would let no one delete or rename while they run.
 export function spawnDetached(location, file, options = {}) {
   mkdirSync(path.dirname(location.log), { recursive: true });
   const output = openSync(location.log, "a", 0o600);
@@ -109,8 +111,8 @@ export function spawnDetached(location, file, options = {}) {
     const logStart = fstatSync(output).size;
     const optionArgs = Object.entries(options).map(([key, value]) => `${key}=${value}`);
     const child = spawn(process.execPath, [standaloneScript, ...(file ? [file, ...optionArgs] : [])], {
-      cwd: location.project, detached: true, windowsHide: true, stdio: ["ignore", output, output],
-      env: { ...process.env, CAD_EXPLORER_VIEW: location.viewId, CAD_EXPLORER_RUNTIME_ROOT: location.runtimeRoot },
+      cwd: explorerRoot, detached: true, windowsHide: true, stdio: ["ignore", output, output],
+      env: { ...process.env, CAD_EXPLORER_PROJECT: location.project, CAD_EXPLORER_VIEW: location.viewId, CAD_EXPLORER_RUNTIME_ROOT: location.runtimeRoot },
     });
     child.unref();
     return { child, logStart };
