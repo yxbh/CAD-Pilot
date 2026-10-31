@@ -72,6 +72,25 @@ class GeneratorModuleTests(unittest.TestCase):
                 values.append(load_generator(script).VALUE)
         self.assertEqual(["aaa", "bbb"], values)
 
+    def test_a_generator_runs_without_the_loaders_future_imports_and_its_dataclasses_load(self) -> None:
+        script = self.write(
+            "review/model.py",
+            """\
+            from dataclasses import dataclass
+
+            @dataclass
+            class Size:
+                width: float
+
+            def gen_step(width: float) -> float:
+                return Size(width).width
+            """,
+        )
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            module = load_generator(script)
+        self.assertEqual({"width": float, "return": float}, module.gen_step.__annotations__)
+        self.assertEqual(2.0, module.gen_step(2.0))
+
     def test_same_named_sibling_modules_of_two_generators_are_each_their_own(self) -> None:
         for folder, width in (("a", 10), ("b", 99)):
             (self.root / folder).mkdir()

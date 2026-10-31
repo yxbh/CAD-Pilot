@@ -101,8 +101,9 @@ def load_generator(script_path: Path, *, display_path: str | None = None) -> Mod
     try:
         with _project_imports(resolved):
             # Compile the source itself: a cached .pyc is checked only against the source's whole-second mtime and
-            # size, so an edit of the same length within a second would otherwise run the old code.
-            exec(compile(resolved.read_bytes(), str(resolved), "exec"), module.__dict__)
+            # size, so an edit of the same length within a second would otherwise run the old code. dont_inherit
+            # keeps this file's own __future__ imports out of the generator's code.
+            exec(compile(resolved.read_bytes(), str(resolved), "exec", dont_inherit=True), module.__dict__)
     except ModuleNotFoundError as exc:
         sys.modules.pop(module_spec.name, None)
         raise GeneratorImportError(missing_module_message(exc, display_path=display_path or resolved.name)) from exc
