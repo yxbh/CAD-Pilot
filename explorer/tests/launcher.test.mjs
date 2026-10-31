@@ -110,6 +110,10 @@ test("open reads --units and --up, and each command refuses options it does not 
   await assert.rejects(run(["open", "--units", "mm"], { cwd: directory, open }), /name the file/);
   await assert.rejects(run(["state", "--units", "mm"], { cwd: directory }), /state does not take --units/);
   await assert.rejects(run(["capture", "--hide", "lid", "--step", "2"], { cwd: directory }), /capture does not take --hide or --step/);
+  // A misspelt option is refused, not read as an argument: prune --dryrun must not prune.
+  await assert.rejects(run(["prune", "--dryrun"], { cwd: directory }), /Unknown option --dryrun/);
+  await assert.rejects(run(["actions", "extra"], { cwd: directory }), /actions takes no arguments, got extra/);
+  await assert.rejects(run(["capture", "reviews/a.png", "reviews/b.png"], { cwd: directory }), /capture takes one path, got reviews\/a\.png reviews\/b\.png/);
   assert.equal(opened.length, 2);
 });
 
