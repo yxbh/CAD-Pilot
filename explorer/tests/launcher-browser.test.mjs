@@ -31,6 +31,12 @@ async function corner(file) {
   return stdout.trim().split(" ").map(Number);
 }
 
+// The width in pixels of everything drawn over the backdrop that fills the top-left pixel.
+async function drawnWidth(file) {
+  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image, ImageChops; i = Image.open(sys.argv[1]).convert('RGB'); box = ImageChops.difference(i, Image.new('RGB', i.size, i.getpixel((0, 0)))).getbbox(); print(box[2] - box[0])", file]);
+  return Number(stdout);
+}
+
 async function pngSize(file) {
   const bytes = await readFile(file);
   assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
@@ -167,7 +173,7 @@ test("capture draws in the background into the project at any size and rejects o
   }
 });
 
-test("render writes a STEP's image without touching the project's viewer or saved setups", { timeout: 240_000 }, async (t) => {
+test("render writes a STEP's image without touching the project's viewer or saved setups and reports the camera it drew", { timeout: 240_000 }, async (t) => {
   const { explorer, project, runtimeRoot } = await launcherFixture(t);
   const opened = (await explorer("open")).json();
   await copyFile(path.join(runtimeRoot, "demo-assembly.step"), path.join(project, "demo.step"));
@@ -176,7 +182,7 @@ test("render writes a STEP's image without touching the project's viewer or save
     "--section", "y", "--appearance", "studio", "--background", "#f2f1ec");
   assert.equal(rendered.code, 0, rendered.stderr);
   const result = rendered.json();
-  assert.deepEqual([result.saved, result.width, result.height, result.camera], ["docs/demo.png", 400, 300, "30:20"]);
+  assert.deepEqual([result.saved, result.width, result.height, result.camera.view, result.camera.projection], ["docs/demo.png", 400, 300, "30:20", "perspective"]);
   assert.equal(result.section.axis, "y");
   assert.deepEqual(await pngSize(path.join(project, "docs", "demo.png")), [400, 300]);
   assert.deepEqual(await readdir(path.join(runtimeRoot, "views")), views, "a one-shot render saves no setup");
@@ -192,6 +198,21 @@ test("render writes a STEP's image without touching the project's viewer or save
   const everything = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "*");
   assert.equal(everything.code, 1);
   assert.match(everything.stderr, /would hide every part/);
+  // An orthographic render shows viewHeight / height millimetres per pixel at any size: seen from the front, the demo's
+  // base plate (python/create_demo.py BASE_WIDTH) is its widest part, 100 mm across.
+  const scales = [];
+  for (const size of ["400x300", "800x600"]) {
+    const front = await explorer("render", "demo.step", "docs/front.png", "--size", size, "--view", "front", "--projection", "orthographic", "--background", "#ffffff");
+    assert.equal(front.code, 0, front.stderr);
+    const { camera, height } = front.json();
+    assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
+    assert.deepEqual([camera.view, camera.projection], ["front", "orthographic"]);
+    const pixel = camera.viewHeight / height;
+    const millimetres = await drawnWidth(path.join(project, "docs", "front.png")) * pixel;
+    assert.ok(Math.abs(millimetres - 100) <= 2 * pixel, `${size}: ${millimetres} mm drawn at ${pixel} mm per pixel`);
+    scales.push(pixel);
+  }
+  assert.ok(Math.abs(scales[0] / scales[1] - 2) < 1e-9, "twice the size, half the millimetres per pixel");
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {
