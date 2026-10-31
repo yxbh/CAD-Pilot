@@ -66,7 +66,7 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
           report.background === background) return;
       await nextFrame();
     }
-    throw new Error("The background renderer did not draw the view at the requested size");
+    throw new Error("The background renderer did not draw the view at the requested size and backdrop");
   }, []);
 
   const onCapture = useCallback((request: CaptureRequest) => {
