@@ -83,6 +83,11 @@ class CliHostTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertAlike(self.script(name, source))
 
+    def test_a_command_that_makes_a_temporary_folder_leaves_its_host_running(self) -> None:
+        script = self.script("temporary.py", "import os, tempfile\nwith tempfile.TemporaryDirectory():\n    print(os.getpid())\n")
+        first, second = (cli_host.run(script, cwd=self.root) for _ in range(2))
+        self.assertEqual((0, first.stdout), (second.returncode, second.stdout))
+
     def test_message_levels_one_command_turns_down_are_back_for_the_next(self) -> None:
         # STEP export turns OCCT's messages down to failures for the rest of a process.
         quiet = self.script("quiet.py", """\

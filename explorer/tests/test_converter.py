@@ -4,8 +4,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import subprocess
-import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -31,6 +29,8 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_ColorSurf, XCAFDoc_DocumentTool
 from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
+
+from common.tests import cli_host
 
 PYTHON_DIR = Path(__file__).resolve().parents[1] / "python"
 
@@ -96,10 +96,7 @@ def _write_direct(path, shape=None):
 
 
 def _run(script, *args, cwd):
-    return subprocess.run(
-        [sys.executable, "-B", str(PYTHON_DIR / script), *map(str, args)],
-        cwd=cwd, capture_output=True, text=True, timeout=90, check=False,
-    )
+    return cli_host.run(PYTHON_DIR / script, *map(str, args), cwd=cwd, timeout=90)
 
 
 def _assert_contract(model):
