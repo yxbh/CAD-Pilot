@@ -14,7 +14,7 @@ import { HeadlessApp } from "./HeadlessApp.tsx";
 import {
   Box, Camera, Copy, Crosshair, Expand, Eye, EyeOff, FilePlus, FolderOpen, Ghost, ListOrdered,
   Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
-  Slice, TriangleAlert,
+  Slice, TriangleAlert, ScanSearch,
 } from "lucide-react";
 import { MODEL_EXTENSIONS } from "../shared/mesh.mjs";
 import { axisViews, type ViewPreset } from "./camera.ts";
@@ -22,6 +22,8 @@ import { IconButton } from "./ui/IconButton";
 import { ImportWarnings } from "./ui/ImportWarnings.tsx";
 import { SectionPanel } from "./ui/SectionPanel.tsx";
 import { AssemblyPanel } from "./ui/AssemblyPanel.tsx";
+import { AnalysisPanel } from "./ui/AnalysisPanel.tsx";
+import { analysisSummary } from "../shared/analysis.mjs";
 import "./style.css";
 
 class ViewerBoundary extends React.Component<{ children: React.ReactNode }, { error: string }> {
@@ -45,6 +47,7 @@ export function App({ host }: { host: ViewerHost }) {
   const [warningsTarget, setWarningsTarget] = useState<HTMLDivElement | null>(null);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const referenceField = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   // One file picker serves Open and Add file; this says which the next pick is for.
@@ -200,12 +203,17 @@ export function App({ host }: { host: ViewerHost }) {
               <IconButton label="Studio appearance" icon={Sun} aria-pressed={state?.appearance === "studio"}
                 onClick={() => run("set_appearance", { mode: "studio" })} />
               <IconButton label="Appearance settings" icon={SlidersHorizontal} aria-expanded={appearanceOpen}
-                onClick={() => { setAppearanceOpen(!appearanceOpen); section.setOpen(false); }} />
+                onClick={() => { setAppearanceOpen(!appearanceOpen); section.setOpen(false); setAnalysisOpen(false); }} />
             </div>
             <div className="tool-group" role="group" aria-label="Section view">
               <IconButton label="Section view" icon={Slice} aria-expanded={section.open}
                 className={state?.section.enabled ? "section-active" : ""}
-                onClick={() => { section.setOpen(!section.open); setAppearanceOpen(false); }} />
+                onClick={() => { section.setOpen(!section.open); setAppearanceOpen(false); setAnalysisOpen(false); }} />
+            </div>
+            <div className="tool-group" role="group" aria-label="Analysis views">
+              <IconButton label="Analysis views: overhangs, wall thickness, curvature, zebra stripes, triangle edges, back faces and normals" icon={ScanSearch}
+                aria-expanded={analysisOpen} className={state && analysisSummary(state.analysis) ? "section-active" : ""}
+                onClick={() => { setAnalysisOpen(!analysisOpen); setAppearanceOpen(false); section.setOpen(false); }} />
             </div>
             <div className="tool-group" role="group" aria-label="Selection mode">
               <IconButton label="Faces" icon={ScanFace} aria-pressed={state?.selectionMode === "face"} onClick={() => run("set_selection_mode", { mode: "face" })} />
@@ -236,6 +244,8 @@ export function App({ host }: { host: ViewerHost }) {
         <p>Visual finish only. STEP colors and geometry are unchanged.</p>
       </div>}
       {section.open && !drawingActive && <SectionPanel control={section} busy={busy} />}
+      {analysisOpen && !drawingActive && state && <AnalysisPanel analysis={state.analysis} busy={busy}
+        apply={(input) => void run("set_analysis", input)} onClose={() => setAnalysisOpen(false)} />}
       <section className={`workspace${treeOpen ? "" : " panel-closed"}`}>
         <div className="import-warnings-layer" ref={setWarningsTarget} />
         <div className="viewport">

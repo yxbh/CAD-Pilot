@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs/promises";
 import path from "node:path";
-import { changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
+import { analysisInput, changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
+import { analysisFields, analysisKey, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -28,7 +29,7 @@ const maxImageBytes = 40 * 1024 * 1024;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const publicError = (error) => error instanceof Error ? error.message : String(error);
 // An open viewer page usually draws within a frame or two; it gets this long before the background renderer starts,
-// or up to viewerLoadGraceMs while it is still meshing a model it has just fetched.
+// or up to viewerLoadGraceMs while it is still meshing a model it has just fetched or working out an analysis view.
 const viewerGraceMs = 1500;
 const viewerLoadGraceMs = 15_000;
 const renderTimeoutMs = 90_000;
@@ -142,6 +143,10 @@ async function startOwnedService({
     try { validateSection(savedSection); }
     catch (error) { throw new PrototypeError("invalid_saved_section", `Invalid saved section settings: ${error.message}`, 422); }
   }
+  if (saved?.state?.analysis !== undefined) {
+    try { validateAnalysis(saved.state.analysis); }
+    catch (error) { throw new PrototypeError("invalid_saved_analysis", `Invalid saved analysis settings: ${error.message}`, 422); }
+  }
   // Files a restore left out are reported by the start that left them out, not by later ones.
   let state = { ...initialState(), ...saved?.state, droppedFiles: [] };
   delete state.autoAdd;
@@ -239,7 +244,10 @@ async function startOwnedService({
     }
     const current = getState();
     const report = { viewer: lastRendered, headless: lastHeadless }[current.renderers.drawn];
-    return stateSummary(current, { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera });
+    return stateSummary(current, {
+      url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera,
+      drawnAnalysis: report?.revision === current.revision && report.analysisKey === analysisKey(current.analysis) ? report.analysisStats : undefined,
+    });
   }
 
   async function python(script, args) {
@@ -478,6 +486,9 @@ async function startOwnedService({
   // Only a page in front meshes and draws: a hidden tab fetches the model but draws nothing until it is shown again.
   const viewerMeshing = () => viewerFetch?.visible && viewerFetch.topologyRevision === state.topologyRevision
     && lastRendered?.topologyRevision !== state.topologyRevision;
+  // A page in front that has drawn this model, but not yet its analysis view, is working out that view's data.
+  const viewerAnalysing = () => viewerFetch?.visible && analysisFields(state.analysis).length > 0
+    && lastRendered?.topologyRevision === state.topologyRevision && lastRendered.analysisKey !== analysisKey(state.analysis);
 
   // Resolves once a renderer has drawn this revision. With no open (or no answering) viewer page, the background
   // renderer is started, so a hidden or closed tab never leaves a view unconfirmed. Once it has started, the
@@ -502,7 +513,7 @@ async function startOwnedService({
       if (dependsOnHeadless(by)) return start();
       const patience = Date.now() + viewerLoadGraceMs;
       const check = () => {
-        if (viewerMeshing() && Date.now() < patience) waiter.grace = setTimeout(check, 250);
+        if ((viewerMeshing() || viewerAnalysing()) && Date.now() < patience) waiter.grace = setTimeout(check, 250);
         else start();
       };
       waiter.grace = setTimeout(check, viewerGraceMs);
@@ -587,8 +598,14 @@ async function startOwnedService({
   // itself as the client so the image matches what that person sees.
   // The background page has one drawing surface, so its captures (each with its own size and backdrop) take turns.
   async function captureImage(input = {}) {
-    const { client, ...requested } = input;
+    const { client, analysis, ...requested } = input;
     const options = captureOptions(requested);
+    // An image's own analysis settings are drawn by the background renderer, which waits for the data they need.
+    if (analysis !== undefined) {
+      if (client !== undefined) throw new PrototypeError("bad_capture", "A viewer page captures what it shows; capture without a client to choose analysis settings");
+      if (state.activeReviewId) throw new PrototypeError("bad_capture", "A drawing review captures its saved image; return to the model to choose analysis settings");
+      options.analysis = analysisInput(state.analysis, analysis);
+    }
     if (client !== undefined) return captureFrom(client, options);
     const turn = headlessCaptures.then(() => captureFrom(undefined, options));
     headlessCaptures = turn.catch(() => {});
@@ -615,7 +632,7 @@ async function startOwnedService({
       const timer = setTimeout(() => {
         captures.delete(id);
         reject(new PrototypeError("capture_timeout", "The renderer did not return an image", 408));
-      }, 30_000);
+      }, options.analysis && analysisFields(options.analysis).length ? renderTimeoutMs : 30_000);
       const request = { id, revision, reviewId: review?.id ?? null, reviewVersion: review?.version, ...options };
       captures.set(id, { ...request, kind: target[1].kind, resolve, reject, timer });
       send(target[0], "capture", request);
@@ -629,6 +646,8 @@ async function startOwnedService({
     if (bytes.length > maxImageBytes || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new PrototypeError("invalid_image", "Invalid or oversized PNG");
     if (payload.camera) validateCamera(payload.camera);
     const imagePath = path.join(captureDir, `${hash(bytes).slice(0, 32)}.png`);
+    // The analysis the image shows, with the numbers its legend printed.
+    const analysis = analysisReport(pending.analysis ?? state.analysis, payload.analysisStats);
     const result = {
       path: imagePath, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20), by: pending.kind,
       revision: state.revision, documentRevision: state.documentRevision, topologyRevision: state.topologyRevision,
@@ -638,6 +657,7 @@ async function startOwnedService({
       camera: payload.camera ?? state.camera, cameraPreset: state.cameraPreset, cameraPinned: state.cameraPinned, projection: state.projection,
       appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
       section: state.section,
+      ...(analysis ? { analysis } : {}),
     };
     if (await stat(imagePath).then(() => true, () => false)) await markUsed(imagePath);
     else await writeFile(imagePath, bytes);

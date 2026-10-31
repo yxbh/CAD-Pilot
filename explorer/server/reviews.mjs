@@ -6,6 +6,7 @@ import { PrototypeError } from "./protocol.mjs";
 import { atomicJson } from "./storage.mjs";
 import { validateCamera as validateViewCamera } from "../shared/view-settings.mjs";
 import { validateSection } from "../shared/section.mjs";
+import { analysisSummary } from "../shared/analysis.mjs";
 
 const reviewId = /^[a-f0-9-]{36}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -125,6 +126,7 @@ export class ReviewStore {
         selectedEdge: state.selectedEdge ?? null,
         camera: capture.camera,
         appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
+        ...(analysisSummary(state.analysis) ? { analysis: analysisSummary(state.analysis) } : {}),
         section: { ...state.section },
       },
       image: { dataUrl: capture.dataUrl, width, height },

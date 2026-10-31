@@ -22,6 +22,8 @@ export type Review = {
     appearance?: ViewState["appearance"];
     materialFinish?: ViewState["materialFinish"];
     showEdges?: boolean;
+    // The analysis the captured image shows, as answers summarize it.
+    analysis?: Record<string, unknown>;
     section?: ViewState["section"];
     step?: number;
     stepMode?: ViewState["stepMode"];

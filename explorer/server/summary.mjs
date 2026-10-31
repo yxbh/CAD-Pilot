@@ -1,3 +1,5 @@
+import { analysisReport } from "../shared/analysis.mjs";
+
 // What an agent needs after a load or view action, in a few hundred bytes. The full state stays available on request.
 const round = (value) => Math.round(value * 1000) / 1000;
 const listed = (names, limit = 20) => names.length > limit ? [...names.slice(0, limit), `+${names.length - limit} more`] : names;
@@ -15,8 +17,9 @@ export function cameraSummary(state, drawn) {
   };
 }
 
-// drawnCamera: the camera of the renderer that drew the current revision, if one has.
-export function stateSummary(state, { url, changedOnDisk = false, problem = "", drawnCamera } = {}) {
+// drawnCamera: the camera of the renderer that drew the current revision, if one has; drawnAnalysis: the numbers its
+// analysis legend printed.
+export function stateSummary(state, { url, changedOnDisk = false, problem = "", drawnCamera, drawnAnalysis } = {}) {
   const labels = new Map(state.parts.map((part) => [part.id, part.label]));
   const name = (id) => labels.get(id) ?? id;
   const steps = state.assembly?.steps ?? [];
@@ -32,6 +35,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "", 
     ...(entry.offset.some(Boolean) ? { offset: entry.offset } : {}),
     ...(entry.rotate.some(Boolean) ? { rotate: entry.rotate } : {}),
   });
+  const analysis = analysisReport(state.analysis, drawnAnalysis);
   const view = {
     revision: state.revision,
     camera: cameraSummary(state, drawnCamera),
@@ -43,6 +47,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "", 
     ...(state.hiddenIds.length ? { hidden: listed(state.hiddenIds.map(name)) } : {}),
     ...(selected.length ? { selected: listed(selected) } : {}),
     ...(state.showFaults ? { faults: "shown" } : {}),
+    ...(analysis ? { analysis } : {}),
     ...(files.length > 1 ? { files: files.map(file), layout: state.layout } : {}),
     ...(state.viewKept !== null ? { kept: state.viewKept } : {}),
   };

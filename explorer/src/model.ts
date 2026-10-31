@@ -1,5 +1,6 @@
 import type { CameraState } from "../shared/view-settings.mjs";
 import type { SectionSettings } from "../shared/section.mjs";
+import type { AnalysisSettings } from "../shared/analysis.mjs";
 import type { AssemblySequence, SequencePose, StepMode } from "../shared/placement.mjs";
 import {
   center as sharedCenter,
@@ -118,6 +119,7 @@ export type ViewState = {
   appearance: "inspect" | "studio";
   materialFinish: "plastic" | "satin" | "polished" | "rubber";
   showEdges: boolean;
+  analysis: AnalysisSettings;
   section: SectionSettings;
   fitNonce: number;
   loading: boolean;

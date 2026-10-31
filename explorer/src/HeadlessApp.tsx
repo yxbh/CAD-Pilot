@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Scene from "./Scene.tsx";
 import { useArrangedModel } from "./useArrangedModel.ts";
 import { newestState, type Model, type ViewState } from "./model.ts";
 import { blobDataUrl, type CaptureRequest, type RenderReport, type ViewCapture, type ViewerHost } from "./host.ts";
 import { composeReviewImage } from "./drawing/render.ts";
+import { analysisFields, analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
 
 const defaultSize = { width: 1280, height: 800 };
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -24,7 +25,10 @@ class RendererBoundary extends React.Component<{ onError: (message: string) => v
 export function HeadlessApp({ host }: { host: ViewerHost }) {
   const [state, setState] = useState<ViewState | null>(null);
   const [composed, setModel] = useState<Model | null>(null);
-  const [surface, setSurface] = useState<{ width: number; height: number; background: string | null }>({ ...defaultSize, background: null });
+  // What a capture draws: its size and backdrop, and analysis settings of its own when it asks for them.
+  const [surface, setSurface] = useState<{ width: number; height: number; background: string | null; analysis: AnalysisSettings | null }>({
+    ...defaultSize, background: null, analysis: null,
+  });
   const latest = useRef<ViewState | null>(null);
   const lastReport = useRef<RenderReport | null>(null);
   const capture = useRef<(() => ViewCapture) | null>(null);
@@ -55,15 +59,20 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     setState(latest.current);
   }, []);
 
-  // A capture waits for a frame the scene reported at its own size and backdrop. The scene commits apart from this
-  // component, so the surface it was given here says nothing about what the scene has drawn yet.
-  const settle = useCallback(async (revision: number, width: number, height: number, background: string | null) => {
+  // A capture waits for a frame the scene reported at its own size, backdrop and analysis. The scene commits apart from
+  // this component, so the surface it was given here says nothing about what the scene has drawn yet.
+  const settle = useCallback(async (revision: number, width: number, height: number, background: string | null, analysis: AnalysisSettings | null) => {
     await nextFrame(); await nextFrame();
-    for (let frame = 0; frame < 900; frame++) {
+    // Size and backdrop take a few frames; an analysis view's data can take longer on a dense mesh.
+    for (let frame = 0; frame < 6000; frame++) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
+      const settings = analysis ?? latest.current.analysis;
+      const drawn = analysisKey(settings);
       if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
-          report.background === background) return;
+          report.background === background && report.analysisKey === drawn) return;
+      // Only an analysis view's data is worth waiting longer for.
+      if (frame >= 900 && (report?.analysisKey === drawn || !analysisFields(settings).length)) break;
       await nextFrame();
     }
     throw new Error("The background renderer did not draw the view at the requested size and backdrop");
@@ -83,12 +92,17 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
         const width = request.width ?? defaultSize.width;
         const height = request.height ?? defaultSize.height;
         const background = request.background ?? null;
-        setSurface({ width, height, background });
-        await settle(request.revision, width, height, background);
+        const analysis = request.analysis ?? null;
+        setSurface({ width, height, background, analysis });
+        await settle(request.revision, width, height, background, analysis);
         const captured = capture.current!();
-        await host.captureResult({ ...request, dataUrl: captured.dataUrl, camera: captured.camera });
+        await host.captureResult({ ...request, dataUrl: captured.dataUrl, camera: captured.camera, analysisStats: captured.analysisStats });
       } catch (failure) {
         await host.captureResult({ ...request, error: message(failure) }).catch(noop);
+      } finally {
+        // A capture's own analysis is for that image; the view goes back to its own, unless the next capture, which
+        // can arrive before this one's result is acknowledged, has already set its own.
+        if (request.analysis) setSurface((current) => current.analysis === request.analysis ? { ...current, analysis: null } : current);
       }
     })();
   }, [host, settle]);
@@ -112,11 +126,12 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
   }, [host]);
   // Files in a view are placed as the viewer page places them.
   const model = useArrangedModel(composed, state);
-  const ready = model && state && model.topologyRevision === state.topologyRevision;
+  const drawn = useMemo(() => state && surface.analysis ? { ...state, analysis: surface.analysis } : state, [state, surface.analysis]);
+  const ready = model && drawn && model.topologyRevision === drawn.topologyRevision;
   return (
     <main className="headless-renderer" style={{ width: surface.width, height: surface.height }}>
-      {ready && <RendererBoundary key={state.topologyRevision} onError={fail}>
-        <Scene model={model} state={state} amount={state.explode} stepPosition={state.step} sectionPosition={state.section.position}
+      {ready && <RendererBoundary key={drawn.topologyRevision} onError={fail}>
+        <Scene model={model} state={drawn} amount={drawn.explode} stepPosition={drawn.step} sectionPosition={drawn.section.position}
           active headless background={surface.background} onSelect={noop} onError={fail} registerCapture={registerCapture}
           onRendered={rendered} onCameraChange={noop} onView={noop} />
       </RendererBoundary>}

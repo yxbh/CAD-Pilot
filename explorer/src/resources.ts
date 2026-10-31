@@ -1,8 +1,10 @@
-import { BufferAttribute, BufferGeometry, EdgesGeometry, Float32BufferAttribute } from "three";
+import { BufferAttribute, BufferGeometry, Color, EdgesGeometry, Float32BufferAttribute } from "three";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { MeshBVH } from "three-mesh-bvh";
 import { edgeSegments, type CadEdge, type MeshBuffers, type Model, type Part } from "./model.ts";
-import type { TreeRequest, TreeResult } from "./bvhWorker.ts";
+import type { WorkerRequest, WorkerResult } from "./geometryWorker.ts";
+import { computeField, type FieldResults } from "./analysis/fields.ts";
+import { ANALYSIS_COLORS, type AnalysisField } from "../shared/analysis.mjs";
 
 export type EdgeRange = { edge: CadEdge; start: number; count: number };
 export type PartResources = { geometry: BufferGeometry; edges: BufferGeometry | null; cadEdges: LineSegmentsGeometry | null; edgeRanges: EdgeRange[] };
@@ -13,21 +15,44 @@ export type FaultResources = {
 // Brute-force picking is fine for CAD previews; dense meshes get a bounding-volume tree so hovering stays quick.
 const TREE_TRIANGLES = 20_000;
 
-// One worker builds every tree, one part at a time; until a part's tree arrives it is picked brute force.
-let treeWorker: Worker | null = null;
+// Drawable analysis data for one part: edges and normals as lines, thickness and curvature as values per vertex.
+export type AnalysisResources = {
+  edges?: BufferGeometry; normals?: LineSegmentsGeometry;
+  thickness?: FieldResults["thickness"]; curvature?: FieldResults["curvature"];
+};
+
+// One worker builds every picking tree and analysis field, one part at a time; until a part's tree arrives it is
+// picked brute force.
+let worker: Worker | null = null;
 let nextRequest = 0;
-const waiting = new Map<number, (result: TreeResult) => void>();
-function buildTree(positions: Float32Array, indices: Uint32Array): Promise<TreeResult> {
-  if (!treeWorker) {
-    treeWorker = new Worker(new URL("./bvhWorker.ts", import.meta.url), { type: "module" });
-    treeWorker.onmessage = ({ data }: MessageEvent<TreeResult>) => {
+const waiting = new Map<number, (result: WorkerResult) => void>();
+const copy = <T extends Float32Array | Uint32Array>(values: ArrayLike<number>, type: { from(values: ArrayLike<number>): T }): T =>
+  values instanceof Float32Array || values instanceof Uint32Array ? values.slice() as T : type.from(values);
+function inWorker(job: WorkerRequest["job"], part: Part): Promise<WorkerResult> {
+  const positions = copy(part.mesh?.positions ?? part.positions, Float32Array);
+  const indices = copy(part.mesh?.indices ?? part.indices, Uint32Array);
+  // Where workers are unavailable (Node's tests), analysis runs in place.
+  if (typeof Worker === "undefined") {
+    if (job === "tree") return Promise.resolve({ id: -1 });
+    try { return Promise.resolve({ id: -1, field: computeField(job, positions, indices) }); }
+    catch (error) { return Promise.resolve({ id: -1, error: error instanceof Error ? error.message : String(error) }); }
+  }
+  if (!worker) {
+    worker = new Worker(new URL("./geometryWorker.ts", import.meta.url), { type: "module" });
+    worker.onmessage = ({ data }: MessageEvent<WorkerResult>) => {
       waiting.get(data.id)?.(data);
       waiting.delete(data.id);
     };
+    // A worker that fails to start or crashes answers everything it was asked with its error.
+    worker.onerror = (event) => {
+      for (const resolve of waiting.values()) resolve({ id: -1, error: event.message || "The geometry worker failed" });
+      waiting.clear();
+      worker = null;
+    };
   }
-  const request: TreeRequest = { id: nextRequest++, positions: positions.slice(), indices: indices.slice() };
-  const result = new Promise<TreeResult>((resolve) => waiting.set(request.id, resolve));
-  treeWorker.postMessage(request, [request.positions.buffer, request.indices.buffer]);
+  const request: WorkerRequest = { id: nextRequest++, job, positions, indices };
+  const result = new Promise<WorkerResult>((resolve) => waiting.set(request.id, resolve));
+  worker.postMessage(request, [request.positions.buffer, request.indices.buffer]);
   return result;
 }
 
@@ -69,6 +94,8 @@ export class GeometryResources {
   private readonly cache = new Map<string, PartResources>();
   private readonly faultCache = new Map<string, FaultResources>();
   private readonly trees = new Set<string>();
+  private readonly analysisCache = new Map<string, AnalysisResources>();
+  private readonly analysisRequests = new Map<string, Promise<void>>();
   private disposed = false;
   private readonly model: Model;
   // Keyed by the model's parts, which arranging the files of a view leaves untouched.
@@ -122,10 +149,65 @@ export class GeometryResources {
     if (!part.mesh || (part.triangleCount ?? 0) < TREE_TRIANGLES || this.trees.has(part.id) || typeof Worker === "undefined") return;
     this.trees.add(part.id);
     const { geometry } = this.get(part);
-    void buildTree(part.mesh.positions, part.mesh.indices).then(({ tree }) => {
+    void inWorker("tree", part).then(({ tree }) => {
       if (this.disposed || !tree) return;
       geometry.boundsTree = MeshBVH.deserialize(tree, geometry, { setIndex: false });
     });
+  }
+
+  /** A part's analysis data computed so far; a field that failed is absent but counts as done. */
+  analysis(part: Part): AnalysisResources {
+    return this.analysisCache.get(part.id) ?? {};
+  }
+
+  analysisDone(part: Part, field: AnalysisField): boolean {
+    return field in this.analysis(part);
+  }
+
+  /** Computes a field in the worker once per part; resolves when it is in place, or rejects with the worker's error. */
+  requestAnalysis(part: Part, field: AnalysisField): Promise<void> {
+    const key = `${part.id}:${field}`;
+    const pending = this.analysisRequests.get(key);
+    if (pending) return pending;
+    const { geometry } = this.get(part);
+    const request = inWorker(field, part).then(({ field: result, error }) => {
+      if (this.disposed) return;
+      const entry = { ...this.analysisCache.get(part.id) };
+      this.analysisCache.set(part.id, entry);
+      if (!result) {
+        entry[field] = undefined;
+        throw new Error(`Could not compute ${field} for ${part.label}: ${error ?? "no result"}`);
+      }
+      if (field === "edges") {
+        // Each edge once, over the surface's own positions.
+        const lines = new BufferGeometry();
+        lines.setAttribute("position", geometry.getAttribute("position"));
+        lines.setIndex(new BufferAttribute((result as FieldResults["edges"]).pairs, 1));
+        entry.edges = lines;
+      } else if (field === "normals") {
+        // Each arrow shades from its base on the surface to its tip.
+        const { segments } = result as FieldResults["normals"];
+        const colors = new Float32Array(segments.length);
+        const [base, tip] = [new Color(ANALYSIS_COLORS.normalBase), new Color(ANALYSIS_COLORS.normalTip)];
+        for (let start = 0; start < colors.length; start += 6) { base.toArray(colors, start); tip.toArray(colors, start + 3); }
+        entry.normals = new LineSegmentsGeometry().setPositions(segments).setColors(colors);
+      } else if (field === "thickness") entry.thickness = result as FieldResults["thickness"];
+      else entry.curvature = result as FieldResults["curvature"];
+    });
+    this.analysisRequests.set(key, request);
+    return request;
+  }
+
+  /** Puts per-vertex values on a part's surface for a colour map to read, in one buffer reused across maps. */
+  showValues(part: Part, values: Float32Array): void {
+    const { geometry } = this.get(part);
+    if (geometry.userData.analysisValues === values) return;
+    geometry.userData.analysisValues = values;
+    const current = geometry.getAttribute("analysisValue") as BufferAttribute | undefined;
+    if (current) {
+      (current.array as Float32Array).set(values);
+      current.needsUpdate = true;
+    } else geometry.setAttribute("analysisValue", new BufferAttribute(values.slice(), 1));
   }
 
   faults(part: Part): FaultResources | null {
@@ -153,7 +235,9 @@ export class GeometryResources {
     for (const fault of this.faultCache.values()) {
       fault.open?.dispose(); fault.overshared?.dispose(); fault.flipped?.dispose(); fault.degenerate?.dispose();
     }
+    for (const { edges, normals } of this.analysisCache.values()) { edges?.dispose(); normals?.dispose(); }
     this.cache.clear();
     this.faultCache.clear();
+    this.analysisCache.clear();
   }
 }
