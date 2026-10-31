@@ -11,7 +11,8 @@ runs:
     # Explorer's packages are resolved afresh once a day on each system.
     - uses: astral-sh/setup-uv@v10.3.3
       with:
-        enable-cache: true
+        # Downloading the wheels from PyPI takes less time than restoring them from an Actions cache, and saving one.
+        enable-cache: false
         # The newest Python the CAD dependencies publish wheels for; a runner's default can be newer.
         python-version: "3.14"
     - run: uv sync
@@ -23,7 +24,6 @@ runs:
       id: versions
       shell: bash
       run: |
-        echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
         echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
         echo "playwright=$(uv run --no-sync python -c 'from importlib.metadata import version; print(version("playwright"))' | tr -d '\r')" >> "$GITHUB_OUTPUT"
         case "$RUNNER_OS" in
@@ -31,14 +31,14 @@ runs:
           Windows) echo "browsers=$LOCALAPPDATA\\ms-playwright" ;;
           *) echo "browsers=$HOME/.cache/ms-playwright" ;;
         esac >> "$GITHUB_OUTPUT"
-    # The day's first job on each system installs the packages the manifest allows then; later jobs that day reuse
-    # that tree instead of extracting it again.
+    # The day's first job on each system installs the packages the manifest allows then; later jobs that day restore
+    # that tree instead of installing it again. No package is built for a Node version, so the key leaves it out.
     - if: inputs.explorer == 'true'
       id: packages
       uses: actions/cache@v6
       with:
         path: explorer/node_modules
-        key: explorer-packages-${{ runner.os }}-${{ steps.versions.outputs.node }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}
+        key: explorer-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}
     - if: inputs.explorer == 'true' && steps.packages.outputs.cache-hit != 'true'
       # No audit or funding requests: CI only needs the packages installed.
       run: npm --prefix explorer install --no-audit --no-fund
@@ -49,7 +49,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ steps.versions.outputs.browsers }}
-        key: playwright-shell-${{ runner.os }}-${{ steps.versions.outputs.playwright }}
+        key: playwright-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.playwright }}
     - if: inputs.explorer == 'true'
       run: uv run --no-sync python -m playwright install --only-shell chromium
       shell: bash
