@@ -1,6 +1,7 @@
 """Print-orientation checks of one part as it sits on the bed: bed contact, overhangs that need
-support, horizontal undersides (their span and the material above them) and walls under two line
-widths. These are measurements with stated methods and limits, not a printability verdict."""
+support, horizontal undersides (their span and the material above them), walls under two line
+widths, and the holes layer outlines enclose (small ones, and ones that open to the outside at other
+heights). These are measurements with stated methods and limits, not a printability verdict."""
 
 from __future__ import annotations
 
@@ -36,6 +37,19 @@ WALL_LAYERS = 120
 WALL_EXTRA_LAYERS = 120
 # Thin places shorter than this, such as the tapering edge of a chamfer or fillet, are counted, not listed.
 WALL_MIN_HEIGHT_MM = 1.0
+# Layer rasters reach this many pixels past the part, so the outside is one connected region.
+LAYER_PAD = 2
+# Enclosed holes narrower than the larger of these print close to the nozzle's own width.
+SMALL_HOLE_MM = 1.0
+SMALL_HOLE_NOZZLES = 2.5
+# Enclosed voids of fewer pixels are rasterisation noise where outlines meet.
+HOLE_MIN_PIXELS = 4
+# Small holes shallower than this, such as a marking dimple, are counted, not listed.
+HOLE_MIN_HEIGHT_MM = 1.0
+# A hole runs to the outside at a neighbouring sampled layer when its footprint there joins the
+# outside while at least this share of the material around it is still there; under a hole at the
+# edge of an overhang there is nothing around it, and no step.
+OPEN_WALL_SHARE = 0.5
 REPORTED = 5
 
 
@@ -46,6 +60,7 @@ class CheckSettings:
     line_width: float
     # Bambu's support_threshold_angle: undersides sloping less than this from horizontal get support.
     support_threshold_deg: float
+    nozzle_mm: float
     bridge_review_mm: float = DEFAULT_BRIDGE_REVIEW_MM
 
     @classmethod
@@ -63,12 +78,17 @@ class CheckSettings:
             line_width=max(number("outer_wall_line_width"), number("line_width")),
             # Bambu treats 0 as its 30 degree default.
             support_threshold_deg=threshold if threshold > 0 else 30.0,
+            nozzle_mm=number("nozzle_diameter"),
             bridge_review_mm=bridge_review_mm,
         )
 
     @property
     def min_wall_mm(self) -> float:
         return 2 * self.line_width
+
+    @property
+    def small_hole_mm(self) -> float:
+        return max(SMALL_HOLE_MM, SMALL_HOLE_NOZZLES * self.nozzle_mm)
 
 
 @dataclass(frozen=True)
@@ -102,6 +122,18 @@ class ThinWall:
     model_xyz_mm: tuple[float, float, float]
 
 
+@dataclass(frozen=True)
+class Hole:
+    """An opening the layer outlines enclose through ``print_z_mm`` of sampled layers. ``across_mm`` is
+    the widest round pin that fits it at its narrowest when that is under the small-hole limit, else
+    None; ``opens_at_mm`` lists sampled heights where the same opening runs to the outside instead."""
+
+    across_mm: float | None
+    print_z_mm: tuple[float, float]
+    model_xyz_mm: tuple[float, float, float]
+    opens_at_mm: tuple[float, ...]
+
+
 @dataclass
 class OrientationReport:
     size_mm: tuple[float, float, float]
@@ -115,6 +147,8 @@ class OrientationReport:
     undersides: list[Underside]
     thin_walls: list[ThinWall]
     wall_check: dict
+    holes: list[Hole]
+    hole_check: dict
     limits: dict
     flags: list[str] = field(default_factory=list)
 
@@ -348,14 +382,12 @@ def _union(a: Rect, b: Rect) -> Rect:
     return Rect(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1))
 
 
-def _thin_places(mesh: PrintMesh, z: float, pitch: float, limit: float, limit_px: float, window: int) -> list[tuple[float, tuple[float, float], Rect]]:
-    """Places in the outline at height z thinner than the limit: pixels with no point deeper than half
-    the limit nearby, in groups at least about as long as the limit. Each comes with its thickness,
-    its deepest point (on the material, where the thickness is measured) and its outline's box."""
-    segments = _section(mesh, z)
-    if not len(segments):
+def _thin_places(mask: np.ndarray, origin: tuple[float, float], pitch: float, limit: float, limit_px: float, window: int) -> list[tuple[float, tuple[float, float], Rect]]:
+    """Places in a layer's raster thinner than the limit: pixels with no point deeper than half the
+    limit nearby, in groups at least about as long as the limit. Each comes with its thickness, its
+    deepest point (on the material, where the thickness is measured) and its outline's box."""
+    if not mask.any():
         return []
-    mask, origin = _raster(segments, pitch)
     distance = ndimage.distance_transform_edt(mask)
     thin = mask & (ndimage.maximum_filter(distance, size=window) < (limit_px + 1) / 2)
     if not thin.any():
@@ -392,19 +424,216 @@ def _thin_places(mesh: PrintMesh, z: float, pitch: float, limit: float, limit_px
     return places
 
 
-def _thin_walls(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndarray) -> tuple[list[ThinWall], dict]:
-    """Walls thinner than two line widths in sampled layer outlines, grouped through consecutive
-    sampled layers."""
+@dataclass
+class _Layer:
+    """One sampled layer's raster over its own outline, at ``offset`` (row, column) in the part's grid:
+    its void regions labelled, the one around the part, and which are holes the outline encloses
+    (``enclosed`` is None when there are none). Beyond its raster a layer is all outside."""
+
+    z: float
+    offset: tuple[int, int]
+    mask: np.ndarray
+    labels: np.ndarray
+    outside: int
+    enclosed: np.ndarray | None
+    slices: list
+    clusters: dict[int, dict] = field(default_factory=dict)
+
+    def view(self, rows: tuple[int, int], cols: tuple[int, int], what: str) -> np.ndarray:
+        """Its solid ``mask`` or its ``outside`` over grid rows and columns [start, stop)."""
+        inside = what == "mask"
+        full = np.full((rows[1] - rows[0], cols[1] - cols[0]), not inside)
+        r0, c0 = self.offset
+        r1, c1 = r0 + self.mask.shape[0], c0 + self.mask.shape[1]
+        top, bottom, left, right = max(rows[0], r0), min(rows[1], r1), max(cols[0], c0), min(cols[1], c1)
+        if top < bottom and left < right:
+            own = (slice(top - r0, bottom - r0), slice(left - c0, right - c0))
+            part = self.mask[own] if inside else self.labels[own] == self.outside
+            full[top - rows[0] : bottom - rows[0], left - cols[0] : right - cols[0]] = part
+        return full
+
+    def window(self, hole: int, margin: int) -> tuple[tuple[int, int], tuple[int, int], tuple[slice, slice]]:
+        """A hole's box with a margin: in grid rows and columns, and as a slice of this raster."""
+        rows, cols = self.slices[hole - 1]
+        local = (slice(max(rows.start - margin, 0), rows.stop + margin), slice(max(cols.start - margin, 0), cols.stop + margin))
+        stop = (min(local[0].stop, self.mask.shape[0]), min(local[1].stop, self.mask.shape[1]))
+        r0, c0 = self.offset
+        return (r0 + local[0].start, r0 + stop[0]), (c0 + local[1].start, c0 + stop[1]), local
+
+
+class _Holes:
+    """Holes in sampled layer rasters, followed up through the layers: how narrow each is where it is
+    under the small-hole limit, and the neighbouring sampled heights where the same opening runs to
+    the outside instead."""
+
+    def __init__(self, limit_mm: float, pitch: float, origin: tuple[float, float]) -> None:
+        self.limit_mm, self.pitch, self.origin = limit_mm, pitch, origin
+        # A square block of this many pixels inside a hole is a pin at least the limit across.
+        self.block = max(1, math.ceil(limit_mm / pitch))
+        self.clusters: list[dict] = []
+        self.previous: _Layer | None = None
+
+    def _point(self, layer: _Layer, row: float, col: float) -> tuple[float, float, float]:
+        return (
+            self.origin[0] + (layer.offset[1] + col + 0.5) * self.pitch,
+            self.origin[1] + (layer.offset[0] + row + 0.5) * self.pitch,
+            layer.z,
+        )
+
+    def _middle(self, layer: _Layer, hole: int) -> tuple[float, float, float]:
+        rows, cols = layer.slices[hole - 1]
+        return self._point(layer, (rows.start + rows.stop - 1) / 2, (cols.start + cols.stop - 1) / 2)
+
+    def _narrow(self, layer: _Layer, holes: np.ndarray) -> dict[int, tuple[float, tuple[float, float, float]]]:
+        """The holes under the limit across: each one's widest round pin and where it fits. Holes
+        holding a block of the limit's size are wide, and are not measured."""
+        k, labels = self.block, layer.labels
+        rows, cols = (labels.shape[0] // k) * k, (labels.shape[1] // k) * k
+        blocks = layer.enclosed[:rows, :cols].reshape(rows // k, k, cols // k, k).all(axis=(1, 3))
+        wide = set(np.unique(labels[:rows:k, :cols:k][blocks]).tolist())
+        narrow = {}
+        for hole in holes.tolist():
+            if hole in wide:
+                continue
+            # Holes never reach the raster's padded edge, so a pixel of margin around them stays in it.
+            _, _, window = layer.window(hole, 1)
+            depth = ndimage.distance_transform_edt(labels[window] == hole)
+            row, col = np.unravel_index(int(np.argmax(depth)), depth.shape)
+            # From the deepest pixel to the nearest solid pixel's centre: rasterised round holes measure
+            # within a tenth of a millimetre of their size at the default pitch this way.
+            across = (2 * float(depth[row, col]) + 0.5) * self.pitch
+            if across < self.limit_mm:
+                narrow[hole] = (across, self._point(layer, window[0].start + int(row), window[1].start + int(col)))
+        return narrow
+
+    def _continued(self, layer: _Layer, previous: _Layer) -> dict[int, dict]:
+        """The clusters this layer's holes continue: those of the holes below whose footprints they overlap."""
+        r0, c0 = max(layer.offset[0], previous.offset[0]), max(layer.offset[1], previous.offset[1])
+        r1 = min(layer.offset[0] + layer.mask.shape[0], previous.offset[0] + previous.mask.shape[0])
+        c1 = min(layer.offset[1] + layer.mask.shape[1], previous.offset[1] + previous.mask.shape[1])
+        if r0 >= r1 or c0 >= c1:
+            return {}
+
+        def crop(each: _Layer, array: np.ndarray) -> np.ndarray:
+            return array[r0 - each.offset[0] : r1 - each.offset[0], c0 - each.offset[1] : c1 - each.offset[1]]
+
+        here, below = crop(layer, layer.labels), crop(previous, previous.labels)
+        both = crop(layer, layer.enclosed) & crop(previous, previous.enclosed)
+        base = len(previous.slices) + 1
+        found: dict[int, dict] = {}
+        for pair in np.flatnonzero(np.bincount(here[both].astype(np.int64) * base + below[both])).tolist():
+            hole, under = divmod(pair, base)
+            if under in previous.clusters:
+                found.setdefault(hole, previous.clusters[under])
+        return found
+
+    def _opening(self, layer: _Layer, other: _Layer) -> None:
+        """Mark the layer's holes whose footprint joins the outside in the other, neighbouring layer
+        while most of the material around them is there too."""
+        rows = (layer.offset[0], layer.offset[0] + layer.mask.shape[0])
+        cols = (layer.offset[1], layer.offset[1] + layer.mask.shape[1])
+        joined = np.flatnonzero(np.bincount(layer.labels[layer.enclosed & other.view(rows, cols, "outside")]))
+        for hole in joined.tolist():
+            if hole not in layer.clusters:
+                continue
+            rows, cols, local = layer.window(hole, 3)
+            own = layer.labels[local] == hole
+            ring = ndimage.binary_dilation(own, iterations=2) & ~own
+            if ring.any() and float(other.view(rows, cols, "mask")[ring].mean()) >= OPEN_WALL_SHARE:
+                layer.clusters[hole]["opens"].append((other.z, self._middle(layer, hole)))
+
+    def gap(self) -> None:
+        """A sampled height with no outline: nothing continues across it."""
+        self.previous = None
+
+    def add(self, z: float, mask: np.ndarray, offset: tuple[int, int]) -> None:
+        labels, count = ndimage.label(~mask)
+        outside = int(labels[0, 0])
+        holes = np.empty(0, dtype=np.int64)
+        if count > 1:
+            sizes = np.bincount(labels.ravel(), minlength=count + 1)
+            keep = sizes >= HOLE_MIN_PIXELS
+            keep[[0, outside]] = False
+            holes = np.flatnonzero(keep)
+        enclosed = keep[labels] if len(holes) else None
+        layer = _Layer(z, offset, mask, labels, outside, enclosed, ndimage.find_objects(labels) if len(holes) else [])
+        previous = self.previous
+        if enclosed is not None:
+            narrow = self._narrow(layer, holes)
+            # A hole continues a cluster from the sampled layer just below where their footprints overlap.
+            below = self._continued(layer, previous) if previous is not None and previous.enclosed is not None else {}
+            for hole in holes.tolist():
+                cluster = below.get(hole)
+                if cluster is None:
+                    cluster = {"z": [z, z], "across": None, "at": self._middle(layer, hole), "opens": []}
+                    self.clusters.append(cluster)
+                cluster["z"][1] = z
+                if hole in narrow and (cluster["across"] is None or narrow[hole][0] < cluster["across"]):
+                    cluster["across"], cluster["at"] = narrow[hole]
+                layer.clusters[hole] = cluster
+        if previous is not None:
+            if layer.enclosed is not None:
+                self._opening(layer, previous)
+            if previous.enclosed is not None:
+                self._opening(previous, layer)
+        self.previous = layer
+
+    def report(self, mesh: PrintMesh, step: float) -> tuple[list[Hole], dict]:
+        """Holes worth a look: small ones at least the listed height deep (a cluster stands for one
+        sampling step more than its samples span), and ones that open to the outside."""
+        holes, shallow = [], 0
+        for cluster in self.clusters:
+            if cluster["across"] is not None and not cluster["opens"] and cluster["z"][1] - cluster["z"][0] + step < HOLE_MIN_HEIGHT_MM:
+                shallow += 1
+                continue
+            if cluster["across"] is None and not cluster["opens"]:
+                continue
+            at = cluster["opens"][0][1] if cluster["opens"] else cluster["at"]
+            across = round(cluster["across"], 2) if cluster["across"] is not None else None
+            holes.append(Hole(across, _round(cluster["z"]), _round(mesh.model_point(at)), tuple(sorted({round(z, 2) for z, _ in cluster["opens"]}))))
+        holes.sort(key=lambda hole: (not hole.opens_at_mm, hole.across_mm or 0.0))
+        check = {
+            "enclosed": len(self.clusters),
+            "small": sum(1 for hole in holes if hole.across_mm is not None),
+            "small_shallow": shallow,
+            "open_to_outside": sum(1 for hole in holes if hole.opens_at_mm),
+            "small_limit_mm": round(self.limit_mm, 3),
+            "pitch_mm": round(self.pitch, 3),
+            "method": "openings each sampled layer outline encloses, followed through the sampled layers; width is the widest "
+            "round pin that fits, within one pitch; holes under about two pitches across are not seen",
+        }
+        return holes, check
+
+
+def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndarray) -> tuple[list[ThinWall], dict, list[Hole], dict]:
+    """Walls thinner than two line widths and the holes outlines enclose, in sampled layers rasterised
+    on one grid; both are grouped through consecutive sampled layers."""
     limit = settings.min_wall_mm
     width, depth, _ = mesh.size
     pitch = max(settings.line_width / 4, math.sqrt(float(width * depth) / WALL_PIXELS))
     limit_px = limit / pitch
     window = 2 * math.ceil(limit_px / 2) + 1
+    # Layers are rasterised over their own outlines, on one grid starting just short of the part.
+    low = mesh.bounds[0]
+    origin = (float(low[0]) - LAYER_PAD * pitch, float(low[1]) - LAYER_PAD * pitch)
     heights = _layer_heights(mesh, settings, flat_heights)
+    holes = _Holes(settings.small_hole_mm, pitch, origin)
     clusters: list[dict] = []
     active: list[dict] = []
     for z in heights:
-        found = _thin_places(mesh, float(z), pitch, limit, limit_px, window)
+        segments = _section(mesh, float(z))
+        found = []
+        if len(segments):
+            points = segments.reshape(-1, 2)
+            c0, r0 = np.floor((points.min(axis=0) - origin) / pitch).astype(int) - LAYER_PAD
+            c1, r1 = np.ceil((points.max(axis=0) - origin) / pitch).astype(int) + LAYER_PAD
+            c0, r0 = max(int(c0), 0), max(int(r0), 0)
+            corner = (origin[0] + c0 * pitch, origin[1] + r0 * pitch)
+            mask = _fill(segments, corner, (int(r1) - r0, int(c1) - c0), pitch)
+            holes.add(float(z), mask, (r0, c0))
+            found = _thin_places(mask, corner, pitch, limit, limit_px, window)
+        else:
+            holes.gap()
         # A place continues a group only from the sampled layer just below, where its outline overlaps.
         touched: list[dict] = []
         for thickness, at, box in found:
@@ -434,7 +663,7 @@ def _thin_walls(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndarr
         "thin_places": len(walls),
         "method": "layer outlines rasterised at layer centres; thickness is within one pitch",
     }
-    return walls, method
+    return walls, method, *holes.report(mesh, step)
 
 
 def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationReport:
@@ -452,7 +681,7 @@ def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationRe
     lifted = flat & (z_low > ON_BED_MM) & (z_low <= LIFTED_MM)
     flat_heights = z_low[(np.abs(normals[:, 2]) > math.cos(math.radians(FLAT_DEG)))]
     undersides = _undersides(mesh, flat, adjacency, shared_edges, _VerticalRays(mesh))
-    walls, wall_check = _thin_walls(mesh, settings, flat_heights)
+    walls, wall_check, holes, hole_check = _scan_layers(mesh, settings, flat_heights)
     report = OrientationReport(
         size_mm=_round(mesh.size),
         bodies=mesh.bodies,
@@ -465,15 +694,18 @@ def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationRe
         undersides=undersides[:REPORTED],
         thin_walls=walls[:REPORTED],
         wall_check=wall_check,
+        holes=holes[:REPORTED],
+        hole_check=hole_check,
         limits={
             "support_beyond_tilt_deg": round(90.0 - settings.support_threshold_deg, 1),
             "review_tilt_deg": REVIEW_TILT_DEG,
             "bridge_review_mm": settings.bridge_review_mm,
             "min_wall_mm": round(settings.min_wall_mm, 3),
+            "small_hole_mm": round(settings.small_hole_mm, 3),
             "layer_height_mm": settings.layer_height,
         },
     )
-    report.flags = _flags(report, settings, undersides, walls)
+    report.flags = _flags(report, settings, undersides, walls, holes)
     return report
 
 
@@ -483,8 +715,8 @@ def _limited(lines: list[str], what: str) -> list[str]:
     return lines[:REPORTED] + [f"{len(lines) - REPORTED} more {what} like these"]
 
 
-def _flags(report: OrientationReport, settings: CheckSettings, undersides: list[Underside], walls: list[ThinWall]) -> list[str]:
-    """Findings worth a look; every underside and wall counts, not just the ones listed."""
+def _flags(report: OrientationReport, settings: CheckSettings, undersides: list[Underside], walls: list[ThinWall], holes: list[Hole]) -> list[str]:
+    """Findings worth a look; every underside, wall and hole counts, not just the ones listed."""
     flags = []
     if report.bodies > 1:
         flags.append(f"{report.bodies} separate solids print as one object, placed as in the file; split an assembly into one file per part")
@@ -513,7 +745,22 @@ def _flags(report: OrientationReport, settings: CheckSettings, undersides: list[
         f"{w.print_z_mm[0]}–{w.print_z_mm[1]} mm near model {w.model_xyz_mm}"
         for w in tall
     ]
+    small = [
+        f"hole about {h.across_mm} mm across at its narrowest (under {settings.small_hole_mm:g} mm, the larger of "
+        f"{SMALL_HOLE_MM:g} mm and {SMALL_HOLE_NOZZLES:g} × the {settings.nozzle_mm:g} mm nozzle) through print height "
+        f"{h.print_z_mm[0]}–{h.print_z_mm[1]} mm near model {h.model_xyz_mm}"
+        for h in holes
+        if h.across_mm is not None
+    ]
+    stepped = [
+        f"hole enclosed through print height {h.print_z_mm[0]}–{h.print_z_mm[1]} mm runs to the outside at print height "
+        f"{', '.join(f'{z:g}' for z in h.opens_at_mm)} mm near model {h.model_xyz_mm}: hole compensation applies only "
+        "where a layer encloses it, so it leaves a step there"
+        for h in holes
+        if h.opens_at_mm
+    ]
     flags += _limited(bridges, "bridges") + _limited(shelves, "thin shelves") + _limited(thin, "thin walls")
+    flags += _limited(small, "small holes") + _limited(stepped, "holes that open to the outside")
     if len(walls) > len(tall):
         flags.append(
             f"{len(walls) - len(tall)} thin place(s) shorter than {WALL_MIN_HEIGHT_MM:g} mm, such as the edge of a chamfer or fillet"

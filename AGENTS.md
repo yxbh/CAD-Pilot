@@ -22,7 +22,7 @@ This repository owns reusable tooling and guidance, not every design project. Re
 - Use the fdm-design skill before modeling or revising FDM/FFF prints, choosing orientation/material, or evaluating fit and print preparation. Treat it as guidance, not an automated printability gate; keep manufacturer limits, provisional design choices, and measured calibration separate.
 - Describe objects in plain language. Ask about purpose and physical dimensions, not CAD terminology. Show rough alternatives before detailed finishing.
 - Python source and named parameters own design intent. STEP and mesh exports are derived artifacts. Do not claim a STEP file preserves parametric history.
-- Critical dimensions, fit, material, printer, and nozzle are unknown until confirmed. Upstream default dimensions and clearance values are proposals, not measured printer calibration or user requirements.
+- Critical dimensions, fit, material, printer, and nozzle are unknown until confirmed. Upstream default dimensions and clearance values are proposals, not user requirements. Models state fits; the fdm-design skill keeps printer shrinkage out of them.
 - Validate generated geometry, not just parameter constants. Distinguish kernel validity, measured requirements, visual review, slicer checks, and physical testing. Never label an unchecked requirement as passed.
 - Treat screenshots and geometry selections as revision-specific. Confirm the highlighted target before an ambiguous edit; preserve unaffected dimensions.
 - Do not send G-code to a printer or publish models without explicit approval.

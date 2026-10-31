@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .orientation import OrientationReport
+from .compensation import Compensation
+from .orientation import HOLE_MIN_HEIGHT_MM, OrientationReport
 from .plan import ProjectPlan
 from .slicing import SliceReport
 
@@ -38,8 +39,40 @@ def check_lines(name: str, report: OrientationReport) -> list[str]:
         f"    walls: {walls['thin_places']} place(s) under {walls['limit_mm']} mm in {walls['layers_sampled']} sampled layers "
         f"(pitch {walls['pitch_mm']} mm)"
     )
+    holes = report.hole_check
+    shallow = f" (and {holes['small_shallow']} shallower than {HOLE_MIN_HEIGHT_MM:g} mm, such as marks)" if holes["small_shallow"] else ""
+    lines.append(
+        f"    holes: {holes['enclosed']} enclosed by the outline in sampled layers; {holes['small']} under {holes['small_limit_mm']:g} mm "
+        f"across{shallow}; {holes['open_to_outside']} open to the outside at other heights"
+    )
     lines += [f"    ! {flag}" for flag in report.flags]
     return lines
+
+
+def _compensation(c: Compensation, calibrating: bool) -> str:
+    what = "hole" if c.kind == "hole" else "outer contour"
+    if c.measurement is None:
+        return f"{what} 0 mm ({'forced for calibration' if calibrating else 'unmeasured'})"
+    return f"{what} {c.mm:+g} mm (measured {c.measurement.measured})"
+
+
+def compensation_lines(plan: ProjectPlan) -> list[str]:
+    """Each part's X-Y compensation, then once per filament any slicing condition that changed since it was measured."""
+    lines = ["X-Y compensation per part (Bambu's hole and contour compensation, mm per side):"]
+    warnings: list[str] = []
+    for part in plan.parts:
+        lines.append(f"  {part.spec.name} ({part.slot.key}): {', '.join(_compensation(c, plan.calibrating) for c in part.compensation)}")
+        for c in part.compensation:
+            if c.changed:
+                was = ", ".join(f"{key} {then:g}" for key, (then, _) in c.changed.items())
+                now = ", ".join(f"{key} {value:g}" for key, (_, value) in c.changed.items())
+                warning = (
+                    f"  ! {part.slot.key} {c.kind} compensation was measured at {was}; this project slices at {now}, "
+                    "so the measured value may not hold: measure again at these settings or restore them"
+                )
+                if warning not in warnings:
+                    warnings.append(warning)
+    return lines + warnings
 
 
 def plan_lines(plan: ProjectPlan) -> list[str]:
@@ -59,6 +92,8 @@ def plan_lines(plan: ProjectPlan) -> list[str]:
         names = ", ".join(plan.instance_name(i) + (" (turned 90°)" if i.turned else "") for i in plate.instances)
         tower = "; prime tower kept clear" if plate.tower else ""
         lines.append(f"  plate {number} \"{plate.name}\": {names}{tower}")
+    lines.append(f"  first layer: elephant-foot compensation {plan.settings.get('elefant_foot_compensation', '0')} mm, from the process")
+    lines += compensation_lines(plan)
     lines.append("Parts as printed:")
     seen = set()
     for part in plan.parts:
@@ -104,6 +139,8 @@ def plan_dict(plan: ProjectPlan, path: Path) -> dict:
         "name": plan.job.name,
         "bambu_studio": plan.version,
         "profile": plan.profile.as_dict(),
+        "calibration": plan.calibrating,
+        "elefant_foot_compensation": plan.settings.get("elefant_foot_compensation"),
         "filaments": [
             {"slot": s.number, "key": s.key, "preset": s.preset, "material": s.material, "colour": s.colour} for s in plan.slots
         ],
@@ -127,7 +164,15 @@ def plan_dict(plan: ProjectPlan, path: Path) -> dict:
             for number, plate in enumerate(plan.plates, start=1)
         ],
         "parts": [
-            {"name": p.spec.name, "file": str(p.spec.file), "rotate": list(p.spec.rotate), "support": p.spec.support, "check": p.check.as_dict()}
+            {
+                "name": p.spec.name,
+                "file": str(p.spec.file),
+                "rotate": list(p.spec.rotate),
+                "support": p.spec.support,
+                "filament": p.slot.key,
+                "compensation": {c.kind: c.as_dict() for c in p.compensation},
+                "check": p.check.as_dict(),
+            }
             for p in plan.parts
         ],
     }
