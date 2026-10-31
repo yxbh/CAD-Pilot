@@ -93,7 +93,7 @@ Print checks that need Bambu Studio skip when it is not installed. Previous pass
 
 ## Local data
 
-CAD Explorer keeps its copies of design geometry in the user's local application data, not in the workbench or the design project (its [local data](explorer/README.md#local-data)); a design-project viewer keeps running after `explorer.mjs open` exits until `explorer.mjs stop`. `scripts/inspect` keeps STEP topology indexes in a per-user cache ([inspection](.agents/skills/cad/references/inspection-and-validation.md#tool)), and the print profile lives in `~/.cad-pilot/`. Runtime files under `.local/`, `.venv/` and generated outputs are ignored by Git. Prepare source releases from tracked files, such as a Git archive.
+CAD Explorer keeps its copies of design geometry in the user's local application data, not in the workbench or the design project (its [local data](explorer/README.md#local-data)); a design-project viewer keeps running after `explorer.mjs open` exits until `explorer.mjs stop`. `scripts/inspect` keeps STEP topology indexes in a per-user cache ([inspection](.agents/skills/cad/references/inspection-and-validation.md#tool)), and the print profile lives in `~/.cad-pilot/`. Runtime files under `.local/`, `.venv/` and generated outputs are ignored by Git.
 
 ## Provenance
 

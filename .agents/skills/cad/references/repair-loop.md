@@ -10,7 +10,7 @@ Fillet and chamfer, loft and Boolean failures are covered in `build123d-modeling
 
 ## Source import or syntax
 
-Invalid syntax, a missing import or wrong build123d symbol, no function named `gen_step()`, or side effects at module level. `gen_step()` returns the STEP-ready shape; output paths stay on the command line. A module the interpreter cannot import is reported in one line: run with the project's own environment when the design has one (`step-generation.md`).
+Invalid syntax, a missing import or wrong build123d symbol, no function named `gen_step()`, or side effects at module level; `step-generation.md` states what a generator returns and what it leaves to the command line. A module the interpreter cannot import is reported in one line: run with the project's own environment when the design has one (`step-generation.md`).
 
 ## Invalid or missing geometry
 
