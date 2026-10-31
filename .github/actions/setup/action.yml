@@ -1,5 +1,5 @@
 name: Set up the workbench
-description: Python environment, the Explorer's packages and Playwright's headless Chromium shell, on the runner's own Node.js.
+description: Python environment, the Explorer's packages and last built page, and Playwright's headless Chromium shell, on the runner's own Node.js.
 runs:
   using: composite
   steps:
@@ -42,6 +42,13 @@ runs:
       run: npm install --no-audit --no-fund
       working-directory: explorer
       shell: bash
+    # The built page, as the first job to build these sources with this package tree saved it: the build checks the stamp
+    # it leaves against its own inputs (explorer/scripts/incremental-build.mjs) and builds again if any differ, so the
+    # key only has to name them closely enough to be found.
+    - uses: actions/cache@v6
+      with:
+        path: explorer/dist
+        key: explorer-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/node_modules/.package-lock.json') }}-${{ hashFiles('explorer/index.html', 'explorer/package.json', 'explorer/tsconfig.json', 'explorer/vite.config.ts', 'explorer/scripts/incremental-build.mjs', 'explorer/src/**', 'explorer/shared/**', 'explorer/tests/*.test.ts') }}
     # The renderer and the browser scenarios launch only the headless shell, and the runner images already carry the
     # libraries it needs on Linux (install-deps adds only fonts there).
     - uses: actions/cache@v6

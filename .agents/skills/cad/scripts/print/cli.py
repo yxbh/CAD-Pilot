@@ -12,15 +12,15 @@ from pathlib import Path
 from common.paths import command_line_path
 
 from .bambu import BambuStudio, BambuStudioError
-from .bambu3mf import write_project
-from .compensation import conditions
+from .bambu3mf import CALIBRATION_KEY, read_project, write_project
+from .compensation import condition_text, conditions
 from .job import JobError, load_job, parse_job
-from .meshes import MeshError, load_mesh
+from .meshes import STEP_SUFFIXES, MeshError, load_mesh
 from .orientation import check_orientation
 from .plan import PlanError, ProjectPlan, check_settings, plan_project
-from .profile import COMPENSATION_SETTINGS, PROFILE_PATH, Measurement, ProfileError, load_profile, record_compensation
+from .profile import COMPENSATION_SETTINGS, LADDERS, PROFILE_PATH, Measurement, PrintProfile, ProfileError, load_profile, record_compensation
 from .report import check_lines, plan_dict, plan_lines, slice_lines
-from .slicing import SliceReport, project_contents, slice_project
+from .slicing import SliceReport, slice_project
 
 
 def _path(value: str) -> Path:
@@ -135,11 +135,22 @@ def _check(args: argparse.Namespace) -> int:
     return 0
 
 
-def _coupon(args: argparse.Namespace) -> int:
-    from .coupon import write_ladder
+def _shown(path: Path) -> str:
+    """A path as it can be given back from the current folder: relative to it when inside it."""
+    try:
+        shown = str(path.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        shown = str(path)
+    return f'"{shown}"' if any(character.isspace() for character in shown) else shown
 
+
+def _coupon(args: argparse.Namespace) -> int:
+    if args.output.suffix.lower() not in STEP_SUFFIXES:
+        raise JobError(f"the coupon is written as STEP: give -o a .step or .stp path, not {args.output.name}")
     if args.calibrate:
         return _calibration_coupon(args)
+    from .coupon import write_ladder
+
     if args.clearances is None:
         raise JobError("a fit ladder needs --clearances; a calibration ladder needs --calibrate holes or pegs")
     if args.values or args.filament or args.slice or args.open:
@@ -167,8 +178,6 @@ def _calibration_coupon(args: argparse.Namespace) -> int:
 
     if args.clearances is not None or args.peg:
         raise JobError("--clearances and --peg make a fit ladder; leave them out with --calibrate")
-    if args.output.suffix.lower() not in {".step", ".stp"}:
-        raise JobError(f"the ladder is written as a STEP file, not {args.output.name}")
     profile = load_profile()
     filament = _filament(profile, args.filament)
     studio = BambuStudio.locate(profile.bambu_studio)
@@ -183,8 +192,8 @@ def _calibration_coupon(args: argparse.Namespace) -> int:
         base=args.output.parent,
         default_output=args.output.with_suffix(".3mf"),
     )
-    plan = plan_project(job, profile, studio, calibrating=True)
-    now = conditions(plan.settings)
+    plan = plan_project(job, profile, studio, calibration=measures)
+    now = conditions(plan.settings, plan.parts[0].slot.preset)
     shape = "hole" if kind == "holes" else "peg"
     lines = [
         f"Wrote a {measures} compensation ladder for a real part {args.diameter:g} mm across, in {filament} on the "
@@ -196,16 +205,16 @@ def _calibration_coupon(args: argparse.Namespace) -> int:
     ]
     trial = "try the real part in each hole and pick the one it fits" if kind == "holes" else "try each peg in the real part and pick the one that fits"
     lines.append(
-        f"Print it, {trial} snugly without wobble, and save that rung's value with save-compensation {job.output.name} "
-        f"--filament {filament} --{measures} <value>. It holds at the resolution ({now['resolution']:g}) and closing radius "
-        f"({now['slice_closing_radius']:g}) this coupon slices at."
+        f"Print it, {trial} snugly without wobble, and save that rung's value with save-compensation {_shown(job.output)} "
+        f"--filament {filament} --{measures} <value>. It holds with the settings this coupon slices with: "
+        f"{', '.join(condition_text(key, value) for key, value in now.items())}."
     )
     lines.append(f"STEP: {args.output}")
     data = {"step": str(args.output), "measures": measures, "rungs": [vars(rung) for rung in rungs]}
     return _hand_off(args, studio, plan, job.output, lines, data)
 
 
-def _filament(profile, key: str | None) -> str:
+def _filament(profile: PrintProfile, key: str | None) -> str:
     """A filament key of the profile, by default its default filament."""
     filament = key or profile.filament
     if filament not in profile.filaments:
@@ -213,37 +222,65 @@ def _filament(profile, key: str | None) -> str:
     return filament
 
 
-def _save_compensation(args: argparse.Namespace) -> int:
-    values = {kind: getattr(args, kind) for kind in COMPENSATION_SETTINGS if getattr(args, kind) is not None}
-    if not values:
-        raise JobError("give the value to save with --hole, --contour or both")
-    profile = load_profile()
-    filament = _filament(profile, args.filament)
-    # The coupon's project holds the conditions it was sliced at, which the measurement holds at.
-    if not args.coupon.is_file():
-        raise JobError(f"Coupon project not found: {args.coupon}")
-    settings, _ = project_contents(args.coupon)
+def _coupon_settings(path: Path, kind: str, profile: PrintProfile, filament: str) -> dict:
+    """The settings of a calibration coupon's project, which a measurement holds with, once it shows
+    that the coupon measures ``kind`` compensation for this filament on the profile's printer, with
+    every object sliced at 0 of it."""
+    ladder, setting = LADDERS[kind], COMPENSATION_SETTINGS[kind]
+    remake = f"Write one with coupon --calibrate {ladder} --filament {filament}, print that project and save the rung that fits from it"
+    if not path.is_file():
+        raise JobError(f"Coupon project not found: {path}. Give the .3mf the coupon command wrote beside the coupon's STEP")
+    project = read_project(path)
+    measures = project.metadata.get(CALIBRATION_KEY)
+    if measures not in LADDERS or not project.objects:
+        raise JobError(f"{path.name} is not a calibration coupon's project, so no rung of it measures compensation. {remake}")
+    if measures != kind:
+        raise JobError(
+            f"{path.name} is a {LADDERS[measures]} coupon, which measures {measures} compensation: save its result with "
+            f"--{measures}, or measure {kind} compensation with coupon --calibrate {ladder}"
+        )
+    for item in project.objects:
+        value = item.get(setting)
+        try:
+            zero = float(value) == 0
+        except (TypeError, ValueError):
+            zero = False
+        if not zero:
+            raise JobError(
+                f"{path.name} slices {item.get('name') or 'an object'} with {setting} {value or 'unset'}, not 0, so its rungs "
+                f"do not measure {kind} compensation. {remake}"
+            )
+    settings = project.settings
     printer, presets = settings.get("printer_settings_id"), settings.get("filament_settings_id") or []
     preset = profile.filaments[filament].preset
     if printer != profile.printer or preset not in presets:
         raise JobError(
-            f"{args.coupon.name} was made for {printer} with {', '.join(presets)}, not {filament} ({preset}) on the profile's "
-            f"{profile.printer}"
+            f"{path.name} was made for {printer} with {', '.join(presets)}, not {filament} ({preset}) on the profile's "
+            f"{profile.printer}. {remake}"
         )
-    now = conditions(settings)
+    return settings
+
+
+def _save_compensation(args: argparse.Namespace) -> int:
+    kind, mm = ("hole", args.hole) if args.hole is not None else ("contour", args.contour)
+    profile = load_profile()
+    filament = _filament(profile, args.filament)
+    # The coupon's project holds the conditions it was sliced with, which the measurement holds with.
+    now = conditions(_coupon_settings(args.coupon, kind, profile, filament), profile.filaments[filament].preset)
     today = date.today().isoformat()
-    measurements = {kind: Measurement(mm, today, **now) for kind, mm in values.items()}
-    before = profile.measured(filament)
-    lines = [f"{filament} on the {profile.printer}, measured {today} at resolution {now['resolution']:g} and closing radius {now['slice_closing_radius']:g}:"]
-    for kind, measurement in measurements.items():
-        was = f"{before[kind].mm:g} mm (measured {before[kind].measured})" if kind in before else "0 mm (unmeasured)"
-        lines.append(f"  {kind} compensation: {was} -> {measurement.mm:g} mm")
-    record_compensation(filament, profile.printer, measurements, write=args.write)
+    measurement = Measurement(mm, today, **now)
+    before = profile.measured(filament).get(kind)
+    was = f"{before.mm:g} mm (measured {before.measured})" if before else "0 mm (unmeasured)"
+    lines = [
+        f"{filament} on the {profile.printer}, measured {today} with {', '.join(condition_text(key, value) for key, value in now.items())}:",
+        f"  {kind} compensation: {was} -> {mm:g} mm",
+    ]
+    record_compensation(filament, profile.printer, {kind: measurement}, write=args.write)
     if args.write:
         lines.append(f"Saved to {PROFILE_PATH}.")
     else:
         lines.append(f"Nothing written. After the user agrees, run again with --write to save it to {PROFILE_PATH}.")
-    data = {"filament": filament, "printer": profile.printer, "written": args.write, **{kind: m.as_dict() for kind, m in measurements.items()}}
+    data = {"filament": filament, "printer": profile.printer, "written": args.write, kind: measurement.as_dict()}
     _emit(args, lines, data)
     return 0
 
@@ -312,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--calibrate a hole or peg ladder that measures X-Y compensation, as a project sliced with compensation at 0.",
     )
     coupon.add_argument("-o", "--output", type=_path, required=True, help="The STEP to write, such as coupons/pin-ladder.step.")
-    coupon.add_argument("--diameter", type=float, required=True, help="Diameter of the real part it is tried with (mm).")
+    coupon.add_argument("--diameter", type=float, required=True, help="Diameter of the real part it is tried with, measured with calipers (mm), not its nominal size.")
     coupon.add_argument("--clearances", type=float, nargs="+", help="Fit ladder: diametral clearances to try (mm), such as 0.1 0.2 0.3 0.4.")
     coupon.add_argument("--depth", type=float, default=6.0, help="How far the part engages: hole depth or peg height (mm, default 6).")
     coupon.add_argument("--peg", action="store_true", help="Fit ladder: also write a peg at the nominal diameter as <name>-peg.step.")
@@ -324,10 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
     coupon.set_defaults(run=_coupon)
 
     save = add("save-compensation", "Show, and with --write save, a calibration coupon's result for a filament on the profile's printer.")
-    save.add_argument("coupon", type=_path, help="The calibration coupon's project .3mf, which holds the settings it sliced at.")
+    save.add_argument("coupon", type=_path, help="The project .3mf the coupon command wrote, which holds the settings it sliced with.")
     save.add_argument("--filament", help="A filament named in the print profile (default: its default filament).")
-    save.add_argument("--hole", type=float, help="Hole compensation (mm per side): the value of the hole the real part fits snugly.")
-    save.add_argument("--contour", type=float, help="Contour compensation (mm per side): the value of the peg that fits snugly.")
+    value = save.add_mutually_exclusive_group(required=True)
+    value.add_argument("--hole", type=float, help="A holes coupon's hole compensation (mm per side): the value of the hole the real part fits snugly.")
+    value.add_argument("--contour", type=float, help="A pegs coupon's contour compensation (mm per side): the value of the peg that fits snugly.")
     save.add_argument("--write", action="store_true", help="Write it to the personal print profile; ask the user first.")
     save.set_defaults(run=_save_compensation)
 

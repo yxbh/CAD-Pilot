@@ -25,8 +25,8 @@ import {
   clipCadEdges, sceneSectionPlane, sectionMeshRaycast, sectionOutlineSegments,
   visibleFacePoint, visibleFaceTriangleCount,
 } from "./section.ts";
-import { ANALYSIS_COLORS, defaultAnalysis, FAULT_COLORS, type AnalysisLegend, type AnalysisSettings } from "../shared/analysis.mjs";
-import { traceLimits } from "../shared/raytrace.mjs";
+import { ANALYSIS_COLORS, FAULT_COLORS, type AnalysisLegend, type AnalysisSettings } from "../shared/analysis.mjs";
+import { analysisDrawn, traceLimits } from "../shared/raytrace.mjs";
 import { createTraceStore, RayTraced, TraceStatus, type TraceControl } from "./raytrace/RayTraced.tsx";
 import { AnalysisShading } from "./analysis/material.ts";
 import { useAnalysis, type AnalysisView } from "./analysis/useAnalysis.ts";
@@ -272,7 +272,6 @@ function sectionAxis(axis: SectionSettings["axis"]) {
 }
 
 const STUDIO_BACKGROUND = "#29313d";
-const PLAIN = defaultAnalysis();
 // Where Studio's floor lies (Studio.tsx), for the ray-traced view to trace the same floor.
 function studioFloor({ min, max }: { min: number[]; max: number[] }) {
   const span = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.001);
@@ -416,7 +415,7 @@ function PartMesh({ placement, resources, faults, analysis, analysisData, shadin
   );
 }
 
-function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, placements, resources, analysis, trace, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, background, placements, resources, analysis, trace, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & {
   placements: Placement[]; resources: GeometryResources; analysis: AnalysisView; trace: RefObject<TraceControl | null>; axes: AxisStore;
 }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
@@ -427,7 +426,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
   const activeView = useRef(active);
   activeView.current = active;
   const { invalidateReport, assertCaptureReady } = useRenderReports({
-    model, state, amount, stepPosition, sectionPosition, active, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError,
+    model, state, amount, stepPosition, sectionPosition, active, background: background ?? null, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError,
   });
   // A capture carries the legend that explains its colours.
   const legend = useRef<AnalysisLegend | null>(analysis.legend);
@@ -556,7 +555,7 @@ export default function Scene(props: Props) {
   const traced = state.appearance === "raytraced";
   const trace = useRef<TraceControl | null>(null);
   const traceStore = useMemo(createTraceStore, []);
-  const drawnAnalysis = traced ? PLAIN : state.analysis;
+  const drawnAnalysis = analysisDrawn(state.appearance, state.analysis);
   useEffect(() => () => shading.dispose(), [shading]);
   const shown = useMemo(() => placements.filter((part) => !state.hiddenIds.includes(part.node.id)), [placements, state.hiddenIds]);
   // The legend lists fault colours only while a shown mesh has faults to draw.

@@ -18,7 +18,7 @@ python <cad>/scripts/print profile
 python <cad>/scripts/print presets H2D 0.4 PETG
 ```
 
-`--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. Another interpreter that lacks the mesh libraries gets an error naming the workbench's.
+`--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. Another interpreter that lacks its libraries gets an error saying to use the workbench's.
 
 ## The personal print profile
 
@@ -36,7 +36,10 @@ Printer, process, build plate, filaments, colours and supports are stored once p
       "colour": "#9E9E9E",
       "compensation": {
         "Bambu Lab H2D 0.4 nozzle": {
-          "hole": {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01}
+          "hole": {
+            "mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01,
+            "process": "0.20mm Standard @BBL H2D", "filament_preset": "Bambu PETG Basic @BBL H2D 0.4 nozzle"
+          }
         }
       }
     },
@@ -52,7 +55,7 @@ Printer, process, build plate, filaments, colours and supports are stored once p
 - `filament` names the default entry of `filaments`; parts pick another by its key.
 - `support.type` is `tree(auto)` or `normal(auto)`. `interface_filament` names a filament printed as the support's contact layer under parts in another material, such as PLA under PETG, which peels off cleanly.
 - `process_settings` are Bambu process settings applied to every project, written as text the way Bambu Studio writes them (`"wall_loops": "4"`, not `4`, which Bambu ignores). Bambu Studio shows them, and the support settings, as changes to the process preset. Hole and contour compensation (`xy_hole_compensation`, `xy_contour_compensation`, `enable_circle_compensation`) are refused here: they are measured per printer and filament.
-- A filament's `compensation` holds what calibration coupons measured, by printer preset: `hole` and `contour`, each with `mm` (per side, as Bambu applies it), the date `measured`, and the `resolution` and `slice_closing_radius` in force then. `save-compensation` writes it; do not type values in by hand.
+- A filament's `compensation` holds what calibration coupons measured, by printer preset: `hole` and `contour`, each with `mm` (per side, as Bambu applies it), the date `measured`, and what the coupon's project sliced with: its `resolution`, `slice_closing_radius` and `process`, and the `filament_preset`. `save-compensation` writes it; do not type or change values by hand. Deleting a `hole` or `contour` entry is safe: that compensation is then unmeasured until it is measured again.
 
 When the file is missing, ask the user, one plain question at a time, which printer and nozzle, quality, filament and colour, build plate and supports they use, then write it and run `profile`. Do not infer these from 3MFs in Downloads, another project or the example above.
 
@@ -84,16 +87,16 @@ A job file, conventionally `<name>.print.json` beside the project's print output
 
 ## Hole and contour compensation
 
-Holes print smaller than modelled, mainly because the plastic contracts as it cools, and outer edges can print a little off size. Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent, and under the fdm-design skill's fit rule they are the one place shrinkage is corrected.
+Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent. The fdm-design skill's fit rule says why holes print small and why one offset per side corrects it; under that rule these two settings are the only correction for it.
 
-`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the resolution or closing radius the project slices at differs from the one in force when the value was measured: it holds only at those settings, so measure again or put them back.
+`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the process preset, the part's filament preset, the resolution or the closing radius differs from those the value was measured with: it holds only with those, so measure again or put them back.
 
 To measure a filament's compensation:
 
-1. Run the pre-print checks in the fdm-design skill (dry filament, flow dynamics, elephant foot), then ask the user which real part they will test with: a screw for holes, or a hole of known size, such as a bearing's bore, for pegs. `--diameter` is that part's size.
+1. Run the pre-print checks in the fdm-design skill (dry filament, flow dynamics, elephant foot), then ask the user which real part they will test with, near the size their fits use: for holes, a smooth pin such as a dowel pin, a drill bit's shank or a gauge pin, not a screw, whose thread bites and makes a snug fit hard to judge; for pegs, a hole of known size, such as a bearing's bore. Have them measure it with calipers: `--diameter` is that measurement, not the nominal size (an M3 screw, for one, measures about 2.9 mm).
 2. `coupon --calibrate holes` writes a bar of holes; `--calibrate pegs` writes a row of pegs on a base. Each rung is the part's diameter plus one compensation value on each side (`--values`, by default 0 to 0.25 mm for holes and -0.15 to 0.1 mm for pegs), marked with as many dimples as its place in the row. It writes the STEP and a project 3MF beside it, sliced with hole and contour compensation forced to 0 whatever the profile holds. Give the user the dimple legend from the report with the 3MF.
 3. The user prints it and tries the part: the hole it fits snugly without wobble, or the peg that fits the hole that way. That rung's value is the compensation. A part that fits none needs another range of `--values`.
-4. `save-compensation coupons/petg-holes.3mf --filament PETG --hole 0.1` (or `--contour`) shows what it would record for the profile's printer: the value, today's date, and the resolution and closing radius the coupon's project sliced at. It refuses a coupon made for another printer or filament. Ask the user, then run it again with `--write`.
+4. `save-compensation coupons/petg-holes.3mf --filament PETG --hole 0.1` (`--contour` for pegs) shows what it would record for the profile's printer: the value, today's date, and the process, filament preset, resolution and closing radius the coupon's project sliced with. It takes the project the coupon command wrote and named in its report, and refuses any other: one that is not a calibration coupon, one that measures the other compensation, one whose objects do not slice the measured compensation at 0, or one made for another printer or filament. Ask the user, then run it again with `--write`.
 5. Print a part that uses the hole again to confirm it, and repeat for each filament.
 
 ## Orientation checks
@@ -103,14 +106,14 @@ To measure a filament's compensation:
 - Bed contact: area and number of separate contact islands; undersides a little above the bed, which print on support or air, usually a bed face split into two heights.
 - Overhangs: area tilted past 45 degrees from vertical (a review trigger), and area past the slicer's support angle (needs support), by region.
 - Flat undersides: a bridge, held from below on opposite sides, with its span; an overhang, held on one side, with how far it reaches out; or an island, held nowhere. Each reports the material above it, so a thin wall laid on its side shows as a thin shelf.
-- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster and measured across the outline itself, so the raster pitch bounds the thickness error; thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
+- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster, then measured across the outline itself on lines 5 degrees apart through points spaced along their middle, counting only lines that cross the material about square-on, so a line that cuts off the corner of a thicker wall does not count. A place is listed when any of those measures under two line widths, and its thickness is that of its thinnest part, taken as the second thinnest measurement so that one stray line does not set it: a straight wall reads within 0.1% of its thickness wherever the raster falls, walls that cross or turn a corner read as thick as the walls themselves, a tapered wall reads near its thin end, a thin rib on a thin wall reads as the rib, and a wall at least two line widths thick is not listed. A thin rib or spur on such a wall is listed when it reaches out at least about 3 mm (0.3 mm thick) to 1.5 mm (0.6 mm thick); a shorter one only sometimes, when the wall is within about a raster pitch of two line widths. A sharp tip, whose faces meet at under about 25 degrees, is listed near its point, where it is thinner than two line widths; blunter corners are not. A large place is measured at a bounded number of points at each raster depth, so a part of it less than about a raster pitch thinner than the rest can read as the rest. Where no line across a place is found, the raster's own estimate stands, which can read up to two raster pitches thin. Thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
 - Holes the sampled layer outlines enclose: those narrower than the larger of 1 mm and 2.5 nozzle diameters, measured as the widest round pin that fits, with the heights they run through; and those that open to the outside at a neighbouring sampled height, with both heights. Small holes shallower than 1 mm, such as marking dimples, are counted rather than listed, and holes under about two raster pitches across are not seen.
 
 These are measurements of one orientation, not a printability verdict. Compare orientations with `check --rotate` before choosing one, and keep fit faces off bridges and support contact.
 
 ## Slice check
 
-`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. Every plate is reported. When a run fails, crashes, logs crossing toolpaths or takes more than 30 minutes, the plates not yet accounted for are sliced one at a time, so each problem lands on its own plate, and a plate that takes more than 30 minutes on its own is reported as failed. The exit code is 1 when any plate failed or has crossing toolpaths, which the app only warns about. When the command line crashes on macOS, the report names the function it crashed in, from the system's crash report. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
+`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. Every plate is reported. When a run fails, crashes, logs crossing toolpaths or takes more than 30 minutes, the plates not yet accounted for are sliced one at a time, so each problem lands on its own plate. A plate that takes more than 30 minutes on its own is reported as failed, and the plates after it as not sliced rather than tried, so a command line that hangs costs about an hour, not half an hour a plate. The exit code is 1 when any plate failed or has crossing toolpaths, which the app only warns about. When the command line crashes on macOS, the report names the function it crashed in, from the system's crash report. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
 
 `slice` also checks projects saved by Bambu Studio itself, which carry their full settings like the projects this tool writes.
 
@@ -127,5 +130,5 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 - Bambu Studio and its system presets only; presets the user saved in the app are not read.
 - A project holds at most 36 plates.
-- Part meshes must be closed solids: every edge shared by exactly two triangles, and every triangle facing outwards. Separate solids in one file or body are counted and flagged. STEP faces are meshed to within 0.01 mm, and the mesh is kept in the cad tools' user cache (`CAD_PILOT_CACHE`), named by the file's contents, so checking the same STEP again skips meshing.
+- Part meshes must be closed solids: every edge shared by exactly two triangles, and every triangle facing out of the material, as a separate shell facing inwards does only when it is a void inside another. Separate solids in one file or body are counted and flagged. STEP faces are meshed to within 0.01 mm, and the mesh is kept in the cad tools' user cache (`CAD_PILOT_CACHE`), named by the file's contents, so checking the same STEP again skips meshing.
 - The layout packs each part's footprint rectangle.

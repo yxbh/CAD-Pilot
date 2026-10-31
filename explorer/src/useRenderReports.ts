@@ -13,13 +13,14 @@ import type { AnalysisView } from "./analysis/useAnalysis.ts";
 // at the view's revision.
 const reportKey = (state: ViewState, analysis: AnalysisView) => `${state.revision}:${analysis.key}`;
 
-export function useRenderReports({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError }: {
+export function useRenderReports({ model, state, amount, stepPosition, sectionPosition, active, background, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError }: {
   model: Model;
   state: ViewState;
   amount: number;
   stepPosition: number | null;
   sectionPosition: number;
   active: boolean;
+  background: string | null;
   placements: Placement[];
   resources: GeometryResources;
   analysis: AnalysisView;
@@ -32,8 +33,8 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
   const { size, invalidate, gl, scene } = useThree();
   const lastReported = useRef("");
   const reportLifetime = useRef({ active: false });
-  const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements, analysis });
-  latest.current = { model, state, amount, stepPosition, sectionPosition, active, placements, analysis };
+  const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, background, placements, analysis });
+  latest.current = { model, state, amount, stepPosition, sectionPosition, active, background, placements, analysis };
   useLayoutEffect(() => {
     const lifetime = { active };
     reportLifetime.current = lifetime;
@@ -44,6 +45,9 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
     lastReported.current = "";
     invalidate();
   }, [invalidate]);
+  // A new backdrop, or a capture's own ray tracing, is drawn at the same revision, so it needs a report of its own, as a new
+  // size does.
+  useLayoutEffect(invalidateReport, [background, state.appearance, invalidateReport]);
   const assertCaptureReady = useCallback(() => {
     const current = latest.current;
     if (!current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");
@@ -125,7 +129,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
       selectedEdgeScreen: selectedEdge && edgePlacement
         ? edgeScreenPoint(clippedEdge ?? selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
       bounds: mergeBounds(visible.map((part) => part.bounds)),
-      pixels: [gl.domElement.width, gl.domElement.height],
+      pixels: [gl.domElement.width, gl.domElement.height], background: current.background,
       selectedPoint: current.state.selectedPoint, selectedPointScreen,
       faultMarks, sectionOutlineSegments, meshTriangles, pickingTrees,
       analysisKey: current.analysis.key, analysisStats: current.analysis.stats, triangleEdgeSegments, normalArrows, analysisSurfaces,

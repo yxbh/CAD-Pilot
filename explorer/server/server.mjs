@@ -5,7 +5,7 @@ import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs
 import path from "node:path";
 import { analysisInput, changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
 import { analysisFields, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
-import { traceAnswer, traceLimits } from "../shared/raytrace.mjs";
+import { analysisDrawn, traceAnswer, traceLimits } from "../shared/raytrace.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -649,8 +649,8 @@ async function startOwnedService({
     if (bytes.length > maxImageBytes || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new PrototypeError("invalid_image", "Invalid or oversized PNG");
     if (payload.camera) validateCamera(payload.camera);
     const imagePath = path.join(captureDir, `${hash(bytes).slice(0, 32)}.png`);
-    // The analysis the image shows, with the numbers its legend printed.
-    const analysis = analysisReport(pending.analysis ?? state.analysis, payload.analysisStats);
+    // The analysis the image shows, with the numbers its legend printed; a traced image shows none.
+    const analysis = analysisReport(analysisDrawn(pending.trace ? "raytraced" : state.appearance, pending.analysis ?? state.analysis), payload.analysisStats);
     // A traced image's samples and time, with a note when software rendering cut it short.
     const raytrace = pending.trace ? traceAnswer(payload.trace) : null;
     const result = {

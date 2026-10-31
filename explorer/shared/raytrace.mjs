@@ -1,4 +1,11 @@
 // The ray-traced view: how far a page refines it, what an image waits for, and how an answer describes what it got.
+import { defaultAnalysis } from "./analysis.mjs";
+
+// The ray-traced view draws Studio's light and finishes without analysis views; any other appearance draws its own.
+const PLAIN = defaultAnalysis();
+export function analysisDrawn(appearance, analysis) {
+  return appearance === "raytraced" ? PLAIN : analysis;
+}
 
 // A page refines the view until this many samples, then rests.
 export const PAGE_SAMPLES = 512;

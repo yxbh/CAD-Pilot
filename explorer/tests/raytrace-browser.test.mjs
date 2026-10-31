@@ -12,9 +12,10 @@ test("the ray-traced view is set from the page's appearance settings and traced 
     assert.match(report.status, /Preparing the ray-traced view|Compiling the path tracer|Ray traced · \d+ of 512 samples|Ray tracing needs a GPU/);
 
     // With the page closed, the background renderer traces the image to the samples asked for: it compiles the tracer
-    // first, which software WebGL takes about a minute over and says so.
-    const traced = await service.captureImage({ width: 200, height: 150, samples: 3, seconds: 30 });
+    // first, which software WebGL takes about a minute over and says so. A traced image leaves analysis views out.
+    const traced = await service.captureImage({ width: 200, height: 150, samples: 3, seconds: 30, analysis: { map: "thickness" } });
     assert.equal(traced.by, "headless");
+    assert.equal(traced.analysis, undefined);
     assert.equal(traced.raytrace.asked, 3);
     assert.ok(traced.raytrace.samples >= 1 && traced.raytrace.samples <= 3, JSON.stringify(traced.raytrace));
     assert.ok(traced.raytrace.renderer.length > 0);

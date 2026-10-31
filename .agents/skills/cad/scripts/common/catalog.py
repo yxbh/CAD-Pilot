@@ -13,11 +13,6 @@ from .paths import relative_path
 REPO_ROOT = Path.cwd().resolve()
 CAD_ROOT = REPO_ROOT
 STEP_SUFFIXES = (".step", ".stp")
-EXPLORER_ARTIFACT_FILENAMES = {
-    ".glb": "model.glb",
-    ".topology.json": "topology.json",
-    ".topology.bin": "topology.bin",
-}
 IGNORED_DISCOVERY_DIR_NAMES = {
     "__pycache__",
     ".cache",
@@ -85,7 +80,7 @@ class CadSource:
 
     @property
     def glb_path(self) -> Path | None:
-        return explorer_artifact_path_for_step_path(self.step_path, ".glb") if self.step_path is not None else None
+        return hidden_glb_path_for_step_path(self.step_path) if self.step_path is not None else None
 
     @property
     def generated_paths(self) -> tuple[Path, ...]:
@@ -250,18 +245,6 @@ def hidden_glb_path_for_step_path(step_path: Path) -> Path:
     return (base.parent / f".{base.name}.glb").resolve()
 
 
-def legacy_explorer_artifact_path_for_step_path(step_path: Path, suffix: str) -> Path:
-    base = step_path.resolve()
-    artifact_name = EXPLORER_ARTIFACT_FILENAMES.get(suffix)
-    if artifact_name is None:
-        raise ValueError(f"Unsupported STEP explorer artifact suffix: {suffix}")
-    return (explorer_directory_for_step_path(base) / artifact_name).resolve()
-
-
-def explorer_artifact_path_for_step_path(step_path: Path, suffix: str) -> Path:
-    if suffix == ".glb":
-        return hidden_glb_path_for_step_path(step_path)
-    return legacy_explorer_artifact_path_for_step_path(step_path, suffix)
 
 
 def _iter_python_sources(root: Path) -> tuple[CadSource, ...]:

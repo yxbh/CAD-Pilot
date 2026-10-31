@@ -5,7 +5,7 @@ import { newestState, type Model, type ViewState } from "./model.ts";
 import { blobDataUrl, type CaptureRequest, type CaptureView, type RenderReport, type ViewerHost } from "./host.ts";
 import { composeReviewImage } from "./drawing/render.ts";
 import { analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
-import type { TraceLimits } from "../shared/raytrace.mjs";
+import { analysisDrawn, type TraceLimits } from "../shared/raytrace.mjs";
 
 const defaultSize = { width: 1280, height: 800 };
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -31,9 +31,6 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     width: number; height: number; background: string | null; analysis: AnalysisSettings | null; trace: TraceLimits | null;
   }>({ ...defaultSize, background: null, analysis: null, trace: null });
   const latest = useRef<ViewState | null>(null);
-  // The surface React has committed: a capture is drawn only once its own size and backdrop are in place.
-  const applied = useRef(surface);
-  useEffect(() => { applied.current = surface; }, [surface]);
   const lastReport = useRef<RenderReport | null>(null);
   const capture = useRef<CaptureView | null>(null);
   // A graphics failure is reported once: the server answers it by restarting the browser in software rendering.
@@ -63,6 +60,8 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     setState(latest.current);
   }, []);
 
+  // A capture waits for a frame the scene reported at its own size, backdrop, analysis and appearance. The scene commits
+  // apart from this component, so the surface it was given here says nothing about what the scene has drawn yet.
   const settle = useCallback(async (revision: number, width: number, height: number, background: string | null, analysis: AnalysisSettings | null,
     trace: TraceLimits | null) => {
     await nextFrame(); await nextFrame();
@@ -70,15 +69,14 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     for (let frame = 0; frame < 6000; frame++) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
-      const drawn = analysisKey(analysis ?? latest.current.analysis);
-      const surfaceReady = applied.current.width === width && applied.current.height === height && applied.current.background === background &&
-        applied.current.analysis === analysis && applied.current.trace === trace;
-      if (capture.current && surfaceReady && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
-          report.analysisKey === drawn) return;
+      const appearance = trace ? "raytraced" : latest.current.appearance;
+      const drawn = analysisKey(analysisDrawn(appearance, analysis ?? latest.current.analysis));
+      if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
+          report.background === background && report.analysisKey === drawn && report.appearance === appearance) return;
       if (frame >= 900 && report?.analysisKey === drawn) break;
       await nextFrame();
     }
-    throw new Error("The background renderer did not draw the view at the requested size");
+    throw new Error("The background renderer did not draw the view at the requested size and backdrop");
   }, []);
 
   const onCapture = useCallback((request: CaptureRequest) => {

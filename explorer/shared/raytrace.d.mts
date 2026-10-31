@@ -1,3 +1,6 @@
+import type { AnalysisSettings } from "./analysis.mjs";
+
+export function analysisDrawn(appearance: string, analysis: AnalysisSettings): AnalysisSettings;
 export const PAGE_SAMPLES: number;
 export const IMAGE_SAMPLES: number;
 export const IMAGE_SECONDS: number;

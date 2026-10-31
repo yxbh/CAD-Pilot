@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IMAGE_SAMPLES, IMAGE_SECONDS, MAX_SAMPLES, MAX_SECONDS, SOFTWARE_SECONDS, traceAnswer, traceLimits } from "../shared/raytrace.mjs";
+import { analysisDrawn, IMAGE_SAMPLES, IMAGE_SECONDS, MAX_SAMPLES, MAX_SECONDS, SOFTWARE_SECONDS, traceAnswer, traceLimits } from "../shared/raytrace.mjs";
+import { analysisKey, applyAnalysis, defaultAnalysis } from "../shared/analysis.mjs";
 import { changeView, initialState } from "../server/protocol.mjs";
 import { stateSummary } from "../server/summary.mjs";
 import { renderOptions, traceOptions } from "../scripts/explorer.mjs";
@@ -40,6 +41,10 @@ test("ray traced is an appearance, kept with its finish and summarized as one", 
   assert.throws(() => changeView(initialState(), model, "set_appearance", { mode: "photo" }), { code: "bad_appearance" });
   const summary = stateSummary({ ...traced, modelName: "part.step", parts: [], renderers: { viewers: 1, seen: true, headless: false, drawn: "viewer" } }, { url: "" });
   assert.equal(summary.view.appearance, "raytraced polished");
+  // The traced view leaves analysis views out, so it draws, and its images wait for, no analysis.
+  const thickness = applyAnalysis(defaultAnalysis(), { map: "thickness" });
+  assert.equal(analysisKey(analysisDrawn("raytraced", thickness)), analysisKey(defaultAnalysis()));
+  assert.equal(analysisDrawn("studio", thickness), thickness);
 });
 
 test("--samples and --time ray trace a render or capture", () => {
