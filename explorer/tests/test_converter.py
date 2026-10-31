@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 from types import SimpleNamespace
 
 import numpy as np
@@ -55,9 +54,9 @@ def test_native_box_extent_includes_tolerance_gap():
 
 
 @pytest.fixture
-def workdir():
-    with tempfile.TemporaryDirectory(prefix="converter-test-", dir=PYTHON_DIR) as folder:
-        yield Path(folder)
+def workdir(tmp_path):
+    # Outside the checkout: a test that scans the workbench must never meet another test's files.
+    return tmp_path
 
 
 def _name(label, text):

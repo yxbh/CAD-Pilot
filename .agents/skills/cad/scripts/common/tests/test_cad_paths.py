@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from common import step_targets
+from common import catalog, step_targets
 from common.cad_ref_syntax import normalize_cad_path
 
 
@@ -49,9 +49,10 @@ class CanonicalCadPathTests(unittest.TestCase):
         (self.root / "parts" / "foo.step").write_text("ISO-10303-21;\n")
         (base / "vendor.step").write_text("ISO-10303-21;\n")
         self.base = base
-        patcher = mock.patch.object(step_targets, "REPO_ROOT", self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # The design root, for the paths and for the source catalog a lookup scans (never the real working folder).
+        for patcher in (mock.patch.object(step_targets, "REPO_ROOT", self.root), mock.patch.object(catalog, "CAD_ROOT", self.root)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_steps_inside_the_root_are_reported_from_the_root(self) -> None:
         for raw in (f"{self.root.as_posix()}/parts/foo", "/parts/foo", "parts/foo"):
