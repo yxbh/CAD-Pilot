@@ -20,6 +20,13 @@ PROFILE_PATH = Path.home() / ".cad-pilot" / "print-profile.json"
 SUPPORT_TYPES = ("tree(auto)", "normal(auto)")
 COLOUR = re.compile(r"#[0-9A-Fa-f]{6}")
 KEYS = {"printer", "process", "bed_type", "filament", "filaments", "support", "process_settings", "bambu_studio"}
+# What a project's print job may override: everything but where this machine's Bambu Studio is.
+PROJECT_KEYS = KEYS - {"bambu_studio"}
+# Profile values belong to the user's own printer and spools.
+ASK_USER = (
+    "Ask the user which printer, nozzle, process, filament, colour, build plate and supports they use, one plain "
+    "question at a time, rather than taking them from other files or the example (see the cad skill's references/print.md)"
+)
 SUPPORT_KEYS = {"type", "interface_filament"}
 FILAMENT_KEYS = {"preset", "colour", "compensation"}
 # Bambu's X-Y compensations, measured per printer and filament with calibration coupons.
@@ -169,7 +176,7 @@ def parse_profile(data: Mapping, *, where: str = "print profile") -> PrintProfil
     _unknown(where, data, KEYS)
     missing = sorted({"printer", "process", "bed_type", "filament", "filaments", "support"} - set(data))
     if missing:
-        raise ProfileError(f"{where}: missing {', '.join(missing)}")
+        raise ProfileError(f"{where}: missing {', '.join(missing)}. {ASK_USER}, then add them.")
     bed_type = _text(f"{where} bed_type", data["bed_type"])
     if bed_type not in BED_TEMPERATURE_KEYS:
         raise ProfileError(f"{where} bed_type {bed_type!r} is not one of {', '.join(BED_TEMPERATURE_KEYS)}")
@@ -230,10 +237,7 @@ def parse_profile(data: Mapping, *, where: str = "print profile") -> PrintProfil
 
 def _read(path: Path) -> dict:
     if not path.is_file():
-        raise ProfileError(
-            f"No personal print profile at {path}. Ask the user which printer, nozzle, process, filament, "
-            "colour, build plate and supports they use, then write it (see the cad skill's references/print.md)."
-        )
+        raise ProfileError(f"No personal print profile at {path}. {ASK_USER}, then write it.")
     try:
         personal = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
@@ -248,7 +252,12 @@ def load_profile(overrides: Mapping | None = None, *, path: Path = PROFILE_PATH)
     """The personal profile with a project's overrides on top."""
     personal = _read(path)
     if overrides:
-        _unknown("project print settings", overrides, KEYS)
+        if "bambu_studio" in overrides:
+            raise ProfileError(
+                "a print job cannot set bambu_studio: where Bambu Studio is installed belongs in the personal print "
+                "profile or the BAMBU_STUDIO environment variable"
+            )
+        _unknown("project print settings", overrides, PROJECT_KEYS)
     return parse_profile(_merge(dict(personal), overrides or {}), where=str(path) if not overrides else "print profile with project overrides")
 
 

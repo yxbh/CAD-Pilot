@@ -1,5 +1,7 @@
 import argparse
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -168,3 +170,37 @@ def test_command_line_paths_read_like_the_other_cad_tools(tmp_path, monkeypatch)
     assert _path(str(tmp_path / "b.step")) == tmp_path.resolve() / "b.step"
     with pytest.raises(argparse.ArgumentTypeError, match="absolute on this system"):
         _path("D:a.step")  # drive-relative: absolute on no system
+
+
+def test_missing_profile_values_say_what_to_ask(tmp_path):
+    path = tmp_path / "print-profile.json"
+    path.write_text(json.dumps({key: value for key, value in PROFILE.items() if key not in {"bed_type", "support"}}))
+    with pytest.raises(ProfileError, match=r"missing bed_type, support\. Ask the user which printer.*rather than taking them from other files"):
+        load_profile(path=path)
+
+
+def test_a_job_cannot_choose_the_bambu_studio_that_runs(tmp_path):
+    path = tmp_path / "print-profile.json"
+    path.write_text(json.dumps(PROFILE))
+    with pytest.raises(ProfileError, match="a print job cannot set bambu_studio"):
+        load_profile({"bambu_studio": str(tmp_path / "BambuStudio.app")}, path=path)
+    # The personal profile still names this machine's installation.
+    path.write_text(json.dumps({**PROFILE, "bambu_studio": "/Applications/BambuStudio.app"}))
+    assert load_profile(path=path).bambu_studio == "/Applications/BambuStudio.app"
+
+
+def test_the_documented_job_writes_its_3mf_beside_the_job(tmp_path):
+    reference = (Path(__file__).resolve().parents[3] / "references" / "print.md").read_text(encoding="utf-8")
+    section = reference.split("## Print jobs", 1)[1]
+    example = json.loads(re.search(r"```json\n(.*?)```", section, re.S).group(1))
+    prints = tmp_path / "prints"
+    job = parse_job(example, base=prints, default_output=prints / "jig.3mf")
+    assert job.output.parent == prints
+    assert {part.file.parent for part in job.parts} == {tmp_path / "outputs"}
+
+
+@pytest.mark.parametrize("name, content", [("jig.3mf", b"PK\x03\x04"), ("jig.print.json", b"\xff\xfe\x00binary")])
+def test_a_3mf_or_binary_target_is_not_a_job(tmp_path, name, content):
+    (tmp_path / name).write_bytes(content)
+    with pytest.raises(JobError, match="slice a project with|is not a print job"):
+        load_job(tmp_path / name)

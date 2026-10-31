@@ -12,6 +12,7 @@ from pathlib import Path
 
 from build123d import Box, Cylinder, Pos, Sphere, export_step
 
+from .meshes import STEP_SUFFIXES
 from .profile import MAX_COMPENSATION_MM
 
 
@@ -132,6 +133,8 @@ def peg(diameter: float, depth: float) -> object:
 
 
 def _export(shape, label: str, path: Path) -> None:
+    if path.suffix.lower() not in STEP_SUFFIXES:
+        raise ValueError(f"the coupon is written as STEP: give a .step or .stp path, not {path.name}")
     path.parent.mkdir(parents=True, exist_ok=True)
     shape.label = label
     export_step(shape, str(path))

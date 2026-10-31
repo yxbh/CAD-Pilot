@@ -18,11 +18,11 @@ python <cad>/scripts/print profile
 python <cad>/scripts/print presets H2D 0.4 PETG
 ```
 
-`<cad>` is this skill's directory. `--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place.
+`<cad>` is this skill's directory. `--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. The tool needs the workbench environment's mesh libraries; another interpreter that lacks them gets an error naming the workbench's.
 
 ## The personal print profile
 
-Printer, process, build plate, filaments, colours and supports are stored once per user in `~/.cad-pilot/print-profile.json`, outside every repository. Every job uses it; a job's `profile` table overrides it for that project.
+Printer, process, build plate, filaments, colours and supports are stored once per user in `~/.cad-pilot/print-profile.json`, outside every repository. Every job uses it; a job's `profile` table overrides it for that project, except `bambu_studio`, which belongs to the machine.
 
 ```json
 {
@@ -63,7 +63,7 @@ A job file, conventionally `<name>.print.json` beside the project's print output
 ```json
 {
   "name": "F2 jig",
-  "output": "prints/f2-jig.3mf",
+  "output": "f2-jig.3mf",
   "profile": {"filaments": {"PETG": {"colour": "#688197"}}},
   "plates": [
     {"name": "Fit test - print first", "parts": [
@@ -105,14 +105,14 @@ Compensation reaches only openings a layer encloses. The orientation check repor
 - Bed contact: area and number of separate contact islands; undersides a little above the bed, which print on support or air, usually a bed face split into two heights.
 - Overhangs: area tilted past 45 degrees from vertical (a review trigger), and area past the slicer's support angle (needs support), by region.
 - Flat undersides: a bridge, held from below on opposite sides, with its span; an overhang, held on one side, with how far it reaches out; or an island, held nowhere. Each reports the material above it, so a thin wall laid on its side shows as a thin shelf.
-- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. The raster pitch bounds the thickness error, and thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
+- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster and measured across the outline itself, so the raster pitch bounds the thickness error; thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
 - Holes the sampled layer outlines enclose: those narrower than the larger of 1 mm and 2.5 nozzle diameters, measured as the widest round pin that fits, with the heights they run through; and those that open to the outside at a neighbouring sampled height, with both heights. Small holes shallower than 1 mm, such as marking dimples, are counted rather than listed, and holes under about two raster pitches across are not seen.
 
 These are measurements of one orientation, not a printability verdict. Compare orientations with `check --rotate` before choosing one, and keep fit faces off bridges and support contact.
 
 ## Slice check
 
-`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. Every plate is reported. When a run fails, crashes or logs crossing toolpaths, the plates not yet accounted for are sliced one at a time, so each problem lands on its own plate. The exit code is 1 when any plate failed or has crossing toolpaths, which the app only warns about. When the command line crashes on macOS, the report names the function it crashed in, from the system's crash report. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
+`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. Every plate is reported. When a run fails, crashes, logs crossing toolpaths or takes more than 30 minutes, the plates not yet accounted for are sliced one at a time, so each problem lands on its own plate, and a plate that takes more than 30 minutes on its own is reported as failed. The exit code is 1 when any plate failed or has crossing toolpaths, which the app only warns about. When the command line crashes on macOS, the report names the function it crashed in, from the system's crash report. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
 
 `slice` also checks projects saved by Bambu Studio itself, which carry their full settings like the projects this tool writes.
 
@@ -122,7 +122,7 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 ## Reporting
 
-- Give the user the 3MF path every time; the tool prints it last as `3MF: <path>`. Open the project in Bambu Studio with `--open` when the user wants to see it or print it.
+- Give the user the 3MF path every time; the tool prints it last as `3MF: <path>`, also when slicing or opening the written project then fails. Open the project in Bambu Studio with `--open` when the user wants to see it or print it.
 - Report the profile used, each plate's parts, the compensation each part slices with and any warning about it, the orientation numbers and flags that matter for the design, and the slice results. Name a check that did not run as not checked.
 - Never send G-code to a printer or publish a model without the user's explicit approval.
 
@@ -130,5 +130,5 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 - Bambu Studio and its system presets only; presets the user saved in the app are not read.
 - A project holds at most 36 plates.
-- Part meshes must be closed solids. STEP faces are meshed to within 0.01 mm.
+- Part meshes must be closed solids: every edge shared by exactly two triangles, and every triangle facing outwards. Separate solids in one file or body are counted and flagged. STEP faces are meshed to within 0.01 mm, and the mesh is kept in the cad tools' user cache (`CAD_PILOT_CACHE`), named by the file's contents, so checking the same STEP again skips meshing.
 - The layout packs each part's footprint rectangle.

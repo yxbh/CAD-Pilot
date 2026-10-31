@@ -202,7 +202,8 @@ def test_a_crash_names_the_function_from_the_macos_crash_report(tmp_path, monkey
 
 
 class _ScriptedStudio:
-    """Answers each --slice target from a script: (exit code, log, plates sliced, result.json or None)."""
+    """Answers each --slice target from a script: (exit code, log, plates sliced, result.json or None);
+    an exit code of "timeout" stands for a run stopped at its time limit."""
 
     def __init__(self, script):
         self.script = script
@@ -213,6 +214,8 @@ class _ScriptedStudio:
         out = Path(arguments[arguments.index("--outputdir") + 1])
         self.targets.append(target)
         code, log, sliced, result = self.script[target]
+        if code == "timeout":
+            return CliRun(-9, log, 0, timeout=timeout)
         entries = []
         for number in sliced:
             (out / f"plate_{number}.gcode").write_text("")
@@ -390,3 +393,75 @@ def test_saving_a_rung_shows_the_change_and_writes_only_when_asked(tmp_path):
     saved = json.loads(path.read_text())["filaments"]["PLA"]["compensation"][PROFILE["printer"]]
     # The record keeps the conditions the coupon sliced at, not the profile's current ones.
     assert saved == {"hole": {"mm": 0.15, "measured": date.today().isoformat(), "resolution": 0.003, "slice_closing_radius": 0.01}}
+
+
+def _fake_install(root: Path) -> Path:
+    """An app folder laid out like Bambu Studio's on macOS, whose executable is an empty file."""
+    app = root / "Bambu.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "MacOS" / "BambuStudio").write_text("")
+    (app / "Contents" / "Resources" / "profiles").mkdir(parents=True)
+    (app / "Contents" / "Resources" / "profiles" / "BBL.json").write_text("{}")
+    return app
+
+
+def test_a_relative_install_is_made_absolute_and_a_program_that_cannot_start_is_an_error(tmp_path, monkeypatch):
+    app = _fake_install(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    studio = BambuStudio.locate("Bambu.app")
+    # The command line runs in a temporary folder, where a relative path would name nothing.
+    assert studio.executable == app / "Contents" / "MacOS" / "BambuStudio"
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(BambuStudioError, match="Could not run Bambu Studio"):
+        studio.run(["--help"], work)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in program is a shell script")
+def test_a_run_past_its_time_limit_is_stopped_and_reported(tmp_path):
+    program = tmp_path / "slow"
+    program.write_text("#!/bin/sh\nexec sleep 30\n")
+    program.chmod(0o755)
+    result = BambuStudio(program, program, tmp_path).run([], tmp_path, timeout=0.5)
+    assert result.timed_out and not result.crashed and result.stopped
+    assert result.failure() == "Bambu Studio did not finish within 0.5 s"
+
+
+def test_a_timed_out_run_is_retried_plate_by_plate_and_blames_only_a_lone_plate(tmp_path):
+    studio = _ScriptedStudio({0: ("timeout", "", [], None), 1: (0, "", [1], {}), 2: ("timeout", "", [], None), 3: (0, "", [3], {})})
+    report = slice_project(studio, _three_plates(tmp_path), timeout=1800)
+    assert studio.targets == [0, 1, 2, 3]
+    assert [plate.error for plate in report.plates] == [None, "Bambu Studio did not finish within 1800 s", None]
+    assert report.plates[0].seconds == 60.0 and not report.ok
+
+
+def _cannot_slice(studio, project):
+    raise BambuStudioError("Could not run Bambu Studio: it cannot start")
+
+
+def test_slice_still_names_the_3mf_when_slicing_cannot_run(tmp_path, monkeypatch, capsys):
+    from print import cli
+
+    project = _three_plates(tmp_path)
+    monkeypatch.setattr(cli, "_configured_studio", lambda: None)
+    monkeypatch.setattr(cli.BambuStudio, "locate", classmethod(lambda cls, configured=None: None))
+    monkeypatch.setattr(cli, "slice_project", _cannot_slice)
+    assert cli.main(["slice", str(project)]) == 2
+    out, err = capsys.readouterr()
+    assert out.strip().splitlines()[-1] == f"3MF: {project}"
+    assert "error: Could not run Bambu Studio" in err
+
+
+@needs_bambu
+def test_project_still_reports_its_plan_and_3mf_when_slicing_fails(tmp_path, monkeypatch, capsys):
+    from print import cli
+
+    export_step(Pos(0, 0, 3) * Box(20, 20, 6), str(tmp_path / "plate.step"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "load_profile", lambda overrides=None: parse_profile(PROFILE))
+    monkeypatch.setattr(cli, "slice_project", _cannot_slice)
+    assert cli.main(["project", "plate.step", "--slice"]) == 2
+    out, err = capsys.readouterr()
+    assert 'plate 1 "plate": plate' in out
+    assert out.strip().splitlines()[-1] == f"3MF: {tmp_path / 'plate.3mf'}"
+    assert (tmp_path / "plate.3mf").is_file() and "error: Could not run Bambu Studio" in err

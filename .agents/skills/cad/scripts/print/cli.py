@@ -75,17 +75,20 @@ def _hand_off(args: argparse.Namespace, studio: BambuStudio, plan: ProjectPlan, 
     lines = [*lines, *plan_lines(plan)]
     data = {**(data or {}), **plan_dict(plan, output)}
     status = 0
-    if args.slice:
-        report = slice_project(studio, output)
-        _cross_check(report, plan)
-        lines += slice_lines(report)
-        data["slice"] = report.as_dict()
-        status = 0 if report.ok else 1
-    if args.open:
-        studio.open(output)
-        lines.append("Opened in Bambu Studio.")
-    lines.append(f"3MF: {output}")
-    _emit(args, lines, data)
+    try:
+        if args.slice:
+            report = slice_project(studio, output)
+            _cross_check(report, plan)
+            lines += slice_lines(report)
+            data["slice"] = report.as_dict()
+            status = 0 if report.ok else 1
+        if args.open:
+            studio.open(output)
+            lines.append("Opened in Bambu Studio.")
+    finally:
+        # The project is written: report it and its path even when slicing or opening it fails.
+        lines.append(f"3MF: {output}")
+        _emit(args, lines, data)
     return status
 
 
@@ -93,15 +96,22 @@ def _slice(args: argparse.Namespace) -> int:
     project = args.project
     if not project.is_file():
         raise BambuStudioError(f"Project not found: {project}")
-    studio = BambuStudio.locate(_configured_studio())
-    report = slice_project(studio, project)
-    lines = slice_lines(report)
-    if args.open:
-        studio.open(project)
-        lines.append("Opened in Bambu Studio.")
-    lines.append(f"3MF: {project}")
-    _emit(args, lines, report.as_dict())
-    return 0 if report.ok else 1
+    lines: list[str] = []
+    data: dict = {"project": str(project)}
+    status = 0
+    try:
+        studio = BambuStudio.locate(_configured_studio())
+        report = slice_project(studio, project)
+        lines = slice_lines(report)
+        data = report.as_dict()
+        status = 0 if report.ok else 1
+        if args.open:
+            studio.open(project)
+            lines.append("Opened in Bambu Studio.")
+    finally:
+        lines.append(f"3MF: {project}")
+        _emit(args, lines, data)
+    return status
 
 
 def _configured_studio() -> str | None:
