@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { assertBuilt } from "../server/launcher.mjs";
 import { workbenchRoot } from "../server/paths.mjs";
-import { createHeadlessRenderer } from "../server/renderer.mjs";
+import { createHeadlessRenderer, softwareFlags } from "../server/renderer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
 test("a background page that cannot create WebGL is restarted in software and still captures", { timeout: 120_000 }, async (t) => {
@@ -13,7 +13,7 @@ test("a background page that cannot create WebGL is restarted in software and st
   const renderer = (options) => createHeadlessRenderer({
     ...options,
     launch: (executable, args, spawnOptions) => {
-      software.push(args.includes("--use-angle=swiftshader"));
+      software.push(softwareFlags(process.platform).every((flag) => args.includes(flag)));
       return spawn(executable, software.at(-1) ? args : [...args.slice(0, -1), "--disable-webgl", args.at(-1)], spawnOptions);
     },
   });

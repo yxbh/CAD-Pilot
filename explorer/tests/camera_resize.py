@@ -167,7 +167,7 @@ def run(url, output):
                 def drag(button, dx, dy):
                     page.mouse.move(x, y)
                     page.mouse.down(button=button)
-                    page.mouse.move(x + dx, y + dy, steps=12)
+                    page.mouse.move(x + dx, y + dy, steps=2)
                     page.mouse.up(button=button)
 
                 changed(lambda: drag("left", 76, 43))

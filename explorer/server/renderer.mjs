@@ -29,9 +29,11 @@ export async function findChromium({ env = process.env, platform = process.platf
   throw new PrototypeError("renderer_missing", missing, 503);
 }
 
-// Hardware WebGL where the platform's ANGLE backend is dependable; software WebGL is the fallback when it is not.
+// Hardware WebGL where the platform's ANGLE backend is dependable; software WebGL is the fallback when it is not. On
+// Windows that is Direct3D's own software rasterizer (WARP), which draws the viewer two to three times faster
+// than SwiftShader on the same cores. tests/browser_session.py launches the scenarios' Chromium the same way.
 const gpuFlags = { darwin: ["--use-angle=metal"], win32: ["--use-angle=d3d11"] };
-const softwareFlags = ["--use-angle=swiftshader"];
+export const softwareFlags = (platform) => platform === "win32" ? ["--use-angle=d3d11-warp"] : ["--use-angle=swiftshader"];
 // Every launch also lets Chromium switch to software WebGL by itself when it finds no usable GPU (CI runners, remote
 // desktops), as Playwright launches it. The flag is "unsafe" for untrusted pages; this browser only loads the viewer's own.
 const commonFlags = [
@@ -162,7 +164,7 @@ export function createHeadlessRenderer({
     let stderr = "";
     const browser = launch(executable, [
       ...commonFlags, `--user-data-dir=${profile}`, ...(sandboxFlags[platform] ?? []),
-      ...(software ? softwareFlags : gpuFlags[platform] ?? []),
+      ...(software ? softwareFlags(platform) : gpuFlags[platform] ?? []),
       "about:blank",
     ], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
     // A browser that could not be spawned reports an error and never exits.

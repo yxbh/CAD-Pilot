@@ -1,4 +1,5 @@
 import contextlib
+import sys
 import time
 
 from playwright.sync_api import Error, expect
@@ -27,12 +28,31 @@ class _Shared:
 
     def browser(self):
         if self._browser is None or not self._browser.is_connected():
-            self._browser = self.playwright.chromium.launch()
+            self._browser = _launch(self.playwright)
         return self._browser
 
     def close(self):
         if self._browser is not None and self._browser.is_connected():
             self._browser.close()
+
+
+# Pages draw as in a person's browser, with the GPU where there is one, and otherwise in software as the Explorer's
+# own background renderer does (server/renderer.mjs): Playwright's Chromium alone would draw everything with SwiftShader,
+# many times slower, even beside a GPU.
+_HARDWARE = {"darwin": ["--use-angle=metal"], "win32": ["--use-angle=d3d11"]}
+_SOFTWARE = {"win32": ["--use-angle=d3d11-warp"]}
+
+
+def _launch(playwright):
+    if sys.platform in _HARDWARE:
+        browser = playwright.chromium.launch(args=_HARDWARE[sys.platform])
+        page = browser.new_page()
+        drawn = page.evaluate("() => !!document.createElement('canvas').getContext('webgl2')")
+        page.close()
+        if drawn:
+            return browser
+        browser.close()
+    return playwright.chromium.launch(args=_SOFTWARE.get(sys.platform, []))
 
 
 class _Contexts:
@@ -73,7 +93,7 @@ def launch_chromium(playwright):
     expect.set_options(timeout=30_000)
     if _shared is not None:
         return _Contexts(_shared.browser())
-    return playwright.chromium.launch()
+    return _launch(playwright)
 
 
 class BrowserSession:

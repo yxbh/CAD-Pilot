@@ -87,7 +87,7 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
   await renderer.ensure();
   assert.equal(await renderer.fallBack(), true);
   assert.equal(launches.length, 3);
-  assert.ok(launches[2].args.includes("--use-angle=swiftshader") && !launches[2].args.includes("--use-angle=d3d11"));
+  assert.ok(launches[2].args.includes("--use-angle=d3d11-warp") && !launches[2].args.includes("--use-angle=d3d11"), "Windows falls back to WARP");
   assert.equal(await renderer.fallBack(), false, "software rendering is the last resort");
   // Page console output is not a reason; the exit signal is. A crashing browser resets its pipes, which must not end this process.
   launches[2].stderr.emit("data", Buffer.from('[1:2:INFO:CONSOLE(7)] "THREE.Clock: This module has been deprecated."\n'));
