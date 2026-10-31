@@ -51,7 +51,8 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
       const { nodeIds, unresolved } = resolve(options.hide);
       if (unresolved.length) throw new PrototypeError("bad_render", `No part or group label matches ${unresolved.join(", ")}`);
       if (nodeIds.length === resolve.partCount) throw new PrototypeError("bad_render", `--hide ${options.hide.join(",")} would hide every part`);
-      await run("set_visibility", { ids: nodeIds, visible: false });
+      // set_visibility takes at most 500 parts at a time.
+      for (let start = 0; start < nodeIds.length; start += 500) await run("set_visibility", { ids: nodeIds.slice(start, start + 500), visible: false });
     }
     if (options.explode) await run("set_explode", options.explode);
     if (options.step) await run("set_step", options.step);

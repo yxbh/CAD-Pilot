@@ -10,6 +10,7 @@ import { initialState } from "../server/protocol.mjs";
 const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jM1sAAAAASUVORK5CYII=";
 const camera = { position: [10, -10, 10], target: [0, 0, 0], up: [0, 0, 1], fov: 42 };
 const state = { ...initialState(), revision: 5, modelName: "Review model.step", documentRevision: "a".repeat(64), topologyRevision: "b".repeat(64), explode: 0.5,
+  source: { ...initialState().source, sha256: "c".repeat(64) },
   selectedIds: ["a"], selectedEdge: { nodeId: "a", edgeId: "e1" },
   section: { enabled: true, axis: "y", position: 12.5, flipped: true } };
 const capture = { dataUrl, width: 1, height: 1, camera };
@@ -29,6 +30,8 @@ test("reviews persist drawing history and remain bound to their original image a
     assert.deepEqual(original.pose.selectedEdge, state.selectedEdge);
     assert.deepEqual(original.pose.section, state.section);
     assert.equal(original.source.topologyRevision, state.topologyRevision);
+    // The revision a person is told about is the main file's, as in every other answer.
+    assert.equal(original.source.sha256, state.source.sha256);
     const drawing = { past: [[]], present: [stroke], future: [] };
     const saved = await store.save(original.id, drawing, 1);
     assert.equal(saved.version, 2);

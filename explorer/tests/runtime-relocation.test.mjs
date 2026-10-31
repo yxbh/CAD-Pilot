@@ -38,7 +38,7 @@ async function fixture(t) {
   const modelName = path.join("models", `${model.topologyRevision}.json`);
   await writeFile(path.join(source, modelName), JSON.stringify(model));
   const state = {
-    ...initialState(), revision: 4, documentRevision: sha256, topologyRevision: model.topologyRevision,
+    ...initialState(), revision: 4, documentRevision: sha256, topologyRevision: model.topologyRevision, source: { ...initialState().source, sha256 },
     modelName: "Test model.step", selectedIds: [model.nodes[0].id],
     selectedEdge: { nodeId: model.nodes[0].id, edgeId: "e2" }, selectionMode: "edge", explode: 0.5,
   };

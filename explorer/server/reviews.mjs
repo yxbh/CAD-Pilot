@@ -117,7 +117,7 @@ export class ReviewStore {
     if ((capture.camera.projection ?? "perspective") !== (state.projection ?? "perspective")) fail("Captured camera projection does not match the view");
     const review = {
       id: randomUUID(), version: 1, title: `Review ${count + 1} - ${state.modelName}`, createdAt: new Date().toISOString(),
-      source: { name: state.modelName, sha256: state.documentRevision, topologyRevision: state.topologyRevision },
+      source: { name: state.modelName, sha256: state.source.sha256, topologyRevision: state.topologyRevision },
       pose: {
         explode: state.explode, direction: state.direction, fixedId: state.fixedId,
         ...(state.step !== null && state.step !== undefined ? { step: state.step, stepMode: state.stepMode } : {}),

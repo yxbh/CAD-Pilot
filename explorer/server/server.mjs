@@ -320,7 +320,8 @@ async function startOwnedService({
   }
 
   // Added files come back from their caches, whichever way the view starts. One whose copy is gone from the store is
-  // read again from its project file when that is still there; otherwise it is left out, and state says which.
+  // read again from its project file when that still holds what was added; otherwise it is left out, and state says
+  // which and why: its file is missing, has changed since, or could not be read.
   async function restoreAddedFiles() {
     const restored = [];
     const dropped = [];
@@ -338,11 +339,17 @@ async function startOwnedService({
         try {
           if (!document.file) throw error;
           const resolved = await validateModelPath(path.resolve(project, document.file), project);
-          restored.push(await importDocument(document.id, { resolved, displayName: name }, document.options));
+          const reread = await importDocument(document.id, { resolved, displayName: name }, document.options);
+          // Snapshots are named by their content, so a different name means the file holds something else now.
+          if (path.basename(reread.inputFile) !== path.basename(document.inputFile)) {
+            throw new PrototypeError("file_changed", `${document.file} has changed since it was added`);
+          }
+          restored.push(reread);
           log(`Explorer read ${document.file} again: ${publicError(error)}`);
         } catch (failure) {
           log(`Explorer left ${name} out of the view: ${publicError(failure)}`);
-          dropped.push({ id: document.id, name, file: document.file });
+          const reason = { file_not_found: "missing", file_changed: "changed" }[failure.code] ?? "unreadable";
+          dropped.push({ id: document.id, name, file: document.file, ...(document.file ? { reason } : {}) });
         }
       }
     }
@@ -617,7 +624,8 @@ async function startOwnedService({
       modelName: state.modelName, source: state.source,
       exploded: state.explode, step: state.step, stepMode: state.stepMode, selectedIds: state.selectedIds, selectedFace: state.selectedFace,
       selectedEdge: state.selectedEdge,
-      camera: payload.camera ?? state.camera, appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
+      camera: payload.camera ?? state.camera, cameraPreset: state.cameraPreset, cameraPinned: state.cameraPinned, projection: state.projection,
+      appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
       section: state.section,
     };
     if (await stat(imagePath).then(() => true, () => false)) await markUsed(imagePath);

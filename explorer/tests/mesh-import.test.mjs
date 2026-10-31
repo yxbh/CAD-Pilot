@@ -235,12 +235,22 @@ test("added files whose copies are gone are read again from the project, or name
   await removeCopies(state.documents.slice(1));
   await service.close();
 
-  // Once the project file is gone too, the note says which file to add back.
+  // A project file that holds something else now is not shown in place of what was added.
+  await writeFile(path.join(root, "open.stl"), boxStl({ scale: 3 }));
+  service = await createService({ projectRoot: root, viewId: "dropped", log: () => {} });
+  await service.initialize();
+  assert.deepEqual(service.getState().droppedFiles, [{ id: "ref1", name: "open.stl", file: "open.stl", reason: "changed" }]);
+  assert.match((await service.summary()).note, /\(open\.stl: open\.stl has changed since it was added, and add_file file=open\.stl would show what it holds now\)/);
+
+  // Once the project file is gone, the note says so rather than naming a path that is not there.
+  await service.execute("add_file", { file: "open.stl" });
+  await removeCopies(service.getState().documents.slice(1));
+  await service.close();
   await rm(path.join(root, "open.stl"));
   service = await createService({ projectRoot: root, viewId: "dropped", log: () => {} });
   await service.initialize();
-  assert.deepEqual(service.getState().droppedFiles, [{ id: "ref1", name: "open.stl", file: "open.stl" }]);
-  assert.match((await service.summary()).note, /\(open\.stl: add it back with add_file file=open\.stl\)/);
+  assert.deepEqual(service.getState().droppedFiles, [{ id: "ref1", name: "open.stl", file: "open.stl", reason: "missing" }]);
+  assert.match((await service.summary()).note, /\(open\.stl: open\.stl is no longer in the project, so ask where it is now and add that with add_file\)/);
 });
 
 test("a collapsed facet keeps the mesh closed, and points far from it are refused", { timeout: 120_000 }, async (t) => {

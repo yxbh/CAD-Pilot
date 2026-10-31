@@ -8,7 +8,7 @@ import { workbenchRuntimeRoot } from "../server/paths.mjs";
 import { PrototypeError } from "../server/protocol.mjs";
 import { projectOutput, renderOnce, saveCopy } from "../server/render-once.mjs";
 import { pruneRuntime } from "../server/runtime-store.mjs";
-import { revisionLabel } from "../server/summary.mjs";
+import { cameraSummary, revisionLabel } from "../server/summary.mjs";
 
 export { actionInput };
 
@@ -51,6 +51,8 @@ const COMMAND_FLAGS = {
   render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide"],
 };
 
+const TAKES_NO_ARGUMENTS = new Set(["state", "stop", "actions", "prune"]);
+
 function parseArguments(argv) {
   const positional = [];
   const flags = {};
@@ -65,7 +67,8 @@ function parseArguments(argv) {
       if (value === undefined) throw new PrototypeError("bad_arguments", `${argument} needs a value`);
       if (argument === "--view") view = value;
       else flags[argument.slice(2)] = value;
-    } else positional.push(argument);
+    } else if (argument.startsWith("--")) throw new PrototypeError("bad_arguments", `Unknown option ${argument}. Run help to list each command's options.`);
+    else positional.push(argument);
   }
   command ||= positional[0] || "help";
   // --view names a remembered setup everywhere except render, which saves no setup and uses it for the camera.
@@ -144,6 +147,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   if (command === "help") return USAGE;
   const unread = Object.keys(flags).filter((flag) => flags[flag] !== undefined && COMMAND_FLAGS[command] && !COMMAND_FLAGS[command].includes(flag));
   if (unread.length) throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.`);
+  if (TAKES_NO_ARGUMENTS.has(command) && args.length) throw new PrototypeError("bad_arguments", `${command} takes no arguments, got ${args.join(" ")}`);
   if (command === "actions") {
     return actionNames().map((name) => {
       const { description, inputSchema } = COMMANDS[name];
@@ -184,7 +188,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
     if (flags.full) return { ...result, ...saved };
     return {
       path: result.path, ...saved, width: result.width, height: result.height, model: result.modelName,
-      revision: revisionLabel(result.source.sha256), viewRevision: result.revision,
+      revision: revisionLabel(result.source.sha256), viewRevision: result.revision, camera: cameraSummary(result, result.camera),
     };
   }
   if (command === "do") {
