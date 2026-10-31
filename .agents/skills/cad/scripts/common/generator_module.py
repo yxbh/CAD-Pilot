@@ -2,13 +2,16 @@
 
 The tools run from the design root. A generator can import modules beside it,
 modules at the design root and, in a ``src/`` layout, the project's packages,
-with no ``sys.path`` code of its own. Each load reads the generator and those
-project modules afresh from their source, never from cached bytecode, so a
-second generator with a same-named sibling module, or an edit during a
-long-lived worker or within the same second, never runs stale code. Third-party
-packages come from the Python running the tools, so a project with its own
-environment runs the tools with that environment's interpreter (it already has
-build123d).
+with no ``sys.path`` code of its own, even one named like a module of the tools
+themselves, such as ``common``. Each load first drops the project modules that
+earlier loads imported, wherever their generators lived, and reads the
+generator and its project modules afresh from their source, never from cached
+bytecode, so a second generator with a same-named sibling module, or an edit
+during a long-lived worker or within the same second, never runs stale code.
+Modules the caller imported itself, its ``__main__`` included, are left alone.
+Third-party packages come from the Python running the tools, so a project with
+its own environment runs the tools with that environment's interpreter (it
+already has build123d).
 """
 
 from __future__ import annotations
@@ -33,6 +36,10 @@ class MissingGeneratorError(RuntimeError):
 
 
 _TOOLS_DIR = Path(__file__).resolve().parents[1]
+
+# The project modules imported since the last load began, by name: the next load drops them. Some of them may be out
+# of ``sys.modules`` for now, set aside because they share a name with a module of the tools.
+_project_modules: dict[str, ModuleType] = {}
 
 
 def project_import_paths(script_path: Path, *, root: Path | None = None) -> list[Path]:
@@ -67,10 +74,17 @@ _PROJECT_LOADERS = (
 )
 
 
+def _prefixes(folders: object) -> tuple[str, ...]:
+    """Each folder, as given and with its links resolved, as a prefix that matches only paths inside it."""
+    return tuple({os.path.join(form, "") for folder in folders for form in (str(folder), os.path.realpath(folder))})
+
+
+_TOOLS_PREFIXES = _prefixes([_TOOLS_DIR])
+
+
 def _installed_folders() -> tuple[str, ...]:
     """Folders whose modules belong to the interpreter or the tools, never to the project, even inside its root."""
-    folders = {sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages(), str(_TOOLS_DIR)}
-    return tuple({os.path.join(form, "") for folder in folders for form in (folder, os.path.realpath(folder))})
+    return _prefixes({sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages(), str(_TOOLS_DIR)})
 
 
 def _in_project(folders: list[Path]) -> Callable[[object], bool]:
@@ -90,16 +104,52 @@ def _in_project(folders: list[Path]) -> Callable[[object], bool]:
     return belongs
 
 
+def _read_from(module: object) -> list[str]:
+    """Where a module was read from: its file, or the folders of a namespace package.
+
+    A module's own ``__getattr__`` can do anything, so whatever it raises means the module names no folder.
+    """
+    try:
+        file = getattr(module, "__file__", None)
+        if isinstance(file, str):
+            return [file]
+        locations = getattr(getattr(module, "__spec__", None), "submodule_search_locations", None)
+        return [str(location) for location in locations or ()]
+    except Exception:
+        return []
+
+
+def _tools_names_in(folders: list[Path]) -> set[str]:
+    """The tools' own top-level modules that a project folder also has a module or package for.
+
+    Read before the project's folders go on the import path, which would add them to a tools namespace package.
+    """
+    names = set()
+    for name, module in sys.modules.items():
+        places = _read_from(module) if "." not in name and not name.startswith("__") else []
+        if places and all(os.path.join(place, "").startswith(_TOOLS_PREFIXES) for place in places):
+            if any((folder / name).is_dir() or any((folder / f"{name}{suffix}").is_file()
+                                                    for suffix in machinery.all_suffixes()) for folder in folders):
+                names.add(name)
+    return names
+
+
 @contextlib.contextmanager
 def _project_imports(script_path: Path) -> Iterator[None]:
     """The project's folders first on the import path while its code runs, and read with ``_SourceLoader``.
 
     A path hook gives the project's folders, and its packages' folders, a finder that uses ``_SourceLoader``. Cached
     finders for them are dropped on the way in and out, so the hook is asked and the tools' own imports afterwards
-    get the interpreter's usual finders again.
+    get the interpreter's usual finders again. A tools module the project has its own module for, such as
+    ``common``, is set aside meanwhile, so the project's is imported; on the way out the tools' comes back and the
+    project's waits for the next call. Project modules that appear are noted for the next load to drop.
     """
     folders = project_import_paths(script_path)
     belongs = _in_project(folders)
+    shadowed = _tools_names_in([folder for folder in folders if belongs(str(folder))])
+
+    def shadowed_name(name: str) -> bool:
+        return name.partition(".")[0] in shadowed
 
     def project_finder(path: str) -> machinery.FileFinder:
         if not belongs(path):
@@ -110,24 +160,35 @@ def _project_imports(script_path: Path) -> Iterator[None]:
         for path in [path for path in sys.path_importer_cache if belongs(path)]:
             del sys.path_importer_cache[path]
 
+    tools_modules = {name: sys.modules.pop(name) for name in [name for name in sys.modules if shadowed_name(name)]}
+    sys.modules.update({name: module for name, module in _project_modules.items() if shadowed_name(name)})
     saved_path, saved_hooks = list(sys.path), list(sys.path_hooks)
     sys.path[:0] = [str(path) for path in folders]
     sys.path_hooks.insert(0, project_finder)
     forget_finders()
+    before = dict(sys.modules)
     try:
         yield
     finally:
+        for name, module in list(sys.modules.items()):
+            if before.get(name) is not module:
+                places = _read_from(module)  # while the project's folders are on the path, as namespaces read them
+                if shadowed_name(name) or (places and all(belongs(place) for place in places)):
+                    _project_modules[name] = module
+        for name in [name for name in sys.modules if shadowed_name(name)]:
+            _project_modules[name] = sys.modules.pop(name)
+        sys.modules.update(tools_modules)
         sys.path[:] = saved_path
         sys.path_hooks[:] = saved_hooks
         forget_finders()
 
 
-def _forget_project_modules(script_path: Path) -> None:
-    """Drop modules imported from the project's folders, so this load imports them from disk again."""
-    belongs = _in_project(project_import_paths(script_path))
-    for name, module in list(sys.modules.items()):
-        if belongs(getattr(module, "__file__", None)):
+def _forget_project_modules() -> None:
+    """Drop the project modules earlier loads imported, so this load imports them from disk again."""
+    for name, module in _project_modules.items():
+        if sys.modules.get(name) is module:
             del sys.modules[name]
+    _project_modules.clear()
 
 
 def _module_name(script_path: Path) -> str:
@@ -151,7 +212,7 @@ def load_generator(script_path: Path, *, display_path: str | None = None) -> Mod
     name = _module_name(resolved)
     module_spec = importlib.util.spec_from_file_location(name, resolved, loader=_SourceLoader(name, str(resolved)))
     module = importlib.util.module_from_spec(module_spec)
-    _forget_project_modules(resolved)
+    _forget_project_modules()
     sys.modules[module_spec.name] = module  # registered like an import, so its dataclasses can find their module
     try:
         with _project_imports(resolved):

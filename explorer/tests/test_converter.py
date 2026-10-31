@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 from types import SimpleNamespace
 
 import numpy as np
@@ -55,9 +54,9 @@ def test_native_box_extent_includes_tolerance_gap():
 
 
 @pytest.fixture
-def workdir():
-    with tempfile.TemporaryDirectory(prefix="converter-test-", dir=PYTHON_DIR) as folder:
-        yield Path(folder)
+def workdir(tmp_path):
+    # Outside the checkout: a test that scans the workbench must never meet another test's files.
+    return tmp_path
 
 
 def _name(label, text):
@@ -158,7 +157,7 @@ def _assert_contract(model):
             assert np.all(edge_points <= np.asarray(edge["bounds"]["max"]) + 1e-6)
     worlds = {}
     for node in model["nodes"]:
-        assert set(node) == {"id", "label", "parentId", "partId", "matrix", "color"}
+        assert set(node) == {"id", "label", "labelled", "parentId", "partId", "matrix", "color"}
         assert node["label"]
         assert len(node["matrix"]) == 16
         assert np.isfinite(node["matrix"]).all()
@@ -301,6 +300,51 @@ def test_demo_reuses_spacers_and_preserves_local_frames(workdir):
     spacer = next(p for p in model["parts"] if p["id"] == spacers[0]["partId"])
     np.testing.assert_allclose(spacer["bounds"]["min"], [-4, -4, 0], atol=1e-6)
     np.testing.assert_allclose(spacer["bounds"]["max"], [4, 4, 27], atol=1e-6)
+
+
+def test_parts_are_named_as_the_cad_skill_writes_and_lists_them(workdir, monkeypatch):
+    # One STEP from scripts/step's writer: a labelled part, an unlabelled group of two unlabelled parts and a part
+    # carrying the "COMPOUND" label build123d's import_step gives. The writer's fallback names, inspect parts and the
+    # viewer's labels must agree, and the group nobody labelled must not read back as a named group.
+    from build123d import Box, Compound, Pos
+
+    from common.step_export import export_build123d_step_scene
+    from common.step_parts import load_step_parts
+
+    monkeypatch.setenv("CAD_PILOT_CACHE", str(workdir / "cache"))
+
+    def box(label, x):
+        shape = Pos(x, 0, 0) * Box(4, 4, 4)
+        shape.label = label
+        return shape
+
+    tree = Compound(children=[box("shade", 0), Compound(children=[box("", 10), box("", 20)]), box("COMPOUND", 30)], label="lamp")
+    step = workdir / "lamp.step"
+    written = export_build123d_step_scene(tree, step).unlabelled_parts
+    assert list(written) == ["lamp 2 1", "lamp 2 2", "lamp 3"]
+
+    listed = load_step_parts(step, "lamp")
+    assert [part.path for part in listed.parts] == ["lamp/shade", "lamp/lamp 2 1", "lamp/lamp 2 2", "lamp/lamp 3"]
+
+    snapshot = workdir / f"{hashlib.sha256(step.read_bytes()).hexdigest()}.step"
+    snapshot.write_bytes(step.read_bytes())
+    model = converter.convert_step(snapshot, "lamp.step")
+    leaves = [(node["label"], node["labelled"]) for node in model["nodes"] if node["partId"]]
+    assert leaves == [("shade", True), ("lamp 2 1", True), ("lamp 2 2", True), ("lamp 3", True)]
+    groups = [(node["label"], node["labelled"]) for node in model["nodes"] if not node["partId"]]
+    assert groups == [("lamp", True), ("lamp 2", False)]
+
+
+def test_an_unnamed_step_is_named_after_the_file_people_know(workdir):
+    path = workdir / "snapshot.step"
+    document, shapes, _colors = _document()
+    root = shapes.NewShape()
+    for x in (0, 5):
+        shapes.AddComponent(root, shapes.AddShape(BRepPrimAPI_MakeBox(1, 1, 1).Shape(), False), _location(x, 0, 0))
+    _write_document(document, path)
+    model = converter.convert_step(path, "Jig v2.step")
+    assert [(node["label"], node["labelled"]) for node in model["nodes"]] == [
+        ("Jig v2", False), ("Jig v2 1", False), ("Jig v2 2", False)]
 
 
 def test_rotated_nested_repeated_assemblies_and_occurrence_color(workdir):

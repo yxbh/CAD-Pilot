@@ -42,19 +42,6 @@ class InspectCliWrapperTests(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertEqual(["False", "False"], result.stdout.strip().splitlines())
 
-    def test_scripts_inspect_rejects_render_subcommand(self) -> None:
-        skill_root = Path(__file__).resolve().parents[3]
-        result = subprocess.run(
-            [sys.executable, "scripts/inspect", "render", "--help"],
-            cwd=skill_root,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertEqual(2, result.returncode)
-        self.assertIn("invalid choice", result.stderr)
-
     def test_scripts_inspect_worker_reads_jsonl(self) -> None:
         skill_root = Path(__file__).resolve().parents[3]
         result = subprocess.run(

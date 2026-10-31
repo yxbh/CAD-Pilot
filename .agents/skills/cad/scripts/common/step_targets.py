@@ -4,14 +4,15 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from common.assembly_spec import REPO_ROOT, find_step_path, resolve_cad_source_path
-from common.cad_ref_syntax import ABSOLUTE_PREFIX_RE, ParsedToken, normalize_cad_path, parse_cad_tokens
-from common.cache import cache_path, prune, touch
+from common.cad_ref_syntax import ParsedToken, normalize_cad_path, parse_cad_tokens
+from common.paths import path_anchor
+from common.cache import cache_path, prune, sha256_file, touch
 from common.glb_topology import (
     STEP_TOPOLOGY_SCHEMA_VERSION,
     read_step_topology_bundle_from_glb,
     read_step_topology_manifest_from_glb,
 )
-from common.render import existing_part_glb_path, sha256_file
+from common.render import existing_part_glb_path
 from common.selector_types import SelectorBundle, SelectorProfile
 
 
@@ -70,7 +71,7 @@ def canonical_cad_path(cad_path: str) -> str:
     into the root, becomes ``parts/foo``, so refs never carry machine paths
     for the project's own files.
     """
-    if not (cad_path.startswith(("/", "..")) or ABSOLUTE_PREFIX_RE.match(cad_path)):
+    if not (cad_path.startswith("..") or path_anchor(cad_path)):
         return cad_path
     step_path = _direct_step_path(cad_path)
     if step_path is None:
@@ -97,23 +98,6 @@ def entry_target_from_target(target: str) -> EntryTarget:
     if normalized is None:
         raise CadRefError(f"Invalid CAD entry target: {target}")
     return EntryTarget(canonical_cad_path(normalized))
-
-
-def step_path_from_target(target: str) -> Path:
-    raw_step_path = _raw_step_path(str(target or "").strip())
-    if raw_step_path is not None:
-        return raw_step_path
-
-    entry_target = entry_target_from_target(target)
-    direct_step_path = _direct_step_path(entry_target.cad_path)
-    if direct_step_path is not None:
-        return direct_step_path
-
-    lookup_cad_path = _lookup_cad_path(entry_target.cad_path)
-    step_path = find_step_path(lookup_cad_path)
-    if step_path is None:
-        raise CadRefError(f"STEP file not found for target '{target}'.")
-    return step_path
 
 
 def resolve_step_target(target: str) -> ResolvedStepTarget:
@@ -170,7 +154,7 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
 TOPOLOGY_CACHE = "topology"
 # Bump when the selector extraction in step_scene or the GLB topology changes how a STEP is numbered or
 # described: cached indexes are named by it, so an old index is never read for the new numbering.
-TOPOLOGY_INDEX_VERSION = 1
+TOPOLOGY_INDEX_VERSION = 2
 
 
 def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False) -> StepTopologyArtifact:
@@ -181,6 +165,7 @@ def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False)
     user cache under its content hash, so the next call is a file read.
     Nothing is written beside the STEP.
     """
+    stamp = _file_stamp(target.step_path)
     step_hash = sha256_file(target.step_path)
     sidecar = existing_part_glb_path(target.step_path)
     cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{TOPOLOGY_INDEX_VERSION}.glb")
@@ -191,7 +176,9 @@ def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False)
                 touch(cached)
             return artifact
     try:
-        _build_topology(target, cached)
+        _build_topology(target, cached, step_hash=step_hash, stamp=stamp)
+    except CadRefError:
+        raise
     except Exception as exc:
         raise CadRefError(f"Could not read the STEP file {_relative_to_repo(target.step_path)}: {exc}") from exc
     prune(TOPOLOGY_CACHE, keep=cached)
@@ -227,12 +214,29 @@ def _current_topology(
     )
 
 
-def _build_topology(target: ResolvedStepTarget, glb_path: Path) -> None:
+def _file_stamp(path: Path) -> tuple[int, int, int] | None:
+    """What changes when a file is rewritten, in place or by a rename onto it; None when it cannot be read."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_size, info.st_mtime_ns, info.st_ino
+
+
+def _build_topology(target: ResolvedStepTarget, glb_path: Path, *, step_hash: str, stamp: tuple[int, int, int] | None) -> None:
+    """Index the STEP into ``glb_path``, the cache entry named by ``step_hash``.
+
+    The index is filed under the hash taken before reading, and its manifest records that same hash, so the file
+    must not have changed in between: a STEP rewritten while it was read is not cached.
+    """
     from common.atomic_replace import replacing
     from common.glb import write_scene_glb
     from common.step_scene import extract_selectors_from_scene, load_step_scene
 
     scene = load_step_scene(target.step_path)
+    if _file_stamp(target.step_path) != stamp:
+        raise CadRefError(f"The STEP file {_relative_to_repo(target.step_path)} changed while it was read; run the command again.")
+    scene.step_hash = step_hash
     bundle = extract_selectors_from_scene(scene, cad_ref=target.cad_path, profile=SelectorProfile.ARTIFACT)
     with replacing(glb_path) as temp_path:
         write_scene_glb(scene, temp_path, selector_bundle=bundle, entry_kind=target.kind)

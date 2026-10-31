@@ -66,19 +66,11 @@ test("a regenerated STEP keeps the view when its assembly tree still matches, ot
   assert.equal(changeView(kept, regenerated, "fit_view").viewKept, null);
 });
 
-test("an unnamed single part, labelled after its changing snapshot, still counts as the same tree", () => {
-  const single = (sha256) => ({ source: { sha256 }, nodes: [{ id: "node:0:1:1:1", label: sha256, partId: "part:1", parentId: null }] });
+test("a regenerated file is the same tree only with the same ids, parents, kinds and names", () => {
+  const single = (sha256, label = "jig") => ({ source: { sha256 }, nodes: [{ id: "node:0:1:1:1", label, partId: "part:1", parentId: null }] });
   assert.ok(sameAssemblyTree(single("4".repeat(64)), single("5".repeat(64))));
+  assert.ok(!sameAssemblyTree(single("4".repeat(64)), single("5".repeat(64), "clip")));
   assert.ok(!sameAssemblyTree(null, single("5".repeat(64))));
-  // Beside other files the part is labelled after its own file's snapshot, which the view lists.
-  const beside = (sha256) => ({
-    source: { sha256: "c".repeat(64) }, documents: [{ id: "main", sha256 }, { id: "ref1", sha256: "d".repeat(64) }],
-    nodes: [
-      { id: "doc:main", label: "jig.step", partId: null, parentId: null }, { id: "node:0:1:1:1", label: sha256, partId: "part:1", parentId: "doc:main" },
-      { id: "doc:ref1", label: "scan.stl", partId: null, parentId: null }, { id: "ref1/node:1", label: "scan", partId: "ref1/mesh:1", parentId: "doc:ref1" },
-    ],
-  });
-  assert.ok(sameAssemblyTree(beside("4".repeat(64)), beside("5".repeat(64))));
 });
 
 test("views can be chosen by azimuth and elevation", () => {

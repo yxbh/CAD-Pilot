@@ -52,7 +52,7 @@ class DxfCliTests(unittest.TestCase):
         )
         self.assertEqual("", result.stderr)
         self.assertEqual(0, result.returncode)
-        self.assertIn("usage: dxf", result.stdout)
+        self.assertIn("usage: scripts/dxf", result.stdout)
         self.assertIn("--output", result.stdout)
 
 

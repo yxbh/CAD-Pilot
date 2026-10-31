@@ -61,6 +61,8 @@ export type Part = {
 export type ModelNode = {
   id: string;
   label: string;
+  /** False for a STEP part or group nobody named, whose label is made up after its group. */
+  labelled?: boolean;
   parentId: string | null;
   partId: string | null;
   matrix: number[];

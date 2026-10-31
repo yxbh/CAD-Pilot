@@ -3,17 +3,42 @@
 A part keeps its own label. An unlabelled only child takes its group's name,
 and other unlabelled parts are numbered after their group by position, so
 ``kit`` with two unlabelled solids exports as ``kit 1`` and ``kit 2`` rather
-than the STEP writer's ``SOLID``. The STEP writer and the part listings use
-the same rule, so a fallback name read back from a STEP file matches the one
-it was written with.
+than the STEP writer's ``SOLID``. A name a CAD kernel or STEP writer made up,
+such as ``COMPOUND`` or ``=>[0:1:1:3]``, counts as no label. The STEP writer,
+the part listings and CAD Explorer's STEP converter use these same rules, so a
+fallback name read back from a STEP file matches the one it was written with
+and the one the viewer shows.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from typing import TypeVar
 
 Node = TypeVar("Node")
+
+# What shapes are called when nobody named them: their type, as build123d, OCCT and other STEP writers put it.
+_GENERIC_NAMES = {"assembly", "solid", "compound", "compsolid", "shell", "face", "wire", "edge", "vertex", "shape"}
+# The STEP writer names an unnamed label after its document entry.
+_ENTRY_NAME = re.compile(r"=>\[[0-9:]*\]")
+
+
+def own_label(name: object) -> str | None:
+    """The label someone chose, with its spacing tidied, or None for a missing or made-up name."""
+    if name is None:
+        return None
+    text = " ".join(str(name).split())
+    lowered = text.lower()
+    if (not text or text.isdigit() or lowered in _GENERIC_NAMES or _ENTRY_NAME.fullmatch(text)
+            or lowered.replace("_", " ").startswith("open cascade step translator")):  # build123d's import_step spells it with _
+        return None
+    return text
+
+
+def child_name(label: object, *, group: str, index: int, siblings: int) -> str:
+    """A child's name: its own label, else its group's name when it is the only child, else ``<group> <index>``."""
+    return own_label(label) or (group if siblings == 1 else f"{group} {index}")
 
 
 def tree_names(
@@ -21,7 +46,7 @@ def tree_names(
     *,
     root_name: str,
     children: Callable[[Node], Sequence[Node]],
-    label: Callable[[Node], str | None],
+    label: Callable[[Node], object],
 ) -> tuple[dict[int, str], list[str]]:
     """Every node's name by ``id(node)``, and the names given to unlabelled leaves."""
     names: dict[int, str] = {}
@@ -31,11 +56,10 @@ def tree_names(
         names[id(node)] = name
         kids = list(children(node))
         for index, child in enumerate(kids, start=1):
-            own = (label(child) or "").strip()
-            child_name = own or (name if len(kids) == 1 else f"{name} {index}")
-            if not own and not children(child):
-                unlabelled.append(child_name)
-            visit(child, child_name)
+            name_of_child = child_name(label(child), group=name, index=index, siblings=len(kids))
+            if own_label(label(child)) is None and not children(child):
+                unlabelled.append(name_of_child)
+            visit(child, name_of_child)
 
-    visit(root, (label(root) or "").strip() or root_name)
+    visit(root, own_label(label(root)) or root_name)
     return names, unlabelled

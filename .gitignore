@@ -217,6 +217,7 @@ __marimo__/
 
 # CAD-Pilot machine-local state and generated artifacts
 .local/
+/tmp/
 outputs/
 node_modules/
 *.code-workspace

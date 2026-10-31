@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from common.cache import cache_path
+from common.cache import cache_path, prune
 
 KIND = "issued-refs"
 
@@ -37,7 +37,8 @@ def mark(step_path: Path, step_hash: str) -> None:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps({"step": str(step_path.resolve()), "stepHash": step_hash}), encoding="utf-8")
     except OSError:
-        pass
+        return
+    prune(KIND, keep=marker)
 
 
 def forget(step_path: Path) -> None:
@@ -49,7 +50,7 @@ def forget(step_path: Path) -> None:
 
 def note_refs_issued(result: dict[str, object]) -> None:
     """Record the STEP builds an inspect result handed face, edge or corner refs out for."""
-    from common.render import sha256_file
+    from common.cache import sha256_file
     from common.step_targets import CadRefError, resolve_step_target
 
     hashes: dict[str, str | None] = {}

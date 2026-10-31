@@ -106,6 +106,83 @@ class GeneratorModuleTests(unittest.TestCase):
             ]
         self.assertEqual([10, 99], widths)
 
+    def test_a_generator_outside_the_root_leaves_no_modules_for_the_next_one(self) -> None:
+        # The first generator lives outside the design root (a ../ path or a linked folder), so its params.py is
+        # not under the second one's folders; it must still be dropped before the second load.
+        outside = tempfile.TemporaryDirectory(prefix="generator-elsewhere-")
+        self.addCleanup(outside.cleanup)
+        elsewhere = Path(outside.name).resolve()
+        (elsewhere / "params.py").write_text("WIDTH = 99\n")
+        (elsewhere / "model.py").write_text("from params import WIDTH\n\ndef gen_step():\n    return WIDTH\n")
+        (self.root / "a").mkdir()
+        self.write("a/params.py", "WIDTH = 10\n")
+        self.write("a/model.py", "from params import WIDTH\n\ndef gen_step():\n    return WIDTH\n")
+        self.addCleanup(sys.modules.pop, "params", None)
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            widths = [
+                call_generator(load_generator(script), "gen_step", script_path=script)
+                for script in (elsewhere / "model.py", self.root / "a" / "model.py")
+            ]
+        self.assertEqual([99, 10], widths)
+
+    def test_the_callers_own_modules_and_main_under_the_root_are_never_dropped(self) -> None:
+        # A tool run from the design root, as CAD Explorer's writer is from the workbench, keeps what it imported.
+        self.write("caller_helper.py", "VALUE = 1\n")
+        sys.path.insert(0, str(self.root))
+        import caller_helper
+
+        self.addCleanup(sys.modules.pop, "caller_helper", None)
+        main = type(sys)("__main__")
+        main.__file__ = str(self.root / "driver.py")
+        saved_main = sys.modules["__main__"]
+        sys.modules["__main__"] = main
+        self.addCleanup(sys.modules.__setitem__, "__main__", saved_main)
+        script = self.write("review/model.py", "import widgets\n\ndef gen_step():\n    return widgets.SIZE\n")
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            for _ in range(2):
+                call_generator(load_generator(script), "gen_step", script_path=script)
+        self.assertIs(caller_helper, sys.modules["caller_helper"])
+        self.assertIs(main, sys.modules["__main__"])
+
+    def test_a_namespace_package_is_read_again_by_the_next_load(self) -> None:
+        shapes = self.root / "src" / "shapes"
+        shapes.mkdir()
+        (shapes / "lid.py").write_text("SIZE = 1\n")
+        first = self.write("review/first.py", "import shapes.lid\n\ndef gen_step():\n    return shapes.lid.SIZE\n")
+        second = self.write("review/second.py", "from shapes import SIZE\n\ndef gen_step():\n    return SIZE\n")
+        for name in ("shapes", "shapes.lid"):
+            self.addCleanup(sys.modules.pop, name, None)
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            self.assertEqual(1, call_generator(load_generator(first), "gen_step", script_path=first))
+            (shapes / "__init__.py").write_text("SIZE = 2\n")  # the folder becomes a regular package
+            self.assertEqual(2, call_generator(load_generator(second), "gen_step", script_path=second))
+
+    def test_a_project_module_named_like_a_tools_module_is_the_projects(self) -> None:
+        import common.generator_module as tools_loader
+
+        tools_common = sys.modules["common"]
+        cases = (
+            ("module", {"common.py": "WIDTH = 7.0\n"}, "from common import WIDTH\n\ndef gen_step():\n    return WIDTH\n"),
+            ("package", {"common/__init__.py": "", "common/dims.py": "WIDTH = 8.0\n"},
+             "from common.dims import WIDTH\n\ndef gen_step():\n    import common.dims\n    return WIDTH + common.dims.WIDTH\n"),
+        )
+        for kind, files, source in cases:
+            with self.subTest(kind=kind):
+                root = self.root / kind
+                (root / "common").mkdir(parents=True, exist_ok=True)
+                if kind == "module":
+                    (root / "common").rmdir()
+                for relative, text in files.items():
+                    (root / relative).write_text(text)
+                script = root / "model.py"
+                script.write_text(source)
+                with mock.patch.object(Path, "cwd", return_value=root):
+                    value = call_generator(load_generator(script), "gen_step", script_path=script)
+                self.assertEqual(7.0 if kind == "module" else 16.0, value)
+                self.assertIs(tools_common, sys.modules["common"])
+                self.assertIs(tools_loader, sys.modules["common.generator_module"])
+                self.assertNotIn("common.dims", sys.modules)
+
     def test_project_modules_edited_within_the_same_second_are_read_again_by_the_next_load(self) -> None:
         # Bytecode writing is forced on and both edits keep their length and mtime, so a cached .pyc would pass as
         # current: the next load must still compile the package and its submodule from source.

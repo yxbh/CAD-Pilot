@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import io
 import shutil
 import sys
 import unittest
@@ -636,7 +637,7 @@ class CadGenerationTests(unittest.TestCase):
 
     def test_cli_output_takes_either_separator_and_rejects_another_systems_anchor(self) -> None:
         def resolve(value: str) -> Path:
-            return cad_generation._resolve_cli_output_path(value, expected_suffixes=(".step",), tool_name="scripts/step")
+            return cad_generation._resolve_cli_output_path(value, expected_suffixes=(".step",))
 
         with contextlib.chdir(self.temp_root):
             expected = (self.temp_root / "outputs" / "part.step").resolve()
@@ -821,7 +822,7 @@ class CadGenerationTests(unittest.TestCase):
     def test_step_toml_target_is_not_supported(self) -> None:
         (self.temp_root / "broken.step.toml").write_text('kind = "part"\n', encoding="utf-8")
 
-        with self.assertRaisesRegex(FileNotFoundError, "Python generator or STEP/STP file path"):
+        with self.assertRaisesRegex(cad_generation.StepInputError, "Python generator or STEP/STP file path"):
             cad_generation.generate_step_targets([str(self.temp_root / "broken.step.toml")])
 
     def test_direct_step_generation_requires_kind(self) -> None:
@@ -1371,7 +1372,7 @@ class CadGenerationTests(unittest.TestCase):
             step_options=self._step_options(
                 three_mf="printable.3mf",
                 mesh_tolerance=0.4,
-                mesh_angular_tolerance=0.3,
+                mesh_angular_tolerance=0.05,  # finer than the 0.1 default; a coarser value changes nothing
             ),
         )
         spec = selected_specs[0]
@@ -1432,7 +1433,7 @@ class CadGenerationTests(unittest.TestCase):
 
         three_mf_export_mock.assert_called_once()
         self.assertTrue(any(
-            call.kwargs.get("linear_deflection") <= 0.4 and call.kwargs.get("angular_deflection") == 0.3
+            call.kwargs.get("linear_deflection") <= 0.4 and call.kwargs.get("angular_deflection") == 0.05
             for call in mesh_scene.mock_calls
         ))
         self.assertIsNotNone(spec.three_mf_path)
@@ -1691,6 +1692,18 @@ class CadGenerationTests(unittest.TestCase):
         self.assertIn("topology", events)
         self.assertLess(events.index("3mf"), events.index("topology"))
         self.assertTrue(three_mf_path.exists())
+
+
+
+class ToolErrorTests(unittest.TestCase):
+    def test_a_tool_error_is_one_line_named_once(self) -> None:
+        def fails(targets, **_options):
+            raise cad_generation.StepInputError("--output must end in .dxf")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = cad_generation.run_tool_cli(["part.py"], prog="scripts/dxf", description="", action=fails, output_help="")
+        self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
 
 
 if __name__ == "__main__":

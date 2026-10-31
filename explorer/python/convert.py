@@ -1,4 +1,7 @@
-"""Disposable native STEP preview converter, independent of the cad skill's tooling.
+"""Disposable native STEP preview converter.
+
+Parts and groups are named as the cad skill names them (its ``common/part_names.py``), so the labels shown,
+``scripts/inspect parts`` and assembly sequences agree for the same STEP.
 
 Meshes retain the source's Z-up frame and use millimeters. Colors are linear RGB.
 The JSON maps render triangles to CAD faces and ordered polylines to native CAD
@@ -50,6 +53,10 @@ from OCP.XCAFDoc import (
     XCAFDoc_ShapeTool,
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agents" / "skills" / "cad" / "scripts"))
+
+from common.part_names import child_name, own_label  # noqa: E402
+
 MAX_INPUT_BYTES = 100 * 1024 * 1024
 MAX_OUTPUT_BYTES = 128 * 1024 * 1024
 MAX_ENTITIES = 1_000_000
@@ -93,11 +100,7 @@ def _entry(label: TDF_Label) -> str:
 def _name(label: TDF_Label) -> str | None:
     attribute = TDataStd_Name()
     if label.FindAttribute(TDataStd_Name.GetID_s(), attribute):
-        text = attribute.Get().ToExtString().strip()
-        if text and not text.startswith(("=>[", "Open CASCADE STEP translator")) and text.upper() not in {
-            "SOLID", "SHELL", "COMPOUND", "ASSEMBLY", "SHAPE",
-        }:
-            return text
+        return own_label(attribute.Get().ToExtString())
     return None
 
 
@@ -418,9 +421,14 @@ def _mesh(shape, budget: dict, warnings: WarningLog) -> dict:
             "sectionCaps": section_caps}
 
 
-def convert_step(input_path: str | Path) -> dict:
-    """Read a self-contained STEP into the schemaVersion=2 face/edge-mapped contract."""
+def convert_step(input_path: str | Path, name: str | None = None) -> dict:
+    """Read a self-contained STEP into the schemaVersion=2 face/edge-mapped contract.
+
+    ``name`` is the file's name as people know it (the input may be a snapshot named by its hash); unnamed parts
+    are named after it.
+    """
     path = Path(input_path)
+    file_name = Path(name or path.name).stem
     data = _read_bytes(path)
     warnings = WarningLog()
     document = _read_document(data, warnings)
@@ -435,7 +443,7 @@ def convert_step(input_path: str | Path) -> dict:
     world_corners = []
     budget = {"vertices": 0, "triangles": 0, "faces": 0, "edges": 0, "edgePoints": 0}
 
-    def visit(label, parent_id, parent_world, inherited_color, ancestry, path_id):
+    def visit(label, parent_id, parent_world, inherited_color, ancestry, path_id, group, index, siblings):
         if len(nodes) >= MAX_NODES or len(ancestry) > MAX_DEPTH:
             raise ConversionError("Assembly node/depth limit exceeded.")
         definition = TDF_Label()
@@ -457,11 +465,8 @@ def convert_step(input_path: str | Path) -> dict:
         world = parent_world @ local
         node_id = f"node:{path_id}"
         assembly = shapes.IsAssembly_s(definition)
-        label_text = _name(label) or _name(definition)
-        if not label_text:
-            label_text = path.stem if parent_id is None else (
-                f"Assembly {len(nodes) + 1}" if assembly else f"Part {len(parts) + 1}"
-            )
+        own = _name(label) or _name(definition)
+        label_text = child_name(own, group=group, index=index, siblings=siblings)
         own_color = _color(label, warnings)
         definition_color = _part_color(definition, warnings) if not assembly else _color(definition, warnings)
         color = own_color or definition_color or inherited_color or DEFAULT_COLOR.copy()
@@ -492,7 +497,7 @@ def convert_step(input_path: str | Path) -> dict:
             transformed = _corners(parts[part_id]["bounds"]) @ world[:3, :3].T + world[:3, 3]
             world_corners.extend(transformed.tolist())
         nodes.append({
-            "id": node_id, "label": label_text, "parentId": parent_id,
+            "id": node_id, "label": label_text, "labelled": own is not None, "parentId": parent_id,
             "partId": part_id, "matrix": local.ravel(order="F").tolist(), "color": color,
         })
         if assembly:
@@ -500,11 +505,14 @@ def convert_step(input_path: str | Path) -> dict:
             shapes.GetComponents_s(definition, children, False)
             if not children.Length():
                 raise ConversionError("Assembly contains no components.")
-            for child in _labels(children):
-                visit(child, node_id, world, color, ancestry + (key,), f"{path_id}/{_entry(child)}")
+            components = list(_labels(children))
+            for position, child in enumerate(components, start=1):
+                visit(child, node_id, world, color, ancestry + (key,), f"{path_id}/{_entry(child)}",
+                      label_text, position, len(components))
 
-    for root in _labels(roots):
-        visit(root, None, np.eye(4), None, (), _entry(root))
+    free_shapes = list(_labels(roots))
+    for position, root in enumerate(free_shapes, start=1):
+        visit(root, None, np.eye(4), None, (), _entry(root), file_name, position, len(free_shapes))
     if not parts:
         raise ConversionError("STEP contains no drawable parts.")
     return {
@@ -532,12 +540,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--name", help="The file's name as people know it, for naming unnamed parts. Default: the input's.")
     args = parser.parse_args(argv)
     try:
         if (args.input.resolve() == args.output.resolve()
                 or (args.output.exists() and args.input.exists() and args.input.samefile(args.output))):
             raise ConversionError("Output must not overwrite the input STEP file.")
-        model = convert_step(args.input)
+        model = convert_step(args.input, args.name)
         write_json(model, args.output)
     except (OSError, RuntimeError, ValueError, Standard_Failure) as error:
         print(f"STEP conversion failed: {error}", file=sys.stderr)

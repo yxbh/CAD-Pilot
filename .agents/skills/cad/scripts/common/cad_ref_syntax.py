@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import itertools
 import re
 from dataclasses import dataclass
+
+from common.paths import normal_path
 
 
 CAD_TOKEN_RE = re.compile(r"^\s*@cad\[([^\]#]+)(?:#([^\]]+))?\]")
@@ -57,31 +58,21 @@ def parse_cad_tokens(text: str) -> list[ParsedToken]:
     return tokens
 
 
-ABSOLUTE_PREFIX_RE = re.compile(r"^(/|[A-Za-z]:/)")
-
-
 def normalize_cad_path(raw_cad_path: str) -> str | None:
-    """A STEP path without its suffix, relative to the design root.
+    """A STEP path without its suffix, tidied by ``paths.normal_path``: relative to the design root, or anchored.
 
     A STEP elsewhere keeps its absolute path or its leading ``..`` segments.
     """
-    normalized = str(raw_cad_path or "").replace("\\", "/").strip()
-    prefix_match = ABSOLUTE_PREFIX_RE.match(normalized)
-    prefix = prefix_match.group(1) if prefix_match else ""
-    normalized = normalized[len(prefix):].rstrip("/")
-    if not normalized:
+    normalized = normal_path(raw_cad_path)
+    if normalized is None:
         return None
     for suffix in (".step", ".stp"):
         if normalized.lower().endswith(suffix):
             normalized = normalized[: -len(suffix)]
             break
-    parts = normalized.split("/")
-    leading_parents = 0 if prefix else len(parts) - len(list(itertools.dropwhile(lambda part: part == "..", parts)))
-    if leading_parents == len(parts) or any(
-        not part or part == "." or (part == ".." and index >= leading_parents) for index, part in enumerate(parts)
-    ):
-        return None
-    return prefix + "/".join(parts)
+    if not normalized or normalized.endswith("/"):
+        return None  # a suffix with no name in front of it
+    return normalized
 
 
 def parse_selector(raw_selector: str, *, inherited_occurrence_id: str = "") -> ParsedSelector | None:

@@ -59,11 +59,6 @@ def part_label(name: str | None, source_ref: str, index: int = 1, count: int = 1
     return label if count == 1 else f"{label} (solid {index} of {count})"
 
 
-def _display_name(name: str | None) -> str | None:
-    # An unnamed XCAF label reads back as its entry, such as "=>[0:1:1:2]".
-    return None if not name or name.startswith("=>[") else name
-
-
 def _shape_map(shape, kind) -> list:
     from OCP.TopExp import TopExp
     from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
@@ -79,7 +74,7 @@ def _prototype_solids(scene) -> list[tuple[str | None, list]]:
     from OCP.TopoDS import TopoDS
 
     return [
-        (_display_name(scene.prototype_names.get(key)), [TopoDS.Solid(s) for s in _shape_map(shape, TopAbs_SOLID)])
+        (scene.prototype_names.get(key) or None, [TopoDS.Solid(s) for s in _shape_map(shape, TopAbs_SOLID)])
         for key, shape in scene.prototype_shapes.items()
     ]
 

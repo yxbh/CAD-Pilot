@@ -42,14 +42,12 @@ export function initialState() {
 const preferences = ["autoCopy", "selectionMode", "projection", "appearance", "materialFinish", "showEdges", "cameraPreset"];
 
 // Regenerating a design keeps the view when every occurrence keeps its id, parent, kind and name in the assembly tree.
+// Unnamed parts are named after the file people opened, never its snapshot, so a regeneration keeps their names too.
 export function sameAssemblyTree(previous, next) {
   if (!previous || previous.nodes.length !== next.nodes.length) return false;
-  // An unnamed single part is labelled with its snapshot name, which changes with every regeneration. A view of several
-  // files lists each file's snapshot. Mesh parts are named from the file, so they compare by name like STEP parts.
-  const label = (model, node) => node.label === model.source.sha256 || model.documents?.some(({ sha256 }) => node.label === sha256) ? "" : node.label;
   return previous.nodes.every((node, index) => {
     const other = next.nodes[index];
-    return node.id === other.id && node.parentId === other.parentId && !node.partId === !other.partId && label(previous, node) === label(next, other);
+    return node.id === other.id && node.parentId === other.parentId && !node.partId === !other.partId && node.label === other.label;
   });
 }
 

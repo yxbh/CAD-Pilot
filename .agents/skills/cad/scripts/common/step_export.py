@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from common.atomic_replace import replacing
-from common.part_names import tree_names
-from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc, step_file_hash
+from common.part_names import own_label, tree_names
+from common.cache import sha256_file
+from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc
 
 
 # OCCT writes a name's non-ASCII characters as its UTF-8 bytes read as Latin-1
@@ -177,7 +178,9 @@ def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> An
     # topological identity.
     leaf_variants: dict[int, list[tuple[object, dict[object, object]]]] = {}
 
-    def set_label_name(label: object, name: str | None) -> None:
+    def set_label_name(label: object, name: object) -> None:
+        # Only a name someone chose is written: a made-up one such as an imported shape's "COMPOUND" is no label.
+        name = own_label(name)
         if name and not label.IsNull():
             TDataStd_Name.Set_s(label, TCollection_ExtendedString(ascii_name(str(name))))
 
@@ -193,7 +196,7 @@ def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> An
         return (float(rgb.Red()), float(rgb.Green()), float(rgb.Blue()), float(color.wrapped.Alpha()))
 
     def leaf_shape_for_definition(unlocated: object, shape: object) -> object:
-        signature = (color_signature(getattr(shape, "color", None)), getattr(shape, "label", None) or None)
+        signature = (color_signature(getattr(shape, "color", None)), own_label(getattr(shape, "label", None)))
         bucket = leaf_variants.setdefault(hash(unlocated), [])
         for native_shape, variants in bucket:
             # IsEqual includes orientation (location is already stripped).
@@ -255,9 +258,12 @@ def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> An
                     child_definition,
                     child_location,
                 )
-                # A placed part carries its fallback name, so unlabelled copies still share one definition.
-                set_label_name(child_component, occurrence_names.get(id(child)))
-                if not getattr(child, "children", None):
+                if getattr(child, "children", None):
+                    # A group keeps only its own label, so one nobody labelled is never read back as a named group.
+                    set_label_name(child_component, getattr(child, "label", None))
+                else:
+                    # A placed part carries its fallback name, so unlabelled copies still share one definition.
+                    set_label_name(child_component, occurrence_names.get(id(child)))
                     set_label_color(child_component, getattr(child, "color", None))
             return definition_label
 
@@ -276,7 +282,7 @@ def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> An
     shape_tool.AddShape(to_export.wrapped, is_assembly)
 
     for node in PreOrderIter(to_export):
-        if not node.label and node.color is None:
+        if not own_label(node.label) and node.color is None:
             continue
 
         node_label = shape_tool.FindShape(node.wrapped, findInstance=False)
@@ -376,7 +382,7 @@ def export_xcaf_doc_step_scene(
     return load_step_scene_from_xcaf_doc(
         output_path,
         doc,
-        step_hash=step_file_hash(output_path),
+        step_hash=sha256_file(output_path),
     )
 
 
@@ -396,6 +402,6 @@ def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStep
         label=lambda node: getattr(node, "label", None),
     )
     doc = _create_bin_xcaf_doc(to_export, names)
-    scene = export_xcaf_doc_step_scene(doc, output_path, label=getattr(to_export, "label", None))
+    scene = export_xcaf_doc_step_scene(doc, output_path, label=own_label(getattr(to_export, "label", None)))
     scene.unlabelled_parts = tuple(unlabelled)
     return scene

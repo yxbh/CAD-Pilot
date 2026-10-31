@@ -30,7 +30,7 @@ def _select(step_parts, patterns: list[str] | None):
         return list(step_parts.parts)
     selected, missing = match_parts(patterns, step_parts.parts)
     if missing:
-        raise CadRefError(f"No part is named {', '.join(repr(name) for name in missing)}; see `inspect parts`.")
+        raise CadRefError(f"No part is named {', '.join(missing)}; see `inspect parts`.")
     return selected
 
 
@@ -93,7 +93,7 @@ def hygiene_report(
     return {
         "ok": True,
         "cadPath": step_parts.cad_path,
-        "clean": total == 0,
+        "clean": total == 0 and not errors,  # a part that could not be checked is not clean
         "errors": errors,
         "roundRadius": round_radius,
         "sliver": sliver,
