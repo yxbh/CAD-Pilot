@@ -125,51 +125,6 @@ class GlbExportTests(unittest.TestCase):
             self.assertEqual("fixtures/box", embedded.manifest["cadRef"])
             self.assertEqual([7, 11], list(embedded.buffers["edgeIds"]))
 
-    def test_legacy_topology_json_and_bin_bundle_is_read_when_glb_lacks_extension(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
-            artifact_dir = Path(temp_dir) / ".fixture.step"
-            artifact_dir.mkdir()
-            glb_path = artifact_dir / "model.glb"
-            glb_path.write_bytes(b"legacy visual glb without embedded topology")
-
-            edge_ids = array("I", [19, 23])
-            edge_bytes = edge_ids.tobytes()
-            (artifact_dir / "topology.bin").write_bytes(edge_bytes)
-            (artifact_dir / "topology.json").write_text(
-                json.dumps(
-                    {
-                        "schemaVersion": 1,
-                        "profile": "artifact",
-                        "cadRef": "fixtures/legacy",
-                        "buffers": {
-                            "uri": "topology.bin",
-                            "littleEndian": True,
-                            "views": {
-                                "edgeIds": {
-                                    "dtype": "uint32",
-                                    "byteOffset": 0,
-                                    "byteLength": len(edge_bytes),
-                                    "count": 2,
-                                    "itemSize": 4,
-                                }
-                            },
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            index = read_step_topology_manifest_from_glb(glb_path)
-            self.assertIsNotNone(index)
-            assert index is not None
-            self.assertEqual("fixtures/legacy", index.get("cadRef"))
-
-            bundle = read_step_topology_bundle_from_glb(glb_path)
-            self.assertIsNotNone(bundle)
-            assert bundle is not None
-            self.assertEqual("fixtures/legacy", bundle.manifest.get("cadRef"))
-            self.assertEqual([19, 23], list(bundle.buffers["edgeIds"]))
-
     def test_assembly_glb_preserves_face_colors_as_material_primitives(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
             step_path = Path(temp_dir) / "fixture.step"

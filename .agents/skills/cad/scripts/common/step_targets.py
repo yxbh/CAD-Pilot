@@ -12,7 +12,7 @@ from common.glb_topology import (
     read_step_topology_bundle_from_glb,
     read_step_topology_manifest_from_glb,
 )
-from common.render import existing_part_glb_path
+from common.render import part_glb_path
 from common.selector_types import SelectorBundle, SelectorProfile
 
 
@@ -164,7 +164,7 @@ def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False)
     """
     stamp = _file_stamp(target.step_path)
     step_hash = sha256_file(target.step_path)
-    sidecar = existing_part_glb_path(target.step_path)
+    sidecar = part_glb_path(target.step_path)
     cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{STEP_TOPOLOGY_SCHEMA_VERSION}.glb")
     for glb_path in (sidecar, cached):
         artifact = _current_topology(target, glb_path, step_hash, require_selector=require_selector)

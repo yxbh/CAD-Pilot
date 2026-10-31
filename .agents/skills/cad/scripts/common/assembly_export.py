@@ -23,7 +23,7 @@ from common.catalog import (
     source_from_path,
 )
 from common.glb_topology import read_step_topology_manifest_from_glb
-from common.render import existing_part_glb_path, part_glb_path
+from common.render import part_glb_path
 from common.step_export import ascii_name, create_bin_xcaf_doc, export_xcaf_doc_step_scene
 from common.step_scene import LoadedStepScene, load_step_scene, occurrence_selector_id
 
@@ -99,7 +99,7 @@ class _AssemblyCatalogResolver:
                 kind="part",
                 source_path=resolved,
                 step_path=resolved,
-                glb_path=existing_part_glb_path(resolved) or part_glb_path(resolved),
+                glb_path=part_glb_path(resolved),
             )
         if source.kind == "assembly" and source.script_path is not None:
             try:
@@ -123,7 +123,7 @@ class _AssemblyCatalogResolver:
             source_path=source.source_path,
             step_path=source.step_path,
             stl_path=source.stl_path,
-            glb_path=existing_part_glb_path(source.step_path) or part_glb_path(source.step_path),
+            glb_path=part_glb_path(source.step_path),
         )
 
     def _assembly_spec_for_source(self, source: CadSource) -> AssemblySpec:
@@ -208,7 +208,7 @@ def _load_step_shape(step_path: Path):
 
 
 def _step_has_assembly_artifact(step_path: Path) -> bool:
-    payload = read_step_topology_manifest_from_glb(existing_part_glb_path(step_path) or part_glb_path(step_path))
+    payload = read_step_topology_manifest_from_glb(part_glb_path(step_path))
     if payload is None:
         return False
     root = payload.get("assembly", {}).get("root") if isinstance(payload.get("assembly"), dict) else None

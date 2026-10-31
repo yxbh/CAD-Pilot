@@ -12,7 +12,7 @@ from common.assembly_spec import (
 )
 from common.cache import sha256_file
 from common.glb_topology import read_step_topology_manifest_from_glb
-from common.render import existing_part_glb_path, part_glb_path, relative_to_repo
+from common.render import part_glb_path, relative_to_repo
 from common.step_parts import root_name
 
 
@@ -315,7 +315,7 @@ def _linked_instance_node(
         occurrence_id = str(occurrence.get("id") or "").strip()
         return _linked_native_assembly_node(
             topology_path=topology_path,
-            source_topology_path=existing_part_glb_path(Path(source_step_path)) or part_glb_path(Path(source_step_path)),
+            source_topology_path=part_glb_path(Path(source_step_path)),
             source_assembly=native_source_assembly,
             source_path=source_path,
             occurrence=occurrence,
@@ -340,7 +340,7 @@ def _linked_instance_node(
             )
         if source_step_path is None:
             raise AssemblyCompositionError(f"{cad_ref} component {component_name(instance_path)} is missing STEP source")
-        source_counts = _source_topology_counts(existing_part_glb_path(Path(source_step_path)) or part_glb_path(Path(source_step_path)))
+        source_counts = _source_topology_counts(part_glb_path(Path(source_step_path)))
         occurrence_counts = _occurrence_topology_counts(occurrence)
         if source_counts != occurrence_counts:
             raise AssemblyCompositionError(
@@ -368,7 +368,7 @@ def _linked_instance_node(
 
 
 def _source_assembly_payload(step_path: Path) -> dict[str, Any] | None:
-    source_topology_path = existing_part_glb_path(step_path) or part_glb_path(step_path)
+    source_topology_path = part_glb_path(step_path)
     payload = read_step_topology_manifest_from_glb(source_topology_path)
     if payload is None:
         return None
