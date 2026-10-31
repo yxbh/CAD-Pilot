@@ -29,7 +29,8 @@ export async function saveCopy(project, source, target) {
 
 /**
  * Render one STEP or mesh file to a PNG without touching any saved setup: a private, transient viewer loads it, applies the
- * requested view and draws it in the background renderer. The view actions are the same ones `do` accepts.
+ * requested view and draws it in the background renderer. The view actions are the same ones `do` accepts. The answer
+ * includes the drawn camera: `camera.viewHeight` is the view's height in millimetres at the target.
  * options: { units, up (how to read a mesh), width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
  * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns] }.
  */
@@ -71,7 +72,8 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
     return {
       saved: await saveCopy(project, captured.path, target), width: captured.width, height: captured.height,
       model: state.modelName, file: state.source.file, revision: revisionLabel(state.source.sha256), generatedAt: state.source.generatedAt,
-      camera: state.cameraPreset, ...(state.section.enabled ? { section: state.section } : {}),
+      // The camera the renderer drew, so a caller can measure the image: viewHeight is in millimetres at the target.
+      camera: { view: state.cameraPreset, ...captured.camera }, ...(state.section.enabled ? { section: state.section } : {}),
     };
   } finally {
     await service.close();
