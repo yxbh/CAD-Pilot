@@ -48,7 +48,7 @@ def run(url, output):
                 def drag(button, dx, dy):
                     page.mouse.move(x, y)
                     page.mouse.down(button=button)
-                    page.mouse.move(x + dx, y + dy, steps=12)
+                    page.mouse.move(x + dx, y + dy, steps=2)
                     page.mouse.up(button=button)
 
                 changed(lambda: drag("left", 76, 43))
@@ -78,7 +78,7 @@ def run(url, output):
                 box = slider.bounding_box()
                 page.mouse.move(box["x"] + 8, box["y"] + box["height"] / 2)
                 page.mouse.down()
-                page.mouse.move(box["x"] + box["width"] - 8, box["y"] + box["height"] / 2, steps=20)
+                page.mouse.move(box["x"] + box["width"] - 8, box["y"] + box["height"] / 2, steps=4)
                 assert int(slider.input_value()) > 90
                 assert state()["explode"] == 0, "Pointer drag should preview before release"
                 page.mouse.up()
