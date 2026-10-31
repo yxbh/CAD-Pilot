@@ -38,6 +38,7 @@ def run(url, output):
             expect(page.get_by_label("Drawing canvas")).to_have_count(0)
             settled()
             page.reload()
+            settled()
 
             # Hold each response rather than rely on GPU speed or a longer assertion timeout.
             endpoint = url + f"api/reviews/{review_id}"

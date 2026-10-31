@@ -107,6 +107,19 @@ def launch_chromium(playwright):
 class BrowserSession:
     def __init__(self, page, url, errors):
         self.page, self.url, self.errors = page, url, errors
+        # Whether the page's current document has reported a frame. The server keeps the last report across a reload,
+        # so a reloaded page counts as settled only once it has reported a frame of its own.
+        self._reported = True
+        page.on("framenavigated", self._navigated)
+        page.on("request", self._requested)
+
+    def _navigated(self, frame):
+        if frame == self.page.main_frame:
+            self._reported = False
+
+    def _requested(self, request):
+        if request.method == "POST" and request.url == self.url + "api/rendered":
+            self._reported = True
 
     def state(self):
         # Reading state has no effect, so a request on a connection the server reset is simply repeated once.
@@ -133,11 +146,12 @@ class BrowserSession:
             self.page.wait_for_timeout(10)
 
     def settled(self):
-        current = self.wait(lambda state: state.get("rendered") and state["rendered"]["revision"] == state["revision"])
-        # A page can stay busy after it reports a frame: after the first frame in Studio, which brings in new shaders and
-        # lighting, it answers nothing for seconds in software rendering, and for longer than an expectation's 30 s on a
-        # loaded CI runner. Nothing more is asked of it until it answers again, which it gets as long for as a first load.
-        self.page.wait_for_function("() => true", polling=100, timeout=120_000)
+        current = self.wait(lambda state: self._reported and state.get("rendered") and state["rendered"]["revision"] == state["revision"])
+        # A page can stay busy after it reports a frame: the first frame in Studio, which brings in new shaders and
+        # lighting, is one long task that the report goes out in the middle of, and in software rendering on a loaded CI
+        # runner it outlasts Playwright's 30 s. Nothing more is asked of the page until it answers again, for which it
+        # gets as long as a first load.
+        self.page.wait_for_function("() => true", timeout=120_000).dispose()
         return current
 
     def command(self, name, data=None):
