@@ -1,10 +1,10 @@
 # Print handoff
 
-Read this when the user wants to print: a Bambu Studio project 3MF, a slice check, a check of a print orientation, a fit coupon, or measuring the printer's hole and contour compensation. Use the fdm-design skill for the design reasoning behind orientation, supports and fits, including its rule that the model states the fit and only measured compensation corrects shrinkage; this file covers the tool.
+Read this when the user wants to print: a Bambu Studio project 3MF, a slice check, a check of a print orientation, a fit coupon, or measuring the printer's hole and contour compensation. The fdm-design skill owns the design reasoning behind orientation, supports and fits, including the fit rule; this file covers the tool.
 
 ## Tool
 
-`scripts/print` writes one Bambu Studio project per print job, checks each part in its print orientation, and can slice the project with the installed Bambu Studio's command line. Run it with the workbench's Python interpreter from the design project's root, like `scripts/step`:
+`scripts/print` writes one Bambu Studio project per print job, checks each part in its print orientation, and can slice the project with the installed Bambu Studio's command line. Run it from the design project's root with the workbench's interpreter (the skill's Running the tools):
 
 ```bash
 python <cad>/scripts/print project prints/jig.print.json --slice
@@ -18,7 +18,7 @@ python <cad>/scripts/print profile
 python <cad>/scripts/print presets H2D 0.4 PETG
 ```
 
-`<cad>` is this skill's directory. `--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. The tool needs the workbench environment's mesh libraries; another interpreter that lacks them gets an error naming the workbench's.
+`--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. Another interpreter that lacks the mesh libraries gets an error naming the workbench's.
 
 ## The personal print profile
 
@@ -80,11 +80,11 @@ A job file, conventionally `<name>.print.json` beside the project's print output
 - Part fields: `file` (STEP, STP or STL), `name` (default: the file name), `rotate` (`[x, y, z]` degrees about the fixed axes, applied X, then Y, then Z), `copies`, `filament` (a profile filament key), `colour` (`#RRGGBB`, a filament slot of its own), `support` (default true) and `turn` (default true: the layout may turn the part a quarter turn about Z to fit).
 - A turned part is set down with its lowest point on the bed. Keep the model's functional frame in source; the job holds the print placement.
 - A STEP file prints as one object. Several solids in it print where the file places them, so give an assembly's parts their own files.
-- Supports are on in every project with the profile's type, and Bambu Studio adds them only where the orientation needs them. Turn them off for a part only with a reason the user accepts; the report warns when a part that needs support has it off. Parts that need support and are printed in another material than the interface get the interface with no gap. A plate whose parts use two filaments gets a prime tower of the preset's tower width, placed on the bed inside the area every nozzle reaches and clear of the bed's excluded areas, and the layout keeps parts clear of it.
+- Supports are on in every project with the profile's type, and Bambu Studio adds them only where the orientation needs them. A part's `support: false` turns them off for it (the fdm-design skill says when), and the report warns when a part that needs support has it off. Parts that need support and are printed in another material than the interface get the interface with no gap. A plate whose parts use two filaments gets a prime tower of the preset's tower width, placed on the bed inside the area every nozzle reaches and clear of the bed's excluded areas, and the layout keeps parts clear of it.
 
 ## Hole and contour compensation
 
-Holes print smaller than modelled, mainly because the plastic contracts as it cools, and outer edges can print a little off size. Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent. The model states the fit only (the fdm-design skill's rule), so these are the one place shrinkage is corrected.
+Holes print smaller than modelled, mainly because the plastic contracts as it cools, and outer edges can print a little off size. Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent, and under the fdm-design skill's fit rule they are the one place shrinkage is corrected.
 
 `project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the resolution or closing radius the project slices at differs from the one in force when the value was measured: it holds only at those settings, so measure again or put them back.
 
@@ -95,8 +95,6 @@ To measure a filament's compensation:
 3. The user prints it and tries the part: the hole it fits snugly without wobble, or the peg that fits the hole that way. That rung's value is the compensation. A part that fits none needs another range of `--values`.
 4. `save-compensation coupons/petg-holes.3mf --filament PETG --hole 0.1` (or `--contour`) shows what it would record for the profile's printer: the value, today's date, and the resolution and closing radius the coupon's project sliced at. It refuses a coupon made for another printer or filament. Ask the user, then run it again with `--write`.
 5. Print a part that uses the hole again to confirm it, and repeat for each filament.
-
-Compensation reaches only openings a layer encloses. The orientation check reports holes under about 1 mm (or 2.5 nozzle diameters), which print unreliably whatever the compensation, and holes that a layer encloses at some heights but that open to the outside at others, where compensation leaves a small step.
 
 ## Orientation checks
 
@@ -124,7 +122,6 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 - Give the user the 3MF path every time; the tool prints it last as `3MF: <path>`, also when slicing or opening the written project then fails. Open the project in Bambu Studio with `--open` when the user wants to see it or print it.
 - Report the profile used, each plate's parts, the compensation each part slices with and any warning about it, the orientation numbers and flags that matter for the design, and the slice results. Name a check that did not run as not checked.
-- Never send G-code to a printer or publish a model without the user's explicit approval.
 
 ## Limits
 

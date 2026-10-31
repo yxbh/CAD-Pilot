@@ -69,50 +69,134 @@ def test_skills_have_metadata_and_provenance():
     assert "MIT License" in (collection / "cad/LICENSE").read_text(encoding="utf-8")
 
 
-def test_viewer_guidance_covers_workbench_skill_and_project_template():
-    guidance = [
-        ROOT / "AGENTS.md",
-        ROOT / ".agents/skills/visual-review/SKILL.md",
-        ROOT / "templates/project/AGENTS.md",
-    ]
-    for document in guidance:
+SKILLS = ROOT / ".agents/skills"
+GUIDANCE = [
+    ROOT / "AGENTS.md",
+    ROOT / "README.md",
+    *sorted((ROOT / "templates/project").glob("*.md")),
+    *sorted(SKILLS.rglob("*.md")),
+]
+
+# Each rule is stated once, in the file that owns it, and linked from the others. The markers are phrases that a
+# statement of the rule uses, so they must appear in its home and nowhere else in the guidance. The Explorer's README
+# is the viewer's reference manual, not guidance, and may describe the behaviour these rules rely on.
+RULE_HOMES = {
+    "showing a model": (
+        SKILLS / "visual-review/SKILL.md",
+        ["`cad-explorer` canvas", "`projectRoot`", "run the same `open` again", "only viewer"],
+    ),
+    "assembly steps": (SKILLS / "visual-review/SKILL.md", ["gen_assembly()", "explorer/python/assembly.py", "geometric screen"]),
+    "reference systems": (SKILLS / "visual-review/SKILL.md", ["cad_explorer_inspect", "never mix"]),
+    "finding the workbench": (SKILLS / "cad/SKILL.md", ["three levels above"]),
+    "running the tools": (SKILLS / "cad/SKILL.md", ["sys.prefix", "relative to the STEP's folder"]),
+    "unknowns": (SKILLS / "cad/SKILL.md", ["unknown until the user confirms"]),
+    "feature preservation": (SKILLS / "cad/SKILL.md", ["Never shrink, drop or approximate"]),
+    "evidence": (SKILLS / "cad/SKILL.md", ["Keep kinds of evidence apart", "has no verdict"]),
+    "approval to print or publish": (SKILLS / "cad/SKILL.md", ["G-code"]),
+    "fresh selectors": (SKILLS / "cad/references/inspection-and-validation.md", ["never reuse or translate a saved `@cad` path"]),
+    "print handoff": (SKILLS / "cad/references/print.md", ["print-profile.json", "3MF path every time"]),
+    "fit rule": (SKILLS / "fdm-design/SKILL.md", ["The model states the fit"]),
+    "dependency locks": (ROOT / "AGENTS.md", ["uv.lock", "package-lock.json"]),
+}
+
+
+@pytest.mark.parametrize("rule", RULE_HOMES)
+def test_each_rule_is_stated_in_its_home_only(rule):
+    home, markers = RULE_HOMES[rule]
+    for document in GUIDANCE:
         text = document.read_text(encoding="utf-8")
-        for required in ("cad-explorer", "available", "projectRoot", "file", "cadproto:v2", "@cad[", "scripts/inspect", "explorer.mjs"):
-            assert required in text, f"{document}: missing viewer-routing contract {required}"
-        for retired in ("imported browser", "imported viewer", "imported inspector", "ensure-dev"):
-            assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
-        assert "cad_explorer_inspect" in text
-        for required in ("gen_assembly", "explorer/python/assembly.py", "set_step", "geometric screen"):
-            assert required in text, f"{document}: missing assembly-step guidance {required}"
-    skill = guidance[1].read_text(encoding="utf-8")
+        for marker in markers:
+            if document == home:
+                assert marker in text, f"{document}: the {rule} rule no longer says {marker!r}"
+            else:
+                assert marker not in text, f"{document}: restates the {rule} rule ({marker!r}); link to {home.name}"
+
+
+def _anchor(heading):
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def test_guidance_links_resolve():
+    for document in [*GUIDANCE, ROOT / "explorer/README.md"]:
+        text = re.sub(r"```.*?```", "", document.read_text(encoding="utf-8"), flags=re.DOTALL)
+        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+            if re.match(r"[a-z]+:", target):
+                continue
+            path, _, anchor = target.partition("#")
+            linked = (document.parent / path).resolve() if path else document
+            assert linked.exists(), f"{document}: broken link {target}"
+            if anchor and linked.suffix == ".md":
+                headings = re.findall(r"^#+ (.+)$", linked.read_text(encoding="utf-8"), re.MULTILINE)
+                assert anchor in {_anchor(heading) for heading in headings}, f"{document}: no heading for {target}"
+
+
+def test_viewer_guidance_keeps_its_boundaries():
+    skill = (SKILLS / "visual-review/SKILL.md").read_text(encoding="utf-8")
+    for required in ("available", "cadproto:v2", "@cad[", "scripts/inspect", "set_step", "capture", "render"):
+        assert required in skill
     assert "do not insert or send chat messages" in skill
     assert "separate VS Code extension" in skill
-    assert (guidance[1].parent / "../../../explorer/README.md").resolve().is_file()
-
-
-def test_cad_skill_routes_viewing_to_the_maintained_explorer():
-    cad = ROOT / ".agents/skills/cad"
+    cad = SKILLS / "cad"
     assert not (cad / "explorer/package.json").exists()
     assert not (cad / "scripts/render/cli.py").exists()
-    documents = [cad / "SKILL.md", cad / "agents/openai.yaml", *sorted((cad / "references").glob("*.md"))]
-    for document in documents:
-        text = document.read_text(encoding="utf-8")
-        for retired in ("scripts/render", "npm --prefix explorer", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
-            assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
     assert "visual-review" in (cad / "SKILL.md").read_text(encoding="utf-8")
-    assert "explorer.mjs open" in (cad / "references/rendering-and-explorer.md").read_text(encoding="utf-8")
-
-
-def test_first_party_npm_lock_is_machine_local():
-    explorer = ROOT / "explorer"
-    assert "/package-lock.json" in (explorer / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert (explorer / "package.json").is_file()
-    for document in (ROOT / "README.md", explorer / "README.md"):
+    for document in [*GUIDANCE, cad / "agents/openai.yaml"]:
         text = document.read_text(encoding="utf-8")
-        commands = "\n".join(re.findall(r"```powershell\n(.*?)```", text, re.DOTALL))
+        for retired in ("imported browser", "imported viewer", "ensure-dev", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
+            assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
+        if document.is_relative_to(cad):
+            for retired in ("scripts/render", "npm --prefix explorer"):
+                assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
+
+
+def test_dependency_locks_stay_local():
+    assert "/uv.lock" in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "/package-lock.json" in (ROOT / "explorer/.gitignore").read_text(encoding="utf-8").splitlines()
+    assert (ROOT / "pyproject.toml").is_file() and (ROOT / "explorer/package.json").is_file()
+    for document in (ROOT / "README.md", ROOT / "explorer/README.md"):
+        commands = "\n".join(re.findall(r"```powershell\n(.*?)```", document.read_text(encoding="utf-8"), re.DOTALL))
         assert "npm install" in commands
         assert not re.search(r"^\s*npm ci\s*$", commands, re.MULTILINE)
-        assert "package-lock.json" in text and "Git-ignored" in text
+
+
+def _skill_names():
+    return sorted(skill.parent.name for skill in SKILLS.glob("*/SKILL.md"))
+
+
+def test_claude_code_finds_each_skill_through_one_link():
+    links = ROOT / ".claude/skills"
+    assert sorted(entry.name for entry in links.iterdir()) == _skill_names()
+    for name in _skill_names():
+        link = links / name
+        # A checkout without symlink support writes the link's target as a text file.
+        target = os.readlink(link) if os.path.islink(link) else link.read_text(encoding="utf-8")
+        assert target.replace("\\", "/") == f"../../.agents/skills/{name}"
+        if os.path.islink(link):
+            assert (link / "SKILL.md").is_file()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js runs the installer")
+def test_install_links_the_personal_skills_folder(tmp_path):
+    def install():
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path)}
+        command = [shutil.which("node"), str(ROOT / "tools/install-skills.mjs")]
+        return subprocess.run(command, env=env, capture_output=True, text=True, timeout=60, check=False)
+
+    for _ in range(2):  # a second run replaces its own links
+        result = install()
+        assert result.returncode == 0, result.stderr
+        for name in _skill_names():
+            assert Path(os.path.realpath(tmp_path / "skills" / name)) == Path(os.path.realpath(SKILLS / name))
+    other = tmp_path / "skills/other"
+    other.mkdir()
+    (tmp_path / "skills/cad").unlink() if os.path.islink(tmp_path / "skills/cad") else os.rmdir(tmp_path / "skills/cad")
+    (tmp_path / "skills/cad").mkdir()
+    (tmp_path / "skills/cad/notes.md").write_text("mine", encoding="utf-8")
+    result = install()
+    assert result.returncode == 1
+    assert "is not a link" in result.stderr
+    assert (tmp_path / "skills/cad/notes.md").read_text(encoding="utf-8") == "mine"
+    assert other.is_dir()
 
 
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])

@@ -1,6 +1,6 @@
 # Natural-language CAD specs
 
-Read this file when turning a user's prose, reference photo or technical drawing into a CAD brief. Do not require the user to provide JSON or fill in a template. If the user supplied JSON voluntarily, extract the same information but continue the workflow in prose notes and build123d source. Direct inspection or export requests need no modeling brief.
+Read this file when turning a user's prose, reference photo or technical drawing into a CAD brief. If the user supplied JSON voluntarily, extract the same information but continue the workflow in prose notes and build123d source. Direct inspection or export requests need no modeling brief.
 
 ## Goal
 
@@ -35,9 +35,9 @@ CAD brief:
 - Checks: <bbox, solid count, labels, measurements, clearances, refs>
 ```
 
-## Clarification policy
+## When to ask
 
-Critical dimensions, fit, clearances, wall thickness, material, printer and nozzle are unknown until the user confirms them. Ask when a missing or conflicting value materially affects the result. Ask one focused question at a time, in plain words. When the user may not know the answer, offer two or three rough alternatives, or a quick first pass to react to.
+The skill's Conventions and unknowns set the rule; these are the usual cases.
 
 Usually ask when:
 
@@ -51,10 +51,10 @@ Usually ask when:
 Usually proceed with a provisional assumption when:
 
 - Origin, orientation or sketch plane can be chosen and reported.
-- A cosmetic detail does not affect fit or function, such as how rounded a non-mating outside edge is. Put it in a named parameter and list it so the user can change it.
+- A cosmetic detail does not affect fit or function, such as how rounded a non-mating outside edge is.
 - The user wants a conceptual first pass, where rough alternatives help them decide.
 
-A published standard value, such as a clearance-hole table or a material's typical shrinkage, is a starting proposal for the user's process, not a confirmed requirement or measured calibration. Label it as provisional. For printed fits, use the fdm-design skill.
+A material's typical shrinkage, like a standard table value, is a proposal for the user's process, not measured calibration. For printed fits, use the fdm-design skill.
 
 ## Reference images
 
@@ -62,7 +62,7 @@ A published standard value, such as a clearance-hole table or a material's typic
 - An image without a known dimension or scale reference gives proportions, not sizes. Do not take fit dimensions from it. Get the overall size from the user, a known object in the picture, or a measurement, and scale the proportions from that.
 - Record each dimension estimated from an image as a provisional assumption, and say how it was estimated.
 - Camera angle, perspective and lens distortion change apparent proportions. A straight-on view gives the most reliable profile; treat a three-quarter view as approximate.
-- For a reproduction, capture the model from a viewpoint close to the image's and compare the two (see `rendering-and-explorer.md`).
+- For a reproduction, capture the model from a viewpoint close to the image's and compare the two (see `self-review.md`).
 
 ## Technical drawings
 
@@ -138,18 +138,3 @@ CAD brief:
 - Provisional: profile points traced from the photo and scaled to the confirmed size, in named parameters.
 - Checks: closed positive-volume solids; cavity height and maximum diameter equal the confirmed finished size scaled for the confirmed shrinkage; each mold piece labelled.
 ```
-
-## Success criteria
-
-A brief is ready for modeling when it contains enough information to define:
-
-- source file path
-- STEP target path
-- units
-- local coordinate system
-- named parameters, with provisional values marked
-- feature plan
-- labels
-- expected bounding box or key measurements
-- open questions that block detailing, if any
-- STEP to show in Explorer

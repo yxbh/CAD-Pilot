@@ -1,20 +1,8 @@
-# DXF secondary workflow
+# DXF output
 
-Read this file only when the user requests DXF or 2D drawing output from CAD geometry.
+Read this only when the user wants DXF or another 2D drawing output from CAD geometry. DXF is secondary: build and check the `gen_step()` geometry first, and do not treat DXF layers as STEP part or assembly structure.
 
-DXF is secondary. Generate and validate the STEP envelope first when the geometry originates from a CAD source. Do not treat DXF layers as STEP part/assembly structure.
-
-## Tool
-
-```bash
-python scripts/dxf targets...
-```
-
-Only standard help flags are expected.
-
-## Source requirements
-
-A DXF target must be a Python source defining:
+A DXF target is a Python source defining both `gen_step()` (discovery uses the CAD source catalog) and:
 
 ```python
 def gen_dxf():
@@ -22,41 +10,8 @@ def gen_dxf():
     return document, dxf_output
 ```
 
-The same file must also define a valid `gen_step()` envelope because discovery uses the CAD source catalog.
-
-```python
-def gen_step():
-    ...
-    return shape_or_compound
-```
-
-## Workflow
-
-1. Convert the user's prose into a natural-language CAD brief.
-2. Build or validate the `gen_step()` envelope.
-3. Generate STEP with lightweight facts/planes/positioning inspection.
-4. Show the STEP in CAD Explorer (see `rendering-and-explorer.md`).
-5. Add or update `gen_dxf()` for the requested projection, layout, or drawing output.
-6. Run `scripts/dxf` on explicit Python source targets.
-7. Report the DXF output plus the primary STEP and its Explorer URL.
-
-## Command
-
 ```bash
-python scripts/dxf path/to/source.py
+python <cad>/scripts/dxf path/to/source.py
 ```
 
-## Reporting
-
-```text
-Files:
-- STEP: path/to/source.step
-- DXF: path/to/output.dxf
-
-CAD Explorer:
-- <URL printed by explorer.mjs open for path/to/source.step>
-
-Validation:
-- STEP geometry: checked with facts/planes/positioning
-- DXF: generated from gen_dxf(); drawing-layer content reported if available
-```
+Run it on explicit sources; it takes only the standard help flags. Report the DXF beside the primary STEP and its checks, with the drawing-layer content when available.
