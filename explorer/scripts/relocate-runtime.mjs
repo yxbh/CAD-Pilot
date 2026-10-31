@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runtimeRoot, workbenchRoot } from "../server/paths.mjs";
+import { workbenchRoot, workbenchRuntimeRoot as runtimeRoot } from "../server/paths.mjs";
 import { atomicJson } from "../server/storage.mjs";
 import { acquireViewOwner } from "../server/view-owner.mjs";
 

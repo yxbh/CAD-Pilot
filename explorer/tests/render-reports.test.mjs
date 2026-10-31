@@ -38,7 +38,8 @@ test("superseded render reports cannot write current state or acknowledge render
   const reportB = { ...reportFor(current), camera: { ...camera, position: [80, -90, 100] } };
   const saved = await readFile(stateFile, "utf8");
   const eventsAbort = new AbortController();
-  const events = await fetch(service.url + "api/events", { signal: eventsAbort.signal });
+  // This client stands in for the background renderer, which draws agents' captures.
+  const events = await fetch(service.url + "api/events?kind=headless", { signal: eventsAbort.signal });
   let eventText = "";
   const reading = (async () => {
     for await (const chunk of events.body) eventText += Buffer.from(chunk).toString("utf8");
@@ -90,6 +91,13 @@ test("superseded render reports cannot write current state or acknowledge render
     await oldViewRejected;
     assert.deepEqual(service.getState().camera, reportB.camera);
     assert.deepEqual(service.getState().rendered, reportB);
+    await delay(75);
+    assert.ok(!eventText.includes("event: capture"), "A viewer page's report does not release a background capture");
+    const background = await post(service, "rendered", { ...reportB, kind: "headless", camera: { ...camera, position: [1, 2, 90] } });
+    assert.deepEqual(await background.json(), { accepted: true });
+    assert.deepEqual(service.getState().camera, reportB.camera, "The background renderer never replaces the person's camera");
+    assert.deepEqual(service.getState().rendered, reportB, "rendered stays the viewer page's report");
+    assert.equal(service.getState().renderers.drawn, "viewer");
     for (let count = 0; !eventText.includes("event: capture"); count++) {
       assert.ok(count < 100, "Current render did not release capture");
       await delay(10);

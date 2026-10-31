@@ -58,6 +58,12 @@ test("sequence labels resolve groups and wildcards to parts, and report what the
     assert.throws(() => resolveSequence(document(steps), model, "x"), /Assembly sequence/);
   }
   assert.throws(() => resolveSequence({ ...document([{ title: "A", parts: ["cap"], from: [0, 0, 1] }]), format: "other" }, model, "x"), /format/);
+  // The root "jig" and any wrapper holding every part never match, so a broad pattern cannot move the whole model.
+  const wrapped = { ...model, nodes: [{ id: "wrapper", label: "jig v3", partId: null, parentId: null, matrix: identity },
+    ...model.nodes.map((node) => node.parentId === null ? { ...node, parentId: "wrapper" } : node)] };
+  const broad = resolveSequence(document([{ title: "All", parts: ["jig*", "p*"], from: [0, 0, 1] }]), wrapped, "x");
+  assert.deepEqual(broad.steps[0].unresolved, ["jig*"]);
+  assert.deepEqual(broad.steps[0].nodeIds, ["pin-1", "pin-2"], "subgroups and parts still match");
 });
 
 test("steps place parts from their offsets, carry earlier parts and animate fractional positions", () => {

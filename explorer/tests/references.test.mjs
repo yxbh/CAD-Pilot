@@ -6,7 +6,7 @@ import test from "node:test";
 import { createReference, formatSelection, parseReference } from "../shared/references.mjs";
 import { changeView, initialState, topologyRevision, validateModel } from "../server/protocol.mjs";
 import { createInspectionService } from "../server/inspection.mjs";
-import { runtimeRoot, workbenchRoot } from "../server/paths.mjs";
+import { workbenchRuntimeRoot, workbenchRoot } from "../server/paths.mjs";
 import { inspectionFixture } from "./inspection-fixtures.mjs";
 
 function fixture() {
@@ -90,7 +90,7 @@ test("a pasted reference resolves from immutable cache without its original canv
 });
 
 test("chip descriptors use the maintained runtime and remain inspectable after service restart", async (t) => {
-  assert.equal(runtimeRoot, path.join(workbenchRoot, "explorer", ".runtime"));
+  assert.equal(workbenchRuntimeRoot, path.join(workbenchRoot, "explorer", ".runtime"));
   const fixture = await inspectionFixture(t);
   const { service, reference, model } = fixture;
   const prepared = await service.prepareClipboardReference(reference);

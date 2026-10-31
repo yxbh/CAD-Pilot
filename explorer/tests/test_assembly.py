@@ -191,3 +191,32 @@ def test_designs_load_as_their_own_module(tmp_path, future):
     module = assembly._load_source(source)
     assert module.gen_step() == 10.0
     assert ("annotations" in module.__dict__) == bool(future)
+
+
+def test_a_wildcard_never_matches_the_whole_assembly():
+    from build123d import Box, Compound, Pos
+
+    # "TMAT anchor *" was written for the anchor's parts; the top-level group "TMAT anchor v3" also fits it.
+    base = Box(40, 40, 4)
+    base.label = "TMAT base"
+    plate = Pos(0, 0, 10) * Box(20, 20, 2)
+    plate.label = "TMAT anchor plate"
+    bolt = Pos(0, 0, 20) * Box(2, 2, 10)
+    bolt.label = "TMAT anchor bolt"
+    anchor = Compound(children=[plate, bolt])
+    anchor.label = "anchor"
+    root = Compound(children=[base, anchor])
+    root.label = "TMAT anchor v3"
+    leaves, groups = assembly.labelled_parts(root)
+    assert assembly.match_parts(["TMAT anchor *"], groups) == (["TMAT anchor plate", "TMAT anchor bolt"], [])
+    assert assembly.match_parts(["anchor"], groups) == (["TMAT anchor plate", "TMAT anchor bolt"], []), "a real subgroup still matches"
+    assert assembly.match_parts(["TMAT anchor v?"], groups) == ([], ["TMAT anchor v? (it matches only the whole assembly)"])
+    steps = assembly.normalize_steps({"steps": [{"title": "Anchor", "parts": ["TMAT anchor *"], "from": (0, 0, -30)}]}, groups)
+    # Moving every part would leave nothing to collide with and so report clear; the anchor now meets the base.
+    assert assembly.check_steps(steps, leaves, 1.0)[0]["status"] == "blocked"
+    with pytest.raises(assembly.SequenceError, match="matches only the whole assembly"):
+        assembly.normalize_steps({"steps": [{"title": "All", "parts": ["TMAT*v3"], "from": (0, 0, 30)}]}, groups)
+    # A single-part model can still name its only part.
+    lone = Box(4, 4, 4)
+    lone.label = "lone"
+    assert assembly.match_parts(["lone"], assembly.labelled_parts(Compound(children=[lone]))[1]) == (["lone"], [])

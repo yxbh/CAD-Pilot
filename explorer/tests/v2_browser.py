@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageStat
 from playwright.sync_api import expect, sync_playwright
 from browser_session import launch_chromium
 
@@ -154,7 +154,10 @@ def run(url, output):
             assert exported.status == 200, exported.text()
             exported_path = Path(exported.json()["path"])
             assert exported_path.is_file()
-            assert not ImageChops.difference(Image.open(exported_path).convert("RGB"), marked).getbbox(), "Agent capture omitted the drawing layer"
+            exported_image = Image.open(exported_path).convert("RGB")
+            exported_difference = ImageStat.Stat(ImageChops.difference(exported_image, marked)).mean
+            # The background renderer composes the saved review in another browser; anti-aliasing may differ slightly.
+            assert exported_image.size == marked.size and max(exported_difference) < 0.5, ("Agent capture omitted the drawing layer", exported_difference)
             page.set_viewport_size({"width": 420, "height": 900})
             expect(drawing).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

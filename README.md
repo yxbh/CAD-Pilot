@@ -13,7 +13,7 @@ uv sync
 uv run python -m playwright install chromium
 ```
 
-Run setup from the workbench root. Playwright Chromium is needed for the Explorer's browser checks, not for STEP generation. Installing/running third-party tools executes code; this is not a sandbox.
+Run setup from the workbench root. Playwright Chromium draws the Explorer's views in the background (confirming loads, captures and renders) and runs its browser checks; STEP generation does not need it. Installing/running third-party tools executes code; this is not a sandbox.
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines.
 
@@ -136,4 +136,4 @@ Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/
 
 The workbench slices only as a check, through an installed Bambu Studio's command line. It does not control printers, verify physical fit, or certify printability; its thin-wall check samples layer outlines.
 
-The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.
+The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. It keeps its copies of design geometry in the user's local application data, not in the workbench or the design project; see the Explorer's [local data](explorer/README.md#local-data). Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.

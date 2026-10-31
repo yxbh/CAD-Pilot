@@ -159,7 +159,9 @@ test("face-only schema-2 caches regenerate edges without changing retained refer
       selectedEdge: selected.selectedEdge, highlightedSegments: 1, selectedEdgeScreen: [0.5, 0.5] };
     assert.equal((await post("api/rendered", report)).status, 200);
     assert.deepEqual(service.getState().rendered.selectedEdge, selected.selectedEdge);
-    const events = await fetch(service.url + "api/events", { signal: AbortSignal.timeout(5000) });
+    // Captures come from the background renderer; this client stands in for it.
+    assert.equal((await post("api/rendered", { ...report, kind: "headless" })).status, 200);
+    const events = await fetch(service.url + "api/events?kind=headless", { signal: AbortSignal.timeout(5000) });
     const reader = events.body.getReader();
     const capturing = service.captureImage();
     try {

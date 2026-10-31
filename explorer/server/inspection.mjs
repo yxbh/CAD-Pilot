@@ -6,6 +6,7 @@ import { multiply } from "../shared/matrix.mjs";
 import { nativeFileReference, nativeReferenceTitle } from "../shared/native-reference.mjs";
 import { PrototypeError, validateModel } from "./protocol.mjs";
 import { atomicJson } from "./storage.mjs";
+import { workbenchRoot as checkout } from "./paths.mjs";
 import { createVerifiedFileCache, FileChangedError } from "./verified-file-cache.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -26,6 +27,13 @@ const shortLabel = (value) => {
  * Mesh arrays and STEP bytes are not retained. The 160 MiB JSON / 100 MiB STEP input limits still apply, and oversized fact entries inspect without being retained.
  * cacheLimits can lower/disable either LRU; cacheStats exposes deterministic local counters. These bounds and synthetic timings do not certify large assemblies or total process memory.
  */
+// Services and hosts sharing a runtime share one bounded inspection cache.
+const shared = new Map();
+export function inspectionFor(runtimeRoot, workbenchRoot = checkout) {
+  if (!shared.has(runtimeRoot)) shared.set(runtimeRoot, createInspectionService({ runtimeRoot, workbenchRoot }));
+  return shared.get(runtimeRoot);
+}
+
 export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimits = {}, io }) {
   const counts = { modelReads: 0, jsonParses: 0, modelValidations: 0, sourceHashes: 0, sourceBytesRead: 0 };
   const models = createVerifiedFileCache({

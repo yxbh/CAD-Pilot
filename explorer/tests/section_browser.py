@@ -349,10 +349,11 @@ def run(url, output, fixture):
             assert page.evaluate("window.sectionContextLosses") == 0
             assert settled()["rendered"]["geometryIds"] == geometry_ids
 
-            reset = command("load_file", {"file": fixture_file})
-            assert reset["section"]["enabled"] is False
-            assert reset["section"]["axis"] == "x"
-            assert math.isclose(reset["section"]["position"], (model["bounds"]["min"][0] + model["bounds"]["max"][0]) / 2, abs_tol=1e-9)
+            # Reloading a STEP whose part tree is unchanged keeps the cutaway.
+            before_reload = state()["section"]
+            reloaded = command("load_file", {"file": fixture_file})
+            assert reloaded["viewKept"] is True
+            assert reloaded["section"] == before_reload
             assert hashlib.sha256(fixture.read_bytes()).hexdigest() == source_before
             assert not errors, errors
             print(json.dumps({

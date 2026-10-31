@@ -1,14 +1,16 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { createExplorerServer, inspectReference } from "../server/server.mjs";
-import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
+import { createExplorerServer } from "../server/server.mjs";
+import { inspectionFor } from "../server/inspection.mjs";
+import { explorerRoot, workbenchRoot, workbenchRuntimeRoot } from "../server/paths.mjs";
 import { createViewRegistry } from "../server/view-registry.mjs";
 import { pushComposerAttachment } from "../server/composer.mjs";
 import { COMMANDS, objectSchema } from "../shared/commands.mjs";
 
 export async function startCopilotExplorer({ joinSession, createCanvas, CanvasError }, {
   createService = createExplorerServer,
-  inspect = inspectReference,
+  runtimeRoot = workbenchRuntimeRoot,
+  inspect = inspectionFor(runtimeRoot).inspectReference,
   checkBuild = () => access(path.join(explorerRoot, "dist", "index.html")),
   canonicalize,
 } = {}) {
@@ -16,7 +18,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
   const registry = createViewRegistry({
     canonicalize,
     createService: ({ firstPanel, ...input }) => createService({
-      ...input,
+      ...input, runtimeRoot,
       addReferenceToChat: (attachment) => {
         const instanceId = firstPanel();
         if (!instanceId) throw new CanvasError("not_open", "Open CAD Explorer before adding a reference");
@@ -38,8 +40,10 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     inputSchema,
     handler: (ctx) => translated(async () => {
       const service = registry.serviceFor(ctx.instanceId);
-      if (render === "capture") return service.captureImage();
-      return service.execute(name, ctx.input || {}, { rendered: render === "live" });
+      if (render === "capture") return service.captureImage(ctx.input || {});
+      const result = await service.execute(name, ctx.input || {}, { rendered: render === "live" });
+      // View actions answer with the compact summary; get_state detail=full is there for everything else.
+      return name !== "get_state" && result?.application ? service.summary() : result;
     }),
   });
   const inspectionTool = (name) => ({

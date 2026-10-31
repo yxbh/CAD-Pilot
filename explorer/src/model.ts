@@ -78,7 +78,8 @@ export type ViewState = {
   assembly: AssemblySequence | null;
   step: number | null;
   stepMode: StepMode;
-  cameraPreset: "iso" | "top" | "bottom" | "front" | "back" | "right" | "left";
+  // A named view, or "azimuth:elevation" in degrees.
+  cameraPreset: "iso" | "top" | "bottom" | "front" | "back" | "right" | "left" | `${number}:${number}`;
   projection: "perspective" | "orthographic";
   appearance: "inspect" | "studio";
   materialFinish: "plastic" | "satin" | "polished" | "rubber";
@@ -89,6 +90,10 @@ export type ViewState = {
   error: string;
   activeReviewId: string | null;
   camera: CameraState | null;
+  // True once the person moved the camera; otherwise the view is fitted from cameraPreset.
+  cameraPinned: boolean;
+  source: { file: string; generatedAt: string; size: number };
+  viewKept: boolean | null;
 };
 export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds; offset: number[] | null };
 export type HoverTarget = { nodeId: string; faceId: string | null; edgeId?: string };

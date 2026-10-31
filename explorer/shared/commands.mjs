@@ -21,7 +21,9 @@ const read = (description, properties, required) => command(description, propert
 
 // Schemas describe canvas inputs; contextual geometry and state validation stays on the server.
 export const COMMANDS = Object.freeze({
-  get_state: read("Read the model, camera, selections, saved setup and actual renderer acknowledgement."),
+  get_state: read("Read a compact summary of the shown model (name, file, revision, generated time), its view and whether a viewer page has drawn it. detail=full adds parts, references and the renderer's report.", {
+    detail: { enum: ["summary", "full"] },
+  }),
   set_explode: command("Separate parts visually without moving the camera or changing the STEP. Fit assembly separately if needed.", {
     amount: { type: "number", minimum: 0, maximum: 1 },
     fixedId: { type: "string", description: "Occurrence to keep fixed, or empty to clear." },
@@ -49,7 +51,11 @@ export const COMMANDS = Object.freeze({
   set_visibility: command("Show or hide occurrences without moving the camera.", { ids, visible: { type: "boolean" } }, ["ids", "visible"]),
   isolate: command("Show only one occurrence and fit it.", { id: { type: "string" } }, ["id"]),
   show_all: command("Show all occurrences and fit the visible assembly."),
-  set_view: command("Fit an isometric or exact axis view: right +X, left -X, back +Y, front -Y, top +Z, bottom -Z.", { preset: { enum: VIEW_PRESETS } }, ["preset"]),
+  set_view: command("Fit an isometric or exact axis view (right +X, left -X, back +Y, front -Y, top +Z, bottom -Z), or a view from azimuth and elevation in degrees: azimuth 0 looks from the front, 90 from the right; elevation 90 looks down from the top.", {
+    preset: { enum: VIEW_PRESETS },
+    azimuth: { type: "number", minimum: -360, maximum: 360 },
+    elevation: { type: "number", minimum: -90, maximum: 90 },
+  }),
   set_projection: command("Switch perspective or orthographic projection while retaining viewing direction and target-plane scale.", { projection: { enum: PROJECTIONS } }, ["projection"]),
   set_appearance: command("Choose Inspect or Studio and a visual finish. Source CAD colors and geometry stay unchanged.", {
     mode: { enum: ["inspect", "studio"] }, finish: { enum: MATERIAL_FINISHES }, showEdges: { type: "boolean" },
@@ -64,8 +70,11 @@ export const COMMANDS = Object.freeze({
   reset_view: command("Reassemble without moving the camera or changing STEP geometry."),
   load_file: command("Load a STEP snapshot inside the configured project root.", { file: { type: "string" } }, ["file"], { revision: "unchecked" }),
   load_demo: command("Load the synthetic demonstration assembly.", {}, [], { revision: "unchecked" }),
-  capture_image: command("Save an image of the settled live view or annotated drawing, with source and pose metadata.",
-    {}, [], { revision: "unchecked", render: "capture", duringReview: true }),
+  capture_image: command("Save a PNG of the current view or annotated drawing, with source and pose metadata. It is drawn in the background at a fixed size, so no viewer page needs to be open or visible.", {
+    width: { type: "integer", minimum: 16, maximum: 4096 },
+    height: { type: "integer", minimum: 16, maximum: 4096 },
+    background: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Background colour for this image only, such as #ffffff." },
+  }, [], { revision: "unchecked", render: "capture", duringReview: true }),
   list_reviews: read("List saved drawing review summaries."),
   get_review: read("Read a review's source, captured pose and mark count without image bytes.", { id: { type: "string" } }, ["id"]),
   open_review: command("Open a saved drawing review; its captured camera and model pose do not move.", { id: { type: "string" } }, ["id"],

@@ -21,8 +21,9 @@ export async function createTestRuntime(t) {
   t?.after(dispose);
   return {
     runtimeRoot,
+    // Core tests drive renderers themselves; browser tests opt in to the real background renderer.
     async createService(options) {
-      const service = await createExplorerServer({ ...options, runtimeRoot });
+      const service = await createExplorerServer({ renderer: null, ...options, runtimeRoot });
       services.add(service);
       return service;
     },

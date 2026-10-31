@@ -98,13 +98,21 @@ def label_pattern(glob: str) -> re.Pattern:
 
 
 def match_parts(patterns: list[str], groups: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """Leaf labels named by the patterns, and the patterns that name nothing.
+
+    A group holding every part (the top-level assembly, or a wrapper around it) never matches, exactly as in CAD
+    Explorer: a step moving the whole model has nothing to arrive at, so its check would be clear by default, and a
+    pattern such as ``Anchor *`` written for parts must not catch an ``Anchor v3`` root.
+    """
+    every = {leaf for members in groups.values() for leaf in members}
+    whole = {name for name, members in groups.items() if members != [name] and set(members) == every}
     matched: list[str] = []
     missing: list[str] = []
     for pattern in patterns:
         matcher = label_pattern(pattern)
-        names = [name for name in groups if matcher.fullmatch(name)]
+        names = [name for name in groups if name not in whole and matcher.fullmatch(name)]
         if not names:
-            missing.append(pattern)
+            missing.append(f"{pattern} (it matches only the whole assembly)" if any(matcher.fullmatch(name) for name in whole) else pattern)
         for name in names:
             matched.extend(leaf for leaf in groups[name] if leaf not in matched)
     return matched, missing

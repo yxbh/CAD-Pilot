@@ -10,3 +10,5 @@ export const VIEW_PRESETS: readonly ["iso", "top", "bottom", "front", "back", "r
 export const PROJECTIONS: readonly ["perspective", "orthographic"];
 export const MATERIAL_FINISHES: readonly ["plastic", "satin", "polished", "rubber"];
 export function validateCamera(camera: unknown): CameraState;
+export function viewAngle(azimuth: unknown, elevation: unknown): string;
+export function angleView(preset: string): { direction: [number, number, number]; up: [number, number, number] } | null;

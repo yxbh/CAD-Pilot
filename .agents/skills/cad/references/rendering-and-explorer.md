@@ -29,13 +29,13 @@ In the Copilot desktop, open the `cad-explorer` canvas with the design directory
 
 Geometry checks cover only what you thought to measure. Looking at the model catches a missing cut, a part on the wrong side, a flipped lid or a surface that twisted. After creating or visibly changing geometry:
 
-1. Use a separate review setup, so your views never move the user's camera. From the design root, run `explorer.mjs open <same STEP> --view review`, and pass `--view review` to every `do` and `capture` for it. Run that `open` again after each regeneration. The setup has its own URL: open it in its own browser-pane tab. A background tab does not draw, so bring the review tab to the front while you capture, then return to the user's tab. In the Copilot canvas, the visual-review skill covers the canvas's own capture action.
+1. Use a separate review setup, so your views never move the user's camera. From the design root, run `explorer.mjs open <same STEP> --view review`, and pass `--view review` to every `do` and `capture` for it. Run that `open` again after each regeneration. Captures are drawn in the background, so the review setup needs no tab of its own. In the Copilot canvas, the visual-review skill covers the canvas's own capture action.
 2. Choose views that expose the features under review, using the table below. Keep it proportionate: one or two views for a small change, more only for features those views hide. No set of views proves every face is right.
-3. Run `capture` without an output path. The result's `path` names the image the Explorer saved in its own runtime folder; open that file and look at it. Those files are not cleaned up automatically, so capture only the views you need. Give a project-relative `.png` path only for an image the user wants to keep.
+3. Run `capture` without an output path. The result's `path` names the image the Explorer saved in its own runtime folder; open that file and look at it. Old captures are removed automatically, so capture only the views you need and do not rely on them lasting. Give a project-relative `.png` path only for an image the user wants to keep.
 4. Turn each concern into a measurement before calling it resolved (second table below), and fix the source if the measurement confirms a problem.
 5. If you have to use the user's setup instead, read `state` first. Afterwards restore its projection and view preset, turn off sections you added, and show hidden parts again. The CLI cannot restore an arbitrary orbit, so tell the user if you moved their camera.
 
-Skip self-review captures when no visible geometry was created or changed: export-only requests, source edits that leave the shape alone, inspection-only questions, or a generation that failed before a valid STEP existed. Also skip, and say so, when the Explorer cannot open or no page can show it. When skipping, report why and which geometry checks still ran.
+Skip self-review captures when no visible geometry was created or changed: export-only requests, source edits that leave the shape alone, inspection-only questions, or a generation that failed before a valid STEP existed. Also skip, and say so, when the Explorer cannot open or its background renderer cannot draw. When skipping, report why and which geometry checks still ran.
 
 Do not loop. Capture again only after a repair changed visible geometry, or to confirm a specific finding. Self-review images are your evidence; the user sees the model in the Explorer, so share an image only when they ask for one.
 
@@ -71,7 +71,7 @@ See `inspection-and-validation.md` for the Python checks and `positioning.md` fo
 
 ## Images for the user
 
-With the viewer page open, set up the view and capture it:
+Set up the view and capture it; no viewer page needs to be open:
 
 ```bash
 node <workbench>/explorer/scripts/explorer.mjs do set_view preset=iso
@@ -79,7 +79,7 @@ node <workbench>/explorer/scripts/explorer.mjs do set_section enabled=true axis=
 node <workbench>/explorer/scripts/explorer.mjs capture path/to/model_section.png
 ```
 
-List the available view actions with `explorer.mjs actions`. A capture waits until an open page has drawn the current view; with no page open it reports the URL to open. There is no headless renderer, so open the URL (in the Claude desktop app, in the built-in browser pane) before capturing. Keep capture paths inside the design project, not in this skill directory.
+List the available view actions with `explorer.mjs actions`. Captures are drawn by the Explorer's background renderer at 1280x800 unless `--size` says otherwise, whether or not the user's page is open or in front. For a picture of a STEP that should not change any viewer, such as a documentation image, use `explorer.mjs render <file.step> <out.png>` with the view flags `explorer.mjs help` lists. Keep image paths inside the design project, not in this skill directory.
 
 Without `position`, the plane stays inside the visible model: a newly loaded model starts at the middle of its X range, and changing the axis moves the plane to the middle of the new axis. To cut at a chosen coordinate, add `position=<mm>` in model-world millimetres within the visible model's extent on that axis, for example from the bounding box `scripts/inspect refs --facts` reports for an unexploded model. A position outside the visible model is rejected, and the error states the allowed range on that axis.
 

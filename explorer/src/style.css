@@ -16,6 +16,8 @@ select { color: var(--text-color-default, #c3dbe1); background: var(--background
 .document-heading > strong { font-size: 12px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .document-heading > span { font-size: 10px; color: var(--text-color-muted, #92a8b2); white-space: nowrap; }
 .version-tag { font-size: 9px; margin-left: 9px; color: #65857f; }
+.document-heading > .model-revision { font: 10px var(--font-mono, monospace); color: #9fc4b9; overflow: hidden; text-overflow: ellipsis; }
+.headless-renderer { position: absolute; left: 0; top: 0; overflow: hidden; }
 .review-select { max-width: 230px; width: 20%; min-width: 110px; font-size: 11px; }
 .mode-toolbar { height: 44px; flex: 0 0 44px; padding: 5px 8px; display: flex; align-items: flex-start; gap: 6px; border-bottom: 1px solid var(--border-color-default, #293e4a); background: var(--background-color-default, #13212c); z-index: 5; }
 .toolbar-slot { min-width: 0; flex: 1; }

@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { endpointFile, probeEndpoint, readEndpoint } from "./endpoint.mjs";
-import { canonicalProjectRoot, explorerRoot, runtimeRoot as defaultRuntimeRoot } from "./paths.mjs";
+import { canonicalProjectRoot, explorerRoot, userRuntimeRoot } from "./paths.mjs";
 import { PrototypeError } from "./protocol.mjs";
 import { viewKeyFor } from "./server.mjs";
 
@@ -12,9 +12,6 @@ export const defaultViewId = "standalone";
 const standaloneScript = path.join(explorerRoot, "server", "standalone.mjs");
 const maxLogBytes = 1024 * 1024;
 
-// CAD_EXPLORER_RUNTIME_ROOT isolates test runs; normal use keeps the maintained runtime directory.
-export const launcherRuntimeRoot = () => process.env.CAD_EXPLORER_RUNTIME_ROOT
-  ? path.resolve(process.env.CAD_EXPLORER_RUNTIME_ROOT) : defaultRuntimeRoot;
 
 // Without the built page a viewer would answer with an error page, so fail before handing out a URL.
 export async function assertBuilt(index = path.join(explorerRoot, "dist", "index.html")) {
@@ -24,7 +21,8 @@ export async function assertBuilt(index = path.join(explorerRoot, "dist", "index
   }
 }
 
-export async function locateView({ projectRoot = process.cwd(), viewId = defaultViewId, runtimeRoot = launcherRuntimeRoot() } = {}) {
+// The user's local Explorer data by default; CAD_EXPLORER_RUNTIME_ROOT relocates it, for example to isolate test runs.
+export async function locateView({ projectRoot = process.cwd(), viewId = defaultViewId, runtimeRoot = userRuntimeRoot() } = {}) {
   if (typeof viewId !== "string" || !viewId.length || viewId.length > 80) throw new PrototypeError("bad_view_id", "The view name must contain 1 to 80 characters");
   // realpath returns the canonical spelling (including case on Windows), matching the server's view key.
   const project = await canonicalProjectRoot(projectRoot);
@@ -66,7 +64,7 @@ export async function call(record, route, body) {
   return result;
 }
 
-export const sendCommand = (record, name, input = {}) => call(record, "api/command", { name, input });
+export const sendCommand = (record, name, input = {}, options = {}) => call(record, "api/command", { name, input, ...options });
 
 // Startup restores the saved setup or loads the requested file; a reload must not race it.
 export async function waitForLoad(record, timeout = 150_000) {
@@ -143,14 +141,10 @@ export async function openViewer(location, file, { spawnViewer = spawnDetached, 
     // A process that hands over to a concurrently started viewer has already reloaded the file there.
     ({ started, ...running } = await waitForStart(location, spawnViewer(location, file), startTimeout, loadTimeout * 2));
   }
-  const state = await waitForLoad(running.record, loadTimeout);
-  return {
-    url: running.record.url,
-    started, reloaded: !started && !!file,
-    pid: running.record.pid,
-    model: state.modelName, loading: state.loading, error: state.error,
-    revision: state.revision, topologyRevision: state.topologyRevision, parts: state.parts.length,
-  };
+  await waitForLoad(running.record, loadTimeout);
+  // A view counts as shown once a renderer has drawn it: the person's page, or the background renderer.
+  const shown = await call(running.record, "api/confirm", {});
+  return { started, reloaded: !started && !!file, pid: running.record.pid, ...shown };
 }
 
 export async function stopViewer(location, { timeout = 10_000 } = {}) {
