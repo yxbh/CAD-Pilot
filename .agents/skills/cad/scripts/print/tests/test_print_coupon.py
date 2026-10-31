@@ -1,7 +1,7 @@
 import pytest
 from build123d import GeomType
 
-from print.coupon import calibration_ladder, ladder
+from print.coupon import calibration_ladder, ladder, write_ladder
 
 
 def test_ladder_holes_step_through_the_clearances_with_dimple_marks():
@@ -37,3 +37,9 @@ def test_calibration_rungs_are_the_real_part_plus_their_compensation_on_each_sid
 def test_calibration_ladder_refuses_repeated_empty_or_vanishing_rungs(values):
     with pytest.raises(ValueError):
         calibration_ladder("holes", 3.0, values, depth=5.0)
+
+
+def test_the_ladder_is_written_only_as_step(tmp_path):
+    with pytest.raises(ValueError, match=r"give a \.step or \.stp path, not ladder\.stl"):
+        write_ladder(tmp_path / "ladder.stl", 10.0, [0.1], 6.0, False)
+    assert not (tmp_path / "ladder.stl").exists()

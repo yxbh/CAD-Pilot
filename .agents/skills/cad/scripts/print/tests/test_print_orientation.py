@@ -1,9 +1,13 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-from build123d import Box, Cylinder, Pos, export_step, export_stl
+from build123d import Box, Compound, Cylinder, Pos, export_step, export_stl
 
+from print import meshes
 from print.meshes import MeshError, load_mesh
 from print.orientation import CheckSettings, check_orientation
 
@@ -160,3 +164,73 @@ def test_a_hole_over_the_edge_of_an_overhang_has_no_step(tmp_path):
     report = check_orientation(_mesh(tmp_path, flange), SETTINGS)
     assert report.hole_check["enclosed"] == 1 and report.holes == []
     assert not any("hole" in flag for flag in report.flags)
+
+
+def test_identical_thin_walls_measure_alike_wherever_the_raster_falls(tmp_path):
+    # A full-length slot leaves two 0.3 mm walls; the 0.105 mm raster fits one 2 pixels across and the other 3.
+    rib = Pos(0, 0, 25) * Box(40, 20, 50) - Pos(0, 0, 37.5) * Box(40, 19.4, 25)
+    report = check_orientation(_mesh(tmp_path, rib), SETTINGS)
+    walls = report.thin_walls
+    assert len(walls) == 2
+    for wall in walls:
+        assert wall.thickness_mm == pytest.approx(0.3, abs=0.02)
+        assert 9.7 - 1e-6 <= abs(wall.model_xyz_mm[1]) <= 10.0 + 1e-6  # in a wall, where it was measured
+    assert walls[0].thickness_mm == pytest.approx(walls[1].thickness_mm, abs=0.01)
+
+
+def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
+    # One STEP body, and one STL, holding two boxes: neither is an assembly of parts, but both print as two pieces.
+    two = Compound([Pos(10, 10, 5) * Box(20, 20, 10), Pos(50, 10, 5) * Box(20, 20, 10)])
+    export_stl(two, str(tmp_path / "two.stl"))
+    stl = load_mesh(tmp_path / "two.stl")
+    assert stl.bodies == 2
+    report = check_orientation(_mesh(tmp_path, two, "two"), SETTINGS)
+    assert report.bodies == 2 and any(flag.startswith("2 separate solids print as one object") for flag in report.flags)
+    hollow = Box(20, 20, 20) - Box(10, 10, 10)
+    assert _mesh(tmp_path, hollow, "hollow").bodies == 1
+
+
+def test_inward_facing_triangles_are_refused(tmp_path):
+    import trimesh
+
+    box = trimesh.creation.box(extents=(20, 20, 10))
+    faces = box.faces.copy()
+    top = box.face_normals[:, 2] > 0.5
+    faces[top] = faces[top][:, ::-1]  # the top faces into the box: still every edge shared by two triangles
+    trimesh.Trimesh(box.vertices, faces, process=False).export(tmp_path / "flipped.stl")
+    with pytest.raises(MeshError, match="some triangles face inwards"):
+        load_mesh(tmp_path / "flipped.stl")
+
+
+def test_a_step_that_cannot_be_read_is_a_mesh_error(tmp_path):
+    (tmp_path / "bad.step").write_text("garbage")
+    with pytest.raises(MeshError, match="could not be read as STEP"):
+        load_mesh(tmp_path / "bad.step")
+
+
+def test_a_step_is_meshed_once_and_then_read_from_the_cache(tmp_path, monkeypatch):
+    path = tmp_path / "block.step"
+    export_step(Pos(0, 0, 5) * Box(10, 10, 10), str(path))
+    reads = []
+    read = meshes.load_step_scene
+    monkeypatch.setattr(meshes, "load_step_scene", lambda step: reads.append(step) or read(step))
+    first, second = load_mesh(path), load_mesh(path)
+    assert len(reads) == 1 and list((tmp_path / "cad-cache" / meshes.MESH_CACHE).iterdir())
+    assert np.array_equal(first.vertices, second.vertices) and np.array_equal(first.faces, second.faces)
+    assert second.bodies == first.bodies == 1
+    export_step(Pos(0, 0, 6) * Box(10, 10, 12), str(path))  # a changed file is meshed afresh
+    assert load_mesh(path).size[2] == pytest.approx(12) and len(reads) == 2
+
+
+def test_without_trimesh_the_commands_load_and_meshing_names_the_workbench(tmp_path, monkeypatch):
+    export_stl(Box(10, 10, 10), str(tmp_path / "part.stl"))
+    monkeypatch.setitem(sys.modules, "trimesh", None)
+    with pytest.raises(MeshError, match="scripts/print needs trimesh, which .* cannot import; run it with the workbench's Python interpreter"):
+        load_mesh(tmp_path / "part.stl")
+    # A fresh interpreter without trimesh still loads the command line; commands that mesh nothing work.
+    scripts = Path(__file__).resolve().parents[2]
+    code = "import sys; sys.modules['trimesh'] = None; from print.cli import main; raise SystemExit(main(['slice', 'absent.3mf']))"
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env={**os.environ, "PYTHONPATH": str(scripts)}, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 2 and "Project not found" in result.stderr, result.stderr

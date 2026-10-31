@@ -44,14 +44,27 @@ class CliRun:
     returncode: int
     output: str
     pid: int
+    # The time limit it was stopped at, when it ran that long.
+    timeout: float | None = None
+
+    @property
+    def timed_out(self) -> bool:
+        return self.timeout is not None
 
     @property
     def crashed(self) -> bool:
         # A signal on macOS and Linux; an NTSTATUS exception code such as 0xC0000005 on Windows.
-        return self.returncode < 0 or self.returncode >= 0xC0000000
+        return not self.timed_out and (self.returncode < 0 or self.returncode >= 0xC0000000)
+
+    @property
+    def stopped(self) -> bool:
+        """It crashed or ran out of time, so whatever it wrote does not say where it stopped."""
+        return self.crashed or self.timed_out
 
     def failure(self) -> str:
-        """Why the run failed: the function it crashed in, or the last error it logged."""
+        """Why the run failed: its time limit, the function it crashed in, or the last error it logged."""
+        if self.timed_out:
+            return f"Bambu Studio did not finish within {self.timeout:g} s"
         if self.crashed:
             frame = crash_frame(self.pid)
             how = f"signal {-self.returncode}" if self.returncode < 0 else f"exception {self.returncode:#x}"
@@ -175,7 +188,8 @@ class BambuStudio:
 
     @classmethod
     def locate(cls, configured: str | None = None) -> "BambuStudio":
-        candidates = _candidates(configured)
+        # Absolute, because the command line runs in a temporary folder.
+        candidates = [path.resolve() for path in _candidates(configured)]
         for candidate in candidates:
             executable = _executable(candidate)
             profiles = _profiles(executable) if executable.is_file() else None
@@ -193,17 +207,22 @@ class BambuStudio:
 
     def run(self, arguments: list[str], work: Path, *, timeout: float = 1800) -> CliRun:
         """Run the command line with its own data folder, so the app's settings stay untouched.
-        Output paths are absolute: it resolves relative ones from somewhere other than its cwd."""
+        Output paths are absolute: it resolves relative ones from somewhere other than its cwd. A run
+        still going after ``timeout`` seconds is stopped and returned as timed out."""
         command = [str(self.executable), "--datadir", str(work / "data"), "--debug", "2", *arguments]
-        with subprocess.Popen(
-            command, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
-        ) as process:
+        try:
+            process = subprocess.Popen(
+                command, cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+            )
+        except OSError as error:
+            raise BambuStudioError(f"Could not run Bambu Studio {self.executable}: {error}") from error
+        with process:
             try:
                 output, _ = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.communicate()
-                raise BambuStudioError(f"Bambu Studio did not finish within {timeout:g} s") from None
+                output, _ = process.communicate()
+                return CliRun(process.returncode, output or "", process.pid, timeout=timeout)
         return CliRun(process.returncode, output, process.pid)
 
     def resolved_settings(self, printer: str, process: str, filaments: list[str]) -> dict:

@@ -101,9 +101,10 @@ def _plate_result(entry: dict, plate: PlateSlice, settings: dict) -> None:
 
 def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) -> SliceReport:
     """Slice every plate in one run when that goes cleanly. The command line stops at the first plate
-    it cannot slice, may crash without saying where, and logs crossing toolpaths without their
-    plate, so after any of those the plates not yet accounted for are sliced one at a time, and
-    only a one-plate run's failures are blamed on a plate."""
+    it cannot slice, may crash or run past ``timeout`` without saying where, and logs crossing
+    toolpaths without their plate, so after any of those the plates not yet accounted for are
+    sliced one at a time, and a crash, a timeout or crossing toolpaths is blamed only on the plate
+    of a one-plate run."""
     project = project.resolve()
     settings, names = project_contents(project)
     plates = {number: PlateSlice(number, name) for number, name in enumerate(names, start=1)}
@@ -130,7 +131,7 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
                 if number in plates:
                     _plate_result(entry, plates[number], settings)
             failed = int(data.get("plate_index") or 0)
-            if result.returncode != 0 and not result.crashed and failed in plates and plates[failed].seconds is None:
+            if result.returncode != 0 and not result.stopped and failed in plates and plates[failed].seconds is None:
                 plates[failed].error = (data.get("error_string") or result.failure()).strip()
         for number in [n for n in sorted(plates) if plates[n].seconds is None and plates[n].error is None]:
             data, sliced, result = run(number)
@@ -138,8 +139,8 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
             plate.conflicts += [f"toolpaths of {first} and {second} cross" for first, second in CONFLICT.findall(result.output)]
             if number in sliced:
                 _plate_result(sliced[number], plate, settings)
-            if result.returncode != 0 and plate.seconds is None:
-                plate.error = (result.failure() if result.crashed else data.get("error_string") or result.failure()).strip()
+            if (result.returncode != 0 or result.timed_out) and plate.seconds is None:
+                plate.error = (result.failure() if result.stopped else data.get("error_string") or result.failure()).strip()
             elif plate.seconds is None:
                 plate.error = "not sliced: Bambu Studio wrote no G-code for it"
     return SliceReport(

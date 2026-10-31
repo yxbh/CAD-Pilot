@@ -10,7 +10,7 @@ from pathlib import Path
 from common.paths import relative_path
 
 from .meshes import MESH_SUFFIXES, STEP_SUFFIXES
-from .profile import COLOUR, KEYS as PROFILE_KEYS
+from .profile import COLOUR, PROJECT_KEYS
 
 
 JOB_KEYS = {"name", "output", "profile", "plates", "parts"}
@@ -116,7 +116,7 @@ def parse_job(data: Mapping, *, base: Path, default_output: Path) -> Job:
         raise JobError("print job name must be a non-empty string")
     profile = data.get("profile", {})
     if not isinstance(profile, Mapping):
-        raise JobError(f"print job profile must be an object overriding {', '.join(sorted(PROFILE_KEYS))}")
+        raise JobError(f"print job profile must be an object overriding {', '.join(sorted(PROJECT_KEYS))}")
     output = data.get("output")
     relative_output = relative_path(output) if isinstance(output, str) else None
     if output is not None and (relative_output is None or relative_output.suffix.lower() != ".3mf"):
@@ -155,14 +155,16 @@ def load_job(path: Path, part: Mapping | None = None) -> Job:
     if path.suffix.lower() in STEP_SUFFIXES | MESH_SUFFIXES:
         entry = {"file": path.name, **(part or {})}
         return parse_job({"parts": [entry]}, base=path.parent, default_output=path.with_suffix(".3mf"))
+    if path.suffix.lower() == ".3mf":
+        raise JobError(f"{path.name} is a 3MF, not a print job or part; slice a project with: slice {path}")
     if part:
         raise JobError(f"Part options apply to a single STEP or STL target; set them in the job file {path.name} instead")
     if not path.is_file():
         raise JobError(f"Print job not found: {path}")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise JobError(f"{path} is not valid JSON: {error}") from error
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise JobError(f"{path} is not a print job: it is not JSON text ({error})") from None
     if not isinstance(data, Mapping):
         raise JobError(f"{path} must hold a JSON object")
     stem = path.name[: -len(JOB_SUFFIX)] if path.name.lower().endswith(JOB_SUFFIX) else path.stem

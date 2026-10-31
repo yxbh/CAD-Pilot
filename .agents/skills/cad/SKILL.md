@@ -62,6 +62,8 @@ python scripts/print ...
 
 Run the tools from the design root. A generator can import modules beside it, at the design root and in the root's `src/` folder without changing `sys.path`. Use the design project's own Python environment when it has one that includes build123d, so the generator finds the project's other dependencies; otherwise use the workbench's. Give the interpreter as an absolute path: a path with `..` in it makes Python print a `sys.prefix` warning on every run.
 
+Run `scripts/print` with the workbench's interpreter in any case: it needs mesh libraries that a design environment may lack.
+
 Use `python scripts/<tool> --help` for the complete current command interface; reference docs show recommended workflows, not every flag.
 
 ## Required workflow
