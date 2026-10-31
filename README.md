@@ -136,7 +136,7 @@ While working, `node tools/check.mjs --quick` leaves out the browser scenarios; 
 
 Keep new tests cheap:
 
-- Tests run in parallel, so each one creates its own temporary folders and runtime roots and never relies on another test's files or order. The root `conftest.py` runs a unittest class that defines `setUpClass` on one worker, so build an expensive shared fixture there once and run its independent pieces concurrently, as the solid-check and mesh tests do; every other test goes to whichever worker is free, so tests that set up only for themselves spread out even within one class.
+- Tests run in parallel, so each one creates its own temporary folders and runtime roots and never relies on another test's files or order. The root `conftest.py` runs a unittest class whose own body defines `setUpClass` on one worker, so build an expensive shared fixture there once and run its independent pieces concurrently, as the solid-check and mesh tests do; every other test goes to whichever worker is free, so tests that set up only for themselves spread out even within one class. An inherited `setUpClass`, pytest's `setup_class` and class- or module-scoped fixtures are built again on each worker that runs one of their tests. A worker that crashes has its test reported as crashed and its unfinished tests handed to the others.
 - Use the smallest geometry that shows the behaviour; a CAD subprocess costs seconds of imports before any modelling.
 - Wait on a condition (state, a locator, a file), never a fixed sleep, and bound work by what it does, such as CPU time or call counts, rather than wall time that other suites share.
 - Test a behaviour at the cheapest level that shows it; keep a browser scenario for what only a real page can show.

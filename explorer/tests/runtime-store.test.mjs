@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pruneIfDue, pruneRuntime, RETENTION } from "../server/runtime-store.mjs";
+import { createTestRuntime } from "./service-fixture.mjs";
 
 const day = 24 * 60 * 60 * 1000;
 const hex = (character) => character.repeat(64);
@@ -98,4 +99,51 @@ test("a model cache's companion files share its fate, and snapshots of any forma
   assert.deepEqual([result.removed.models, result.removed.inputs], [1, 1]);
   assert.deepEqual(await list("models"), [`${hex("b")}.json`, `${hex("c")}.bin`, `${hex("c")}.json`]);
   assert.deepEqual(await list("inputs"), [`${hex("c")}.stl`]);
+});
+
+test("geometry left without its model cache is removed once it is no longer recent", async (t) => {
+  const { root, now, put, list } = await store(t);
+  await put(`models/${hex("e")}.bin`, 30);
+  // A mesh publishes its geometry before its manifest, so a new lone geometry file may be a publish in progress.
+  await put(`models/${hex("f")}.bin`, 0.001);
+  const result = await pruneRuntime(root, { now });
+  assert.equal(result.removed.models, 1);
+  assert.deepEqual(await list("models"), [`${hex("f")}.bin`]);
+});
+
+test("a one-shot render's private folder left by an interrupted render is removed with other staging", async (t) => {
+  // A one-shot render keeps its image inside the store, where cleanup can find it, rather than in the system's temp folder.
+  const runtime = await createTestRuntime(t);
+  const render = await runtime.createService({ projectRoot: runtime.runtimeRoot, viewId: "render-once", transient: true, log: () => {} });
+  const folders = await readdir(path.join(runtime.runtimeRoot, "captures"));
+  assert.equal(folders.length, 1);
+  assert.match(folders[0], /^\.render-/);
+  await render.close();
+  assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "captures")), [], "a render that finishes removes its own folder");
+
+  const { root, now, list } = await store(t);
+  for (const [name, ageDays] of [[".render-old", 1], [".render-new", 0.001]]) {
+    await mkdir(path.join(root, "captures", name));
+    await writeFile(path.join(root, "captures", name, "image.png"), "");
+    const time = new Date(now - ageDays * day);
+    await utimes(path.join(root, "captures", name), time, time);
+  }
+  const result = await pruneRuntime(root, { now });
+  assert.equal(result.removed.staging, 1);
+  assert.deepEqual(await list("captures"), [".render-new"]);
+});
+
+test("a snapshot reused while a prune runs is kept, though the prune listed it as old", async (t) => {
+  const { root, now, put, list } = await store(t);
+  // Many old snapshots ahead of the reused one, which is the oldest and so removed last.
+  const others = Array.from({ length: 3000 }, (_, index) => `${index.toString(16).padStart(64, "0")}.step`);
+  for (const name of others) await put(`inputs/${name}`, 20, 0);
+  await put(`inputs/${hex("9")}.step`, 40);
+  const pruning = pruneRuntime(root, { now });
+  // Once the first file is gone the prune has listed everything; another process then reopens the old snapshot.
+  while ((await readdir(path.join(root, "inputs"))).length > others.length) await new Promise((resolve) => setImmediate(resolve));
+  await utimes(path.join(root, "inputs", `${hex("9")}.step`), new Date(), new Date());
+  const result = await pruning;
+  assert.ok(result.removed.inputs >= 1, "the prune had started removing");
+  assert.ok((await list("inputs")).includes(`${hex("9")}.step`), "the reused snapshot was removed");
 });

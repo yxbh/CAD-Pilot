@@ -183,9 +183,15 @@ test("render writes a STEP's image without touching the project's viewer or save
   assert.ok((await readdir(runtimeRoot)).includes(".pruned"), "a one-shot render prunes the store it imported into");
   const state = (await explorer("state")).json();
   assert.deepEqual([state.view.revision, state.view.section, state.model.name], [opened.view.revision, "off", "Demo assembly.step"]);
-  const missing = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "no such part");
+  // Hidden parts are named as in sequences: a group's label covers its parts.
+  const grouped = await explorer("render", "demo.step", "docs/hidden.png", "--size", "200x150", "--hide", "Four spacers");
+  assert.equal(grouped.code, 0, grouped.stderr);
+  const missing = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "Base plate,no such part");
   assert.equal(missing.code, 1);
-  assert.match(missing.stderr, /No part label matches/);
+  assert.match(missing.stderr, /No part or group label matches no such part/);
+  const everything = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "*");
+  assert.equal(everything.code, 1);
+  assert.match(everything.stderr, /would hide every part/);
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {

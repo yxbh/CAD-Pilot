@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, fchmodSync, fstatSync, ftruncateSync, mkdirSync, openSync, readSync } from "node:fs";
+import { closeSync, fchmodSync, fstatSync, ftruncateSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -150,7 +150,14 @@ async function waitForStart(location, { child, logStart }, timeout, handoverTime
 }
 
 // The store is shared by every workbench checkout, so a project's running viewer may run another checkout's code.
-export const foreignCheckout = (record, checkout = explorerRoot) => record.explorerRoot !== checkout;
+// A checkout is compared by its canonical path: the same folder reached through a link or spelled in another case
+// (macOS and Windows folders ignore case) is the same checkout.
+const canonicalCheckout = (root) => {
+  try { return realpathSync.native(root); }
+  catch { return root; }
+};
+export const foreignCheckout = (record, checkout = explorerRoot) => typeof record.explorerRoot !== "string"
+  || canonicalCheckout(record.explorerRoot) !== canonicalCheckout(checkout);
 
 // options are load_file's mesh inputs (units, up); they only apply with a file.
 export async function openViewer(location, file, options = {}, { spawnViewer = spawnDetached, startTimeout = 30_000, loadTimeout = 150_000, distIndex, checkout = explorerRoot } = {}) {

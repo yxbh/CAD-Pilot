@@ -99,7 +99,7 @@ test("the summary names the model's revision and says plainly when nobody has se
   const model = modelFor("7".repeat(64));
   const base = {
     ...initialState(), ...loaded(model), revision: 4, modelName: "jig.step",
-    source: { file: "outputs/jig.step", generatedAt: "2026-10-31T09:00:00.000Z", size: 10 },
+    source: { file: "outputs/jig.step", generatedAt: "2026-10-31T09:00:00.000Z", size: 10, sha256: "7".repeat(64) },
     parts: [{ id: "base", label: "base" }, { id: "lid", label: "lid" }], hiddenIds: ["lid"],
     selectedIds: ["base"], selectedFace: { nodeId: "base", faceId: "f1" }, rendered: null,
     renderers: { viewers: 0, seen: false, headless: true, drawn: "headless" },
@@ -120,4 +120,11 @@ test("the summary names the model's revision and says plainly when nobody has se
   const many = stateSummary({ ...base, hiddenIds: Array.from({ length: 30 }, (_, index) => `part-${index}`) }, { url: "u" });
   assert.equal(many.view.hidden.length, 21);
   assert.equal(many.view.hidden.at(-1), "+10 more");
+  // A view of several files identifies itself by all of them, but the revision is the main file's own.
+  const compared = stateSummary({ ...base, documentRevision: "c".repeat(64) }, { url: "u" });
+  assert.equal(compared.model.revision, "777777777777");
+  // A problem that already names the address does not repeat it.
+  const timedOut = stateSummary({ ...base, renderers: { viewers: 1, seen: false, headless: false, drawn: null } },
+    { url: "http://127.0.0.1:1/token/", problem: "No renderer drew the view within 90 s. Open http://127.0.0.1:1/token/ and retry." });
+  assert.equal(timedOut.note, "The model loaded, but no renderer could draw it: No renderer drew the view within 90 s. Open http://127.0.0.1:1/token/ and retry.");
 });

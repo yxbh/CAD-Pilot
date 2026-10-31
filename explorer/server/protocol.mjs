@@ -28,10 +28,13 @@ export function initialState() {
     activeReviewId: null, camera: null, cameraPinned: false,
     projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true,
     section: { enabled: false, axis: "x", position: 0, flipped: false },
-    // Where the shown STEP came from: project-relative file (empty for uploads and the demo), its modified time and size.
-    source: { file: "", generatedAt: "", size: 0 },
+    // Where the main file came from: project-relative path (empty for uploads and the demo), its modified time, size
+    // and SHA-256, which is the revision a person is told about; documentRevision identifies the whole view.
+    source: { file: "", generatedAt: "", size: 0, sha256: "" },
     // Whether the last reload kept the previous view (null before any reload).
     viewKept: null,
+    // Added files that a restore had to leave out, because Explorer's copy was gone and the file could not be read again.
+    droppedFiles: [],
   };
 }
 
@@ -437,6 +440,8 @@ export function validateMeshGeometry(model, bytes) {
     for (const triangle of views.degenerateTriangles) if (triangle >= part.triangleCount) fail("Mesh fault list refers to a missing triangle");
     attachMeshGeometry(part, views);
   }
+  // The verified bytes stay with the model, so a running viewer serves them without reading the store again.
+  Object.defineProperty(model, "geometryBytes", { value: bytes, enumerable: false, configurable: true, writable: false });
   return model;
 }
 

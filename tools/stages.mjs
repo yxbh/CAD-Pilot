@@ -1,13 +1,14 @@
 // Runs check stages. A stage starts as soon as the stages it needs have passed, so independent stages run at the
 // same time. Each stage's output is written live to <logs>/<stage>.log and printed in one piece when the stage ends,
-// then a summary. SIGINT or SIGTERM stops every running stage's whole process tree, prints what each had written
-// and exits 130 or 143.
+// then a summary. SIGINT, SIGTERM or SIGHUP (a closed terminal) stops every running stage's whole process tree, prints
+// what each had written and exits 130, 143 or 129. Stages run in their own process groups, so a SIGKILL of the runner
+// alone, which nothing can catch, leaves them running.
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
 const MARK = { passed: "✔", failed: "✖", interrupted: "✖", skipped: "–" };
-const SIGNAL_EXIT = { SIGINT: 130, SIGTERM: 143 };
+const SIGNAL_EXIT = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 const seconds = (start) => `${((performance.now() - start) / 1000).toFixed(1)} s`;
 
 function stop(child, signal) {

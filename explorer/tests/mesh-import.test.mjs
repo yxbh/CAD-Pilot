@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -170,6 +171,76 @@ test("several files share a view in their own frames and keep their own referenc
   state = await again.execute("remove_file", { id: "ref1" });
   assert.equal(state.topologyRevision, mainRevision, "Back to one unmoved file, the view is that file again");
   assert.equal(state.documents.length, 1);
+});
+
+test("a viewer started again with the file it showed keeps the person's view", { timeout: 120_000 }, async (t) => {
+  const root = await project(t);
+  const { createService } = await createTestRuntime(t);
+  const first = await createService({ projectRoot: root, viewId: "restart", file: "box.stl", log: () => {} });
+  await first.initialize();
+  await first.execute("set_section", { enabled: true, axis: "y", position: 2 });
+  await first.close();
+  // As `explorer.mjs open box.stl` does once the viewer has stopped, crashed or been replaced by another checkout's.
+  const second = await createService({ projectRoot: root, viewId: "restart", file: "box.stl", log: () => {} });
+  await second.initialize();
+  const state = second.getState();
+  assert.equal(state.error, "");
+  assert.deepEqual([state.section.enabled, state.section.axis, state.section.position], [true, "y", 2]);
+  assert.equal(state.viewKept, true);
+});
+
+test("a running mesh view keeps serving its geometry after storage cleanup removes its files", { timeout: 120_000 }, async (t) => {
+  const root = await project(t);
+  const { createService, runtimeRoot } = await createTestRuntime(t);
+  const service = await createService({ projectRoot: root, viewId: "pruned", file: "box.stl", log: () => {} });
+  await service.initialize();
+  const model = await (await get(service, "api/model")).json();
+  // Weeks later, with the setup unused since, cleanup removes the mesh's files while the viewer still shows it.
+  const pruned = await pruneRuntime(runtimeRoot, { now: Date.now() + 40 * 24 * 60 * 60 * 1000 });
+  assert.ok(pruned.removed.models >= 1);
+  assert.equal(await stat(path.join(runtimeRoot, "models", `${model.topologyRevision}.bin`)).catch(() => null), null);
+  const geometry = await get(service, `api/geometry/${model.topologyRevision}`);
+  assert.equal(geometry.status, 200, "a capture, reload or background render can still fetch the geometry");
+  assert.equal((await geometry.arrayBuffer()).byteLength, model.geometry.bytes);
+});
+
+test("added files whose copies are gone are read again from the project, or named so they can be added back", { timeout: 180_000 }, async (t) => {
+  const root = await project(t);
+  const { createService, runtimeRoot } = await createTestRuntime(t);
+  let service = await createService({ projectRoot: root, viewId: "dropped", file: "box.stl", log: () => {} });
+  await service.initialize();
+  await service.execute("add_file", { file: "open.stl" });
+  const upload = await fetch(`${service.url}api/upload`, { method: "POST", headers: { "x-file-name": "scan.stl", "x-explorer-add": "1" }, body: boxStl({ scale: 2 }) });
+  assert.equal(upload.status, 200);
+  // The revision a person is told about is the main file's own, however many files are added beside it.
+  const main = createHash("sha256").update(boxStl()).digest("hex");
+  assert.notEqual(service.getState().documentRevision, main);
+  assert.equal((await service.summary()).model.revision, main.slice(0, 12));
+  const removeCopies = async (entries) => {
+    for (const { topologyRevision } of entries) for (const extension of ["json", "bin"]) await rm(path.join(runtimeRoot, "models", `${topologyRevision}.${extension}`), { force: true });
+  };
+  await removeCopies(service.getState().documents.slice(1));
+  await service.close();
+
+  // The added project file is read again; the upload, which has no project file, is named in the note.
+  service = await createService({ projectRoot: root, viewId: "dropped", file: "box.stl", log: () => {} });
+  await service.initialize();
+  let state = service.getState();
+  assert.equal(state.error, "");
+  assert.deepEqual(state.documents.map(({ id, name }) => [id, name]), [["main", "box.stl"], ["ref1", "open.stl"]]);
+  assert.deepEqual(state.droppedFiles, [{ id: "ref2", name: "scan.stl", file: "" }]);
+  assert.match((await service.summary()).note, /^Left out of the view because Explorer no longer has a copy \(scan\.stl: it was uploaded, so upload it again\)\./);
+  state = await service.execute("load_file", { file: "box.stl" });
+  assert.deepEqual(state.droppedFiles, [], "a later load has nothing left out to report");
+  await removeCopies(state.documents.slice(1));
+  await service.close();
+
+  // Once the project file is gone too, the note says which file to add back.
+  await rm(path.join(root, "open.stl"));
+  service = await createService({ projectRoot: root, viewId: "dropped", log: () => {} });
+  await service.initialize();
+  assert.deepEqual(service.getState().droppedFiles, [{ id: "ref1", name: "open.stl", file: "open.stl" }]);
+  assert.match((await service.summary()).note, /\(open\.stl: add it back with add_file file=open\.stl\)/);
 });
 
 test("a collapsed facet keeps the mesh closed, and points far from it are refused", { timeout: 120_000 }, async (t) => {

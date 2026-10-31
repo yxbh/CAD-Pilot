@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -43,15 +43,18 @@ test("snapshot preparation keeps immutable cache bytes and returns fresh measure
   legacy.warnings = ["Zero-area tessellation triangles were omitted."];
   const oldBytes = JSON.stringify(legacy);
   await writeFile(cache, oldBytes);
-  const beforeCache = await stat(cache), beforeSource = await stat(first.inputFile);
+  // Both were last used a month ago, long enough for storage cleanup to remove them.
+  const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  await utimes(cache, month, month);
+  await utimes(first.inputFile, month, month);
   const second = await prepareModelSnapshot({ ...input, python, displayName: "Renamed source.step" });
   assert.equal(await readFile(cache, "utf8"), oldBytes);
   assert.equal(second.model.topologyRevision, first.model.topologyRevision);
   assert.equal(second.inputName, "Renamed source.step");
   assert.deepEqual(second.measuredCleanup, first.measuredCleanup);
   assert.deepEqual(await readdir(input.modelDir), [first.modelCache]);
-  assert.equal((await stat(cache)).mtimeMs, beforeCache.mtimeMs);
-  assert.equal((await stat(first.inputFile)).mtimeMs, beforeSource.mtimeMs);
+  // Reuse refreshes their time (not their bytes) before checking them, so a prune running meanwhile keeps them.
+  for (const file of [cache, first.inputFile]) assert.ok(Date.now() - (await stat(file)).mtimeMs < 60_000, `${path.basename(file)} was reused without being marked used`);
 });
 
 test("failed or mismatched conversion cannot publish a cache and removes its temporary output", async (t) => {
@@ -144,4 +147,17 @@ test("uploaded bytes use the same private preparation without a prior retained i
   });
   assert.equal(await readFile(imported.inputFile, "utf8"), input.sourceText);
   assert.deepEqual(await readdir(input.modelDir), [imported.modelCache]);
+});
+
+test("a file that is not there is named in one plain sentence", async (t) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-missing-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  await assert.rejects(validateModelPath(path.join(root, "outputs", "missing.stl"), root),
+    { code: "file_not_found", message: `There is no file ${path.join("outputs", "missing.stl")} in the project.` });
+  // A Windows-style path is one file name with backslashes in it on macOS and Linux.
+  if (path.sep === "/") {
+    await assert.rejects(validateModelPath(path.join(root, "outputs\\pin.stl"), root),
+      { code: "file_not_found", message: "There is no file outputs\\pin.stl in the project. Separate folders with / here." });
+  }
 });
