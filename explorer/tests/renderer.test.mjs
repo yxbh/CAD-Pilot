@@ -223,7 +223,7 @@ async function routingFixture(t, viewId, stubOptions) {
 }
 
 test("views without a viewer page start the background renderer; an answering page is given a moment first", { timeout: 60_000 }, async (t) => {
-  const { service, stub, post, report, page } = await routingFixture(t, "routing");
+  const { service, stub, post, report, page, until } = await routingFixture(t, "routing");
   const confirming = service.confirmRendered();
   await delay(50);
   assert.equal(stub.calls.ensure, 1, "with no viewer page the background renderer starts at once");
@@ -234,7 +234,11 @@ test("views without a viewer page start the background renderer; an answering pa
   assert.match(confirmed.note, /No viewer page is open/);
 
   await page("viewer", "person");
+  const before = service.getState().revision;
   const viewing = service.execute("fit_view", {}, { rendered: true });
+  // A page draws the view it is sent, which comes once the view is saved: on Windows that can take longer than the
+  // moment below, and a report of the view before it releases nothing.
+  await until(() => service.getState().revision > before, "the view was not saved");
   await delay(300);
   assert.equal(stub.calls.ensure, 1, "an open viewer page gets a moment to answer");
   assert.equal((await report("viewer")).status, 200);
