@@ -77,22 +77,24 @@ GUIDANCE = [
     *sorted(SKILLS.rglob("*.md")),
 ]
 
-# Each rule is stated once, in the file that owns it, and linked from the others. The markers are phrases that a
-# statement of the rule uses, so they must appear in its home and nowhere else in the guidance. The Explorer's README
-# is the viewer's reference manual, not guidance, and may describe the behaviour these rules rely on.
+# Each rule is stated once, in the file that owns it, and linked from the others. The markers are phrases distinctive
+# to a statement of the rule, so they must appear in its home and nowhere else in the guidance. They catch a rule
+# copied into another file, not one restated in other words, so link to a rule's home rather than rewording it. The
+# Explorer's README is the viewer's reference manual, not guidance, and may describe the behaviour these rules rely on.
 RULE_HOMES = {
     "showing a model": (
         SKILLS / "visual-review/SKILL.md",
         ["`cad-explorer` canvas", "`projectRoot`", "run the same `open` again", "only viewer"],
     ),
     "assembly steps": (SKILLS / "visual-review/SKILL.md", ["gen_assembly()", "explorer/python/assembly.py", "geometric screen"]),
-    "reference systems": (SKILLS / "visual-review/SKILL.md", ["cad_explorer_inspect", "never mix", "belongs to the revision"]),
+    "reference systems": (SKILLS / "visual-review/SKILL.md", ["cad_explorer_inspect", "numbering systems never mix", "belongs to the revision"]),
     "finding the workbench": (SKILLS / "cad/SKILL.md", ["three levels above"]),
     "running the tools": (SKILLS / "cad/SKILL.md", ["sys.prefix", "relative to the STEP's folder"]),
     "unknowns": (SKILLS / "cad/SKILL.md", ["unknown until the user confirms"]),
     "feature preservation": (SKILLS / "cad/SKILL.md", ["Never shrink, drop or approximate"]),
     "evidence": (SKILLS / "cad/SKILL.md", ["Keep kinds of evidence apart", "has no verdict"]),
-    "approval to print or publish": (SKILLS / "cad/SKILL.md", ["G-code"]),
+    "approval to print or publish": (SKILLS / "cad/SKILL.md", ["start a print or publish a model"]),
+    "generator contract": (SKILLS / "cad/references/step-generation.md", ["output paths belong on the command line"]),
     "fresh selectors": (SKILLS / "cad/references/inspection-and-validation.md", ["never reuse or translate a saved `@cad` path"]),
     "print handoff": (SKILLS / "cad/references/print.md", ["print-profile.json", "3MF path every time"]),
     "fit rule": (SKILLS / "fdm-design/SKILL.md", ["The model states the fit"]),
@@ -112,13 +114,23 @@ def test_each_rule_is_stated_in_its_home_only(rule):
                 assert marker not in text, f"{document}: restates the {rule} rule ({marker!r}); link to {home.name}"
 
 
-def _anchor(heading):
-    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+def _without_fences(text):
+    return re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+
+
+def _anchors(text):
+    """The anchors GitHub gives a Markdown file's headings: none inside fenced blocks, and -1, -2 on repeats."""
+    anchors, seen = set(), {}
+    for heading in re.findall(r"^#+ (.+)$", _without_fences(text), re.MULTILINE):
+        anchor = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+        anchors.add(f"{anchor}-{seen[anchor]}" if anchor in seen else anchor)
+        seen[anchor] = seen.get(anchor, 0) + 1
+    return anchors
 
 
 def test_guidance_links_resolve():
     for document in [*GUIDANCE, ROOT / "explorer/README.md"]:
-        text = re.sub(r"```.*?```", "", document.read_text(encoding="utf-8"), flags=re.DOTALL)
+        text = _without_fences(document.read_text(encoding="utf-8"))
         for target in re.findall(r"\]\(([^)\s]+)\)", text):
             if re.match(r"[a-z]+:", target):
                 continue
@@ -129,8 +141,7 @@ def test_guidance_links_resolve():
                 # A skill loaded through ~/.claude/skills/<name> sees only its sibling skills there.
                 assert linked.is_relative_to(SKILLS), f"{document}: {target} leaves the skills folder"
             if anchor and linked.suffix == ".md":
-                headings = re.findall(r"^#+ (.+)$", linked.read_text(encoding="utf-8"), re.MULTILINE)
-                assert anchor in {_anchor(heading) for heading in headings}, f"{document}: no heading for {target}"
+                assert anchor in _anchors(linked.read_text(encoding="utf-8")), f"{document}: no heading for {target}"
 
 
 def test_viewer_guidance_keeps_its_boundaries():
@@ -197,8 +208,8 @@ def _unlink_folder(link):
 def test_install_links_the_personal_skills_folder(tmp_path):
     skills = tmp_path / "skills"
 
-    def install():
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path)}
+    def install(config=tmp_path):
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config)}
         command = [shutil.which("node"), str(ROOT / "tools/install-skills.mjs")]
         return subprocess.run(command, env=env, capture_output=True, text=True, timeout=60, check=False)
 
@@ -230,6 +241,22 @@ def test_install_links_the_personal_skills_folder(tmp_path):
     assert result.returncode == 1
     assert (skills / "cad/notes.md").read_text(encoding="utf-8") == "mine"
     assert all(linked(name) for name in _skill_names() if name != "cad")
+
+    # A skills folder that is itself a link to a checkout's skills is reported as such, and no skill in it is touched.
+    linked_checkout = tmp_path / "linked/.agents/skills"
+    (linked_checkout / "cad").mkdir(parents=True)
+    whole = tmp_path / "whole"
+    whole.mkdir()
+    _link_folder(linked_checkout, whole / "skills")
+    result = install(whole)
+    assert result.returncode == 1 and "remove that link" in result.stderr and "move it aside" not in result.stderr
+    assert sorted(entry.name for entry in linked_checkout.iterdir()) == ["cad"]
+    _unlink_folder(whole / "skills")
+
+
+def test_anchors_are_githubs():
+    text = "# Fit\n\n```python\n# not a heading\n```\n\n## Fit\n\n## The lid's rim: 5 mm\n"
+    assert _anchors(text) == {"fit", "fit-1", "the-lids-rim-5-mm"}
 
 
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])

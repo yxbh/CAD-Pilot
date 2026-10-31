@@ -2,7 +2,7 @@
 // Each <config>/skills/<name> becomes a link to .agents/skills/<name> (a junction on Windows, which needs no extra
 // rights), so the checkout stays the only copy. A link to some checkout's .agents/skills/<name> is replaced; any
 // other entry with a skill's name is left alone and reported.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,11 +22,20 @@ const names = readdirSync(skills, { withFileTypes: true })
 if (existsSync(path.join(root, ".git")) && statSync(path.join(root, ".git")).isFile()) {
   console.warn(`${root} is a linked worktree: run this from the main checkout again once you are done with it`);
 }
-mkdirSync(folder, { recursive: true });
 const isSkillLink = (target, name) => {
   const parts = path.resolve(folder, target).split(/[\\/]+/);
   return parts.slice(-3).join("/") === `.agents/skills/${name}`;
 };
+// The skills folder itself linked to a checkout's .agents/skills already loads that checkout's skills, and what is
+// inside it are that checkout's own skill folders, so nothing in it may be replaced or moved.
+if (existsSync(folder) && lstatSync(folder).isSymbolicLink()) {
+  const target = realpathSync(folder);
+  if (target.split(/[\\/]+/).slice(-2).join("/") === ".agents/skills") {
+    console.error(`${folder} is a link to ${target}; remove that link (not the folder it points to) and run this again to link each skill instead`);
+    process.exit(1);
+  }
+}
+mkdirSync(folder, { recursive: true });
 let refused = 0;
 for (const name of names) {
   const target = path.join(skills, name);
