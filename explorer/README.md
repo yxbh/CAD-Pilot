@@ -105,7 +105,7 @@ Each step has a `title`, an optional `note`, `parts` and a `from` offset in mode
 
 The bottom bar's Assembly steps button opens them: step 0 shows every sequenced part waiting at its offset and the last step is assembled; Exploded keeps waiting parts visible with dashed paths, and Build up hides them until their step. Steps animate without moving the camera, and render reports and captures wait until a step has finished moving. Agents use `do set_step step=2`, `mode=buildup` and `off=true` (`step=null` also works from the command line). A nonzero explosion or Reassemble turns the sequence off.
 
-`python/assembly.py` writes the file from a design source's `gen_assembly()`, returning `{"steps": [...]}`. It loads the source as the cad skill's tools do and matches `parts` against the generated STEP's parts by the cad skill's names and rules. After generating the STEP, run it from the design root with the workbench's Python interpreter:
+`python/assembly.py` writes the file from a design source's `gen_assembly()`, returning `{"steps": [...]}`. It loads the source as the cad skill's tools do and matches `parts` against the generated STEP's parts by the cad skill's names and rules. After generating the STEP, run it from the design root with the same interpreter as the cad tools:
 
 ```text
 python "$Workbench/explorer/python/assembly.py" source/stop.py --step outputs/stop.step --check

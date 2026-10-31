@@ -13,7 +13,7 @@ Do not use it for render-only concept art, CAM toolpaths, engineering certificat
 
 ## Finding the workbench
 
-This skill lives in a CAD-Pilot checkout at `<workbench>/.agents/skills/cad`. When it was loaded through a link, such as `~/.claude/skills/cad`, resolve the link first (`python -c "import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())" <skill dir>`): `<cad>` is the resolved skill directory and `<workbench>` is three levels above it. A design project's instructions may name the workbench instead. Never write design output inside the workbench or this skill.
+This skill lives in a CAD-Pilot checkout at `<workbench>/.agents/skills/cad`. When it was loaded through a link, such as `~/.claude/skills/cad`, resolve the link first (`node -e "console.log(require('fs').realpathSync(process.argv[1]))" <skill dir>`): `<cad>` is the resolved skill directory and `<workbench>` is three levels above it. A design project's instructions may name the workbench instead. Never write design output inside the workbench or this skill.
 
 ## Running the tools
 

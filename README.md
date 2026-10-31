@@ -28,13 +28,13 @@ In the Copilot desktop, reload project extensions and open **CAD Explorer**.
 
 ## Use the skills in other projects
 
-Claude Code sessions started in this checkout load the skills through `.claude/skills`, which links each one to `.agents/skills`. To load them in sessions started in any other folder, link your personal skills folder to this checkout once, from the workbench root:
+Claude Code sessions started in this checkout load the skills through `.claude/skills`, which links each one to `.agents/skills`; on Windows without Git symlink support (`core.symlinks`) those links are checked out as text files, and the personal links below take their place. To load the skills in sessions started in any other folder, link your personal skills folder to your main checkout once, from its root:
 
 ```text
 node tools/install-skills.mjs
 ```
 
-It links `~/.claude/skills/<name>` (or `$CLAUDE_CONFIG_DIR/skills/<name>`) to `.agents/skills/<name>` for each skill, as a junction on Windows, so updating the checkout updates every project and nothing is copied. It replaces its earlier links and refuses to touch anything else; run it again after adding a skill or moving the checkout, and delete the links to remove them. A new session then lists `cad`, `visual-review` and `fdm-design`; from a terminal, the first line of `claude -p "hello" --output-format stream-json --verbose` names the loaded skills under `skills`.
+It links `~/.claude/skills/<name>` (or `$CLAUDE_CONFIG_DIR/skills/<name>`) to `.agents/skills/<name>` for each skill, as a junction on Windows, so updating the checkout updates every project and nothing is copied. It replaces links to any checkout's `.agents/skills/<name>` and refuses to touch anything else; run it again after adding a skill or moving the checkout, and delete the links to remove them. Personal skills take precedence over a checkout's own, so once they are installed every session, including one in another clone or worktree of this repository, uses the installed checkout's skills: to try a skill change from a worktree, run the installer there, and again from the main checkout afterwards. A new session then lists `cad`, `visual-review` and `fdm-design`; from a terminal, the first line of `claude -p "hello" --output-format stream-json --verbose` names the loaded skills under `skills`.
 
 GitHub Copilot reads `.agents/skills` in this checkout; its hosts that also read the personal `~/.claude/skills` folder pick up the same links. In a design project the skills locate the workbench from their own path, as the cad skill's [Finding the workbench](.agents/skills/cad/SKILL.md#finding-the-workbench) describes, or from a path the project's instructions give.
 

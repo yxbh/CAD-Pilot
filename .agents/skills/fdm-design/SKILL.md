@@ -39,7 +39,7 @@ Use this skill alongside the cad and visual-review skills, not instead of them. 
 - Distinguish unsupported islands and cantilevers from bridges anchored at both ends; span, direction, anchor length, cooling, material and speed all matter, and no bridge length holds for every printer.
 - Compare reorientation, a printable slope or chamfer, a different opening profile, splitting the part, and supports. Preserve a required opening envelope and ask before changing its functional shape.
 - Keep supports on where the chosen orientation needs them; turn them off for a part only with a reason the user accepts. An interface layer in another material, such as PLA under PETG, separates cleanly when the print profile sets one.
-- Check that supports can be reached and removed, especially inside ducts, blind cavities and enclosed assemblies, and keep their contact off fit-critical or cosmetic surfaces where possible.
+- Check that supports can be reached and removed, especially inside ducts, blind cavities and enclosed assemblies, and keep their contact off fit-critical or cosmetic surfaces where possible; weigh the trade-off rather than defaulting to tree supports.
 - Bed-facing roundovers make difficult lower overhangs; compare a chamfer or another orientation, but do not remove a load-bearing fillet or mating datum only to ease printing.
 
 ### Fits, Holes and Tolerance Budgets
@@ -54,19 +54,19 @@ Use this skill alongside the cad and visual-review skills, not instead of them. 
 ### First Layers and Bed Fit
 
 - First-layer spreading (elephant foot) can obstruct mating surfaces near the bed. The process's elephant-foot compensation corrects it, and the project report gives the value in force: check a printed first layer before changing it, do not also model a bottom relief, and check thin features and brims, which the compensation thins.
-- Check the oriented part with supports, brim, purge structures and machine clearances against the usable build area, not a nominal rectangle; excluded regions and multi-tool modes shrink it.
+- Check the oriented part with supports, brim, purge structures and machine clearances against the usable build area, not a nominal rectangle; excluded regions, multi-tool modes and sequential-print clearance shrink it.
 - Consider tall or narrow parts, small contact patches, large flat corners and material-specific adhesion; fitting the bed does not establish adhesion or freedom from warping.
 
 ### Fasteners, Inserts and Snap-Fits
 
-- For heat-set inserts, get the exact supplier part and its recommended receiving hole and installation guidance; thread size alone does not set the outer diameter, pilot hole, taper, depth or boss. Check the remaining boss wall, screw length and bottoming, tool access and heat near other features, and test a coupon in the chosen filament: insertion success does not prove pull-out or torque strength.
+- For heat-set inserts, get the exact supplier part and its recommended receiving hole and installation guidance; thread size alone does not set the outer diameter, pilot hole, taper, depth or boss, so one M3 boss recipe does not fit every insert family. Check the remaining boss wall, screw length and bottoming, tool access and heat near other features, and test a coupon in the chosen filament: insertion success does not prove pull-out or torque strength.
 - Captive nuts and screw joints need installation access, retention and a load path that does not split layers. Thread-forming screws, clearance bolts, printed threads and inserts need different holes; identify which is intended.
 - Snap-fits and flexures need a defined deflection, engagement, release path, cycle count, orientation and material behaviour; avoid abrupt root corners, and compare a longer arm or another mechanism when strain is high. Test representative tabs for insertion force, permanent set, cycling and creep; a printed living hinge does not behave like a moulded one.
 
 ### Material and Process Selection
 
 - Choose material after the service conditions and printer capability are known. PLA, PETG, ASA/ABS, PA, PC and TPU are families with widely varying formulations; prefer the manufacturer's technical data and a tested preset over a generic table.
-- Printing temperatures are not service limits, and glass-transition or heat-deflection results are not continuous-use ratings under load. Consider creep, fatigue, impact, UV, moisture, dimensional change and cleaning chemicals where relevant, and the printer's enclosure, temperature limits, abrasive-filament compatibility and drying needs.
+- Printing temperatures are not service limits, and glass-transition or heat-deflection results are not continuous-use ratings under load. Consider creep, fatigue, impact, UV, moisture, dimensional change and cleaning chemicals where relevant, and the printer's enclosure, temperature limits, abrasive-filament compatibility and drying needs. Filled materials may add stiffness without adding toughness or interlayer strength.
 - Give one reasoned recommendation and a fallback when useful. Never invent universal shrink factors, safe loads or insert installation temperatures.
 
 ## Before Printing

@@ -86,7 +86,7 @@ RULE_HOMES = {
         ["`cad-explorer` canvas", "`projectRoot`", "run the same `open` again", "only viewer"],
     ),
     "assembly steps": (SKILLS / "visual-review/SKILL.md", ["gen_assembly()", "explorer/python/assembly.py", "geometric screen"]),
-    "reference systems": (SKILLS / "visual-review/SKILL.md", ["cad_explorer_inspect", "never mix"]),
+    "reference systems": (SKILLS / "visual-review/SKILL.md", ["cad_explorer_inspect", "never mix", "belongs to the revision"]),
     "finding the workbench": (SKILLS / "cad/SKILL.md", ["three levels above"]),
     "running the tools": (SKILLS / "cad/SKILL.md", ["sys.prefix", "relative to the STEP's folder"]),
     "unknowns": (SKILLS / "cad/SKILL.md", ["unknown until the user confirms"]),
@@ -125,6 +125,9 @@ def test_guidance_links_resolve():
             path, _, anchor = target.partition("#")
             linked = (document.parent / path).resolve() if path else document
             assert linked.exists(), f"{document}: broken link {target}"
+            if document.parent != SKILLS and document.is_relative_to(SKILLS):
+                # A skill loaded through ~/.claude/skills/<name> sees only its sibling skills there.
+                assert linked.is_relative_to(SKILLS), f"{document}: {target} leaves the skills folder"
             if anchor and linked.suffix == ".md":
                 headings = re.findall(r"^#+ (.+)$", linked.read_text(encoding="utf-8"), re.MULTILINE)
                 assert anchor in {_anchor(heading) for heading in headings}, f"{document}: no heading for {target}"
@@ -132,7 +135,7 @@ def test_guidance_links_resolve():
 
 def test_viewer_guidance_keeps_its_boundaries():
     skill = (SKILLS / "visual-review/SKILL.md").read_text(encoding="utf-8")
-    for required in ("available", "cadproto:v2", "@cad[", "scripts/inspect", "set_step", "capture", "render"):
+    for required in ("when it is available", "cadproto:v2", "@cad[", "scripts/inspect", "set_step", "`capture [", "`render <file>"):
         assert required in skill
     assert "do not insert or send chat messages" in skill
     assert "separate VS Code extension" in skill
@@ -142,7 +145,8 @@ def test_viewer_guidance_keeps_its_boundaries():
     assert "visual-review" in (cad / "SKILL.md").read_text(encoding="utf-8")
     for document in [*GUIDANCE, cad / "agents/openai.yaml"]:
         text = document.read_text(encoding="utf-8")
-        for retired in ("imported browser", "imported viewer", "ensure-dev", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178"):
+        retired_terms = ("imported browser", "imported viewer", "imported inspector", "ensure-dev", "dev:ensure", "EXPLORER_ROOT_DIR", "127.0.0.1:4178")
+        for retired in retired_terms:
             assert retired not in text, f"{document}: still routes to the removed viewer ({retired})"
         if document.is_relative_to(cad):
             for retired in ("scripts/render", "npm --prefix explorer"):
@@ -153,6 +157,7 @@ def test_dependency_locks_stay_local():
     assert "/uv.lock" in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "/package-lock.json" in (ROOT / "explorer/.gitignore").read_text(encoding="utf-8").splitlines()
     assert (ROOT / "pyproject.toml").is_file() and (ROOT / "explorer/package.json").is_file()
+    assert "Git-ignored" in (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     for document in (ROOT / "README.md", ROOT / "explorer/README.md"):
         commands = "\n".join(re.findall(r"```powershell\n(.*?)```", document.read_text(encoding="utf-8"), re.DOTALL))
         assert "npm install" in commands
@@ -175,28 +180,56 @@ def test_claude_code_finds_each_skill_through_one_link():
             assert (link / "SKILL.md").is_file()
 
 
+def _link_folder(target, link):
+    if os.name == "nt":  # a junction, as the installer makes, needs no symlink privilege
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def _unlink_folder(link):
+    os.rmdir(link) if os.name == "nt" else os.unlink(link)
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js runs the installer")
 def test_install_links_the_personal_skills_folder(tmp_path):
+    skills = tmp_path / "skills"
+
     def install():
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path)}
         command = [shutil.which("node"), str(ROOT / "tools/install-skills.mjs")]
         return subprocess.run(command, env=env, capture_output=True, text=True, timeout=60, check=False)
 
-    for _ in range(2):  # a second run replaces its own links
+    def linked(name):
+        return Path(os.path.realpath(skills / name)) == Path(os.path.realpath(SKILLS / name))
+
+    # A link to another checkout's copy of the skill is replaced, on the first run and the second.
+    other_checkout = tmp_path / "other/.agents/skills/cad"
+    other_checkout.mkdir(parents=True)
+    skills.mkdir()
+    _link_folder(other_checkout, skills / "cad")
+    for _ in range(2):
         result = install()
         assert result.returncode == 0, result.stderr
-        for name in _skill_names():
-            assert Path(os.path.realpath(tmp_path / "skills" / name)) == Path(os.path.realpath(SKILLS / name))
-    other = tmp_path / "skills/other"
-    other.mkdir()
-    (tmp_path / "skills/cad").unlink() if os.path.islink(tmp_path / "skills/cad") else os.rmdir(tmp_path / "skills/cad")
-    (tmp_path / "skills/cad").mkdir()
-    (tmp_path / "skills/cad/notes.md").write_text("mine", encoding="utf-8")
+        assert all(linked(name) for name in _skill_names())
+
+    # Anything else with a skill's name is refused and kept, and the other skills are still linked.
+    own = tmp_path / "my-cad"
+    own.mkdir()
+    _unlink_folder(skills / "cad")
+    _link_folder(own, skills / "cad")
+    result = install()
+    assert result.returncode == 1 and "not a link to a CAD-Pilot skill" in result.stderr
+    assert Path(os.path.realpath(skills / "cad")) == Path(os.path.realpath(own))
+    _unlink_folder(skills / "cad")
+    (skills / "cad").mkdir()
+    (skills / "cad/notes.md").write_text("mine", encoding="utf-8")
     result = install()
     assert result.returncode == 1
-    assert "is not a link" in result.stderr
-    assert (tmp_path / "skills/cad/notes.md").read_text(encoding="utf-8") == "mine"
-    assert other.is_dir()
+    assert (skills / "cad/notes.md").read_text(encoding="utf-8") == "mine"
+    assert all(linked(name) for name in _skill_names() if name != "cad")
 
 
 @pytest.mark.parametrize("output_directory", ["outputs", "artifacts/print files", "."])
