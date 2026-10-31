@@ -71,22 +71,23 @@ test("render writes a STEP's image without touching the project's viewer or save
   const everything = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "*");
   assert.equal(everything.code, 1);
   assert.match(everything.stderr, /would hide every part/);
-  // An orthographic view is fitted to the image the same way at the default size as at a requested one of the same
-  // shape, and shows viewHeight / height millimetres per pixel: twice as many at half the size. Seen from the front, the
+  // An orthographic view is fitted to the image the same way at the default size (1280x800) as at a requested one, and
+  // shows viewHeight / height millimetres per pixel across as well as down, whatever the shape. Seen from the front, the
   // demo's base plate (python/create_demo.py BASE_WIDTH) is its widest part, 100 mm across.
   const fronts = [];
-  for (const size of [[], ["--size", "640x400"]]) {
+  for (const size of [[], ["--size", "800x600"]]) {
     const front = await explorer("render", "demo.step", "docs/front.png", ...size, "--view", "front", "--projection", "orthographic", "--background", "#ffffff");
     assert.equal(front.code, 0, front.stderr);
     const { camera, width, height } = front.json();
     assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
     assert.deepEqual([camera.view, camera.projection], ["front", "orthographic"]);
-    fronts.push({ width, height, viewHeight: camera.viewHeight, pixel: camera.viewHeight / height, drawn: await drawnWidth(path.join(project, "docs", "front.png")) });
+    const pixel = camera.viewHeight / height;
+    fronts.push({ width, height, viewHeight: camera.viewHeight, pixel, millimetres: await drawnWidth(path.join(project, "docs", "front.png")) * pixel });
   }
-  const [full, half] = fronts;
-  assert.deepEqual([[full.width, full.height], [half.width, half.height]], [[1280, 800], [640, 400]]);
-  assert.ok(Math.abs(full.viewHeight / half.viewHeight - 1) < 1e-9, `view heights ${full.viewHeight} and ${half.viewHeight} mm`);
-  assert.ok(Math.abs(full.drawn / full.width - half.drawn / half.width) <= 2 / half.width, `drawn ${full.drawn} of ${full.width} and ${half.drawn} of ${half.width} pixels`);
-  assert.ok(Math.abs(half.pixel / full.pixel - 2) < 1e-9, "half the size, twice the millimetres per pixel");
-  assert.ok(Math.abs(half.drawn * half.pixel - 100) <= 2 * half.pixel, `${half.drawn * half.pixel} mm drawn at ${half.pixel} mm per pixel`);
+  const [full, small] = fronts;
+  assert.deepEqual([[full.width, full.height], [small.width, small.height]], [[1280, 800], [800, 600]]);
+  assert.ok(Math.abs(full.viewHeight / small.viewHeight - 1) < 1e-9, `view heights ${full.viewHeight} and ${small.viewHeight} mm`);
+  // Each measurement is good to two of its own pixels.
+  assert.ok(Math.abs(full.millimetres - small.millimetres) <= 2 * (full.pixel + small.pixel), `${full.millimetres} and ${small.millimetres} mm drawn`);
+  assert.ok(Math.abs(small.millimetres - 100) <= 2 * small.pixel, `${small.millimetres} mm drawn at ${small.pixel} mm per pixel`);
 });

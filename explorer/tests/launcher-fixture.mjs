@@ -46,7 +46,6 @@ export async function pngSize(file) {
 export async function launcherFixture(t) {
   await assertBuilt();
   const runtimeRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-launcher-")));
-  await cp(await demoTemplate(), runtimeRoot, { recursive: true });
   const project = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad design ")));
   const env = { ...process.env, CAD_EXPLORER_RUNTIME_ROOT: runtimeRoot };
   delete env.CAD_EXPLORER_VIEW;
@@ -56,5 +55,6 @@ export async function launcherFixture(t) {
     await rm(runtimeRoot, { recursive: true, force: true });
     await rm(project, { recursive: true, force: true });
   });
+  await cp(await demoTemplate(), runtimeRoot, { recursive: true });
   return { runtimeRoot, project, env, explorer };
 }
