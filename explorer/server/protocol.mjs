@@ -27,7 +27,7 @@ export function initialState() {
     assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
     activeReviewId: null, camera: null, cameraPinned: false,
-    projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true, analysis: defaultAnalysis(),
+    projection: "perspective", appearance: "inspect", materialFinish: "matte", showEdges: true, analysis: defaultAnalysis(),
     section: { enabled: false, axis: "x", position: 0, flipped: false },
     // Where the main file came from: project-relative path (empty for uploads and the demo), its modified time, size
     // and SHA-256, which is the revision a person is told about; documentRevision identifies the whole view.
@@ -258,7 +258,7 @@ export function changeView(state, model, name, input = {}) {
         next.appearance = input.mode;
       }
       if (input.finish !== undefined) {
-        if (!MATERIAL_FINISHES.includes(input.finish)) throw new PrototypeError("bad_finish", "Choose plastic, satin, polished or rubber");
+        if (!MATERIAL_FINISHES.includes(input.finish)) throw new PrototypeError("bad_finish", "Choose matte, plastic, satin, polished or rubber");
         next.materialFinish = input.finish;
       }
       if (input.showEdges !== undefined) {

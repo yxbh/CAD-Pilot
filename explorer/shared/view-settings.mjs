@@ -1,6 +1,6 @@
 export const VIEW_PRESETS = ["iso", "top", "bottom", "front", "back", "right", "left"];
 export const PROJECTIONS = ["perspective", "orthographic"];
-export const MATERIAL_FINISHES = ["plastic", "satin", "polished", "rubber"];
+export const MATERIAL_FINISHES = ["matte", "plastic", "satin", "polished", "rubber"];
 // Inspect is for reading geometry; Studio lights it with soft boxes; ray traced path-traces Studio's light and finishes.
 export const APPEARANCES = ["inspect", "studio", "raytraced"];
 

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { appearanceFor } from '../src/appearance.ts'
 import type { MaterialFinish } from '../src/appearance.ts'
 
-const finishes: MaterialFinish[] = ['plastic', 'satin', 'polished', 'rubber']
+const finishes: MaterialFinish[] = ['matte', 'plastic', 'satin', 'polished', 'rubber']
 const unitParameters = ['roughness', 'metalness', 'clearcoat', 'clearcoatRoughness'] as const
 
 test('appearance presets contain only bounded physical surface parameters', () => {
@@ -24,11 +24,15 @@ test('appearance presets contain only bounded physical surface parameters', () =
 })
 
 test('finishes produce visibly distinct diffuse and reflective responses', () => {
+  const matte = appearanceFor('matte')
   const plastic = appearanceFor('plastic')
   const satin = appearanceFor('satin')
   const polished = appearanceFor('polished')
   const rubber = appearanceFor('rubber')
 
+  assert.equal(matte.metalness, 0)
+  assert.equal(matte.clearcoat, 0)
+  assert.ok(matte.roughness - plastic.roughness >= 0.15 && rubber.roughness - matte.roughness >= 0.2)
   assert.equal(plastic.metalness, 0)
   assert.ok(plastic.clearcoat >= 0.15)
   assert.ok(satin.metalness >= 0.6)

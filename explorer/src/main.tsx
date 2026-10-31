@@ -235,9 +235,9 @@ export function App({ host }: { host: ViewerHost }) {
       {appearanceOpen && !drawingActive && <div className="appearance-popover" role="dialog" aria-label="Appearance settings"
         onKeyDown={(event) => { if (event.key === "Escape") setAppearanceOpen(false); }}>
         <div className="panel-heading"><strong>Appearance</strong><IconButton label="Close appearance settings" icon={X} onClick={() => setAppearanceOpen(false)} /></div>
-        <label>Finish <select aria-label="Studio finish" disabled={state?.appearance === "inspect"} value={state?.materialFinish ?? "plastic"}
+        <label>Finish <select aria-label="Studio finish" disabled={state?.appearance === "inspect"} value={state?.materialFinish ?? "matte"}
           onChange={(event) => run("set_appearance", { finish: event.target.value })}>
-          <option value="plastic">Plastic</option><option value="satin">Satin metal</option>
+          <option value="matte">Matte</option><option value="plastic">Plastic</option><option value="satin">Satin metal</option>
           <option value="polished">Polished metal</option><option value="rubber">Rubber</option>
         </select></label>
         <label><input type="checkbox" checked={state?.showEdges ?? true} onChange={(event) => run("set_appearance", { showEdges: event.target.checked })} /> Outlines</label>
@@ -277,8 +277,8 @@ export function App({ host }: { host: ViewerHost }) {
             <span>{activeReview ? `${activeReview.drawing.present.length} marks` : ""}</span>
             <span>{activeReview ? activeReview.pose.step !== undefined ? `Assembly step ${activeReview.pose.step}` : `${Math.round(activeReview.pose.explode * 100)}% exploded` : ""}</span>
             <span>{activeReview?.pose.camera.projection === "orthographic" ? "Orthographic (parallel)" : "Perspective"}</span>
-            <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "plastic"}`
-              : activeReview?.pose.appearance === "raytraced" ? `Ray traced / ${activeReview.pose.materialFinish ?? "plastic"}` : "Inspect"}</span>
+            <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "matte"}`
+              : activeReview?.pose.appearance === "raytraced" ? `Ray traced / ${activeReview.pose.materialFinish ?? "matte"}` : "Inspect"}</span>
             <span>{activeReview?.pose.section?.enabled
               ? `${activeReview.pose.section.axis.toUpperCase()} section at ${activeReview.pose.section.position.toFixed(2)} mm${activeReview.pose.section.flipped ? " / flipped" : ""}`
               : "Section off"}</span>

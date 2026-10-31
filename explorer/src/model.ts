@@ -117,7 +117,7 @@ export type ViewState = {
   cameraPreset: "iso" | "top" | "bottom" | "front" | "back" | "right" | "left" | `${number}:${number}`;
   projection: "perspective" | "orthographic";
   appearance: "inspect" | "studio" | "raytraced";
-  materialFinish: "plastic" | "satin" | "polished" | "rubber";
+  materialFinish: "matte" | "plastic" | "satin" | "polished" | "rubber";
   showEdges: boolean;
   analysis: AnalysisSettings;
   section: SectionSettings;
