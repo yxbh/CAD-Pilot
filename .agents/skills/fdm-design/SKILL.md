@@ -77,7 +77,7 @@ Before a print whose fit or size matters, and always before a calibration coupon
 - Flow dynamics are calibrated for this filament on this printer and nozzle, with Bambu Studio's flow dynamics calibration or the printer's own at the start of a print. Uncalibrated flow bulges corners and changes wall widths.
 - The elephant-foot compensation in force suits the first layer.
 
-These are the user's checks; the tools do not verify them. Measured compensation holds only for the printer, nozzle, filament and settings it was measured with. The project report says when a part's filament preset or process settings differ from those (the cad skill's `references/print.md`); measure again then, and after changing to a spool its preset does not tell apart, such as another brand under a generic preset.
+These are the user's checks; the tools do not verify them. Measured compensation holds only for the printer, nozzle, filament and settings it was measured with. The project report says when a part's filament preset, process preset or the few slicing settings the cad skill's `references/print.md` names differ from those; measure again then. It does not compare wall settings in `process_settings`, such as wall line width or wall order, which also move hole and outer edges: measure again after changing those, and after changing to a spool its preset does not tell apart, such as another brand under a generic preset.
 
 ## Evidence and Handoff
 

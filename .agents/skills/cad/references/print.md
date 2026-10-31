@@ -89,7 +89,7 @@ A job file, conventionally `<name>.print.json` beside the project's print output
 
 Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent. The fdm-design skill's fit rule says why holes print small and why one offset per side corrects it; under that rule these two settings are the only correction for it.
 
-`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the process, the part's filament preset, the resolution or the closing radius differs from those the value was measured with: it holds only with those, so measure again or put them back.
+`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the process preset, the part's filament preset, the resolution or the closing radius differs from those the value was measured with: it holds only with those, so measure again or put them back.
 
 To measure a filament's compensation:
 
