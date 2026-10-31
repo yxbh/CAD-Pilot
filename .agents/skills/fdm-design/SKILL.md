@@ -1,6 +1,6 @@
 ---
 name: fdm-design
-description: 'Design and review parts for FDM/FFF 3D printing. Use before modeling or revising printable parts, selecting orientation or filament, assessing walls, bridges and overhangs, planning fit clearances, heat-set inserts or snap-fits, reviewing slicer results, or recording printer calibration. Complements the CAD and visual-review skills; it does not certify printability or control a printer.'
+description: 'Design and review parts for FDM/FFF 3D printing. Use before modeling or revising printable parts, selecting orientation or filament, assessing walls, bridges and overhangs, planning fit clearances, heat-set inserts or snap-fits, preparing a print project or reviewing slicer results, or recording printer calibration. Complements the CAD and visual-review skills; it does not certify printability or control a printer.'
 ---
 
 # FDM Design and Review
@@ -12,12 +12,12 @@ Use this skill alongside the chosen CAD engine and visual-review workflow, not a
 ## Workflow
 
 1. Understand the job in plain language: what it holds or mates to, where force acts, assembly/removal access, expected cycles, heat, sunlight, moisture, and the consequences of failure. Use a marked view or a simple question when the load path or feature is unclear.
-2. Read the project's confirmed printer, nozzle, filament, slicer preset, and calibration records. Missing values are unknown. A profile for another printer, spool, nozzle, orientation, or slicer setup is not evidence for this one. Do not infer the user's hardware from pasted research.
+2. Read the user's personal print profile (`~/.cad-pilot/print-profile.json`, described in the cad skill's `references/print.md`) and the project's confirmed printer, nozzle, filament, slicer preset, and calibration records. Missing values are unknown: ask the user rather than searching downloaded 3MFs or other projects for a printer, bed type or preset. A profile for another printer, spool, nozzle, orientation, or slicer setup is not evidence for this one. Do not infer the user's hardware from pasted research.
 3. Ask for facts that materially affect fit, function, or safe use. For a rough visual concept, proceed with explicitly labeled assumptions; do not block all co-design on a long questionnaire. Do not call that concept print-ready.
 4. Choose a provisional print orientation and material before committing to details. Compare strength, bed contact, surface finish, support removal, and critical interfaces. Keep the functional model frame separate from the print-placement transform.
 5. Apply the design checklist below to relevant features. Record numerical values with units, their source, applicability, and evidence status. Upstream defaults are proposals, not calibration or universal limits.
 6. Generate and inspect actual geometry with the CAD tools. Check the selected features after booleans, fillets, and export; a constant named wall_thickness does not establish the thinnest wall in the final part. Use section views for hidden features and share the affected area for ambiguous changes.
-7. Review the sliced result with the actual printer/material/process preset when available. Until slicing is performed, label slicer checks not checked. Do not invent a slicer command, estimate runtime as measured, or claim the current workbench build runs slicing.
+7. Hand the print off with the cad skill's `scripts/print` (`references/print.md`): it measures each part in its print orientation (bed contact, support, bridges and thin walls), writes one Bambu Studio project with named plates from the print profile, and slices it with Bambu Studio's command line. Until a slice check has run, label slicer checks not checked. Its times and weights are slicer estimates, not a measured print. Review the plates in Bambu Studio for what the command line cannot judge, such as seams and support access.
 8. Propose the smallest physical test needed: a fit coupon, insert boss, snap tab, bridge sample, or load-representative feature. Record the result and configuration before promoting a provisional allowance to measured calibration. Report evidence and remaining uncertainty separately.
 
 ## Design Checklist
@@ -39,6 +39,7 @@ Use this skill alongside the chosen CAD engine and visual-review workflow, not a
 - Define the angle convention when discussing limits: here a wall tilted 0 degrees from vertical is upright and 90 degrees is a horizontal underside. A 45-degree flag can be a provisional review trigger, never a universal pass/fail threshold.
 - Distinguish unsupported islands and cantilevers from bridges anchored at both ends. Assess span, bridge direction, anchor length, cooling, material, speed, and sag allowance. There is no universal supported bridge length for all printers.
 - Compare reorientation, a printable slope/chamfer, a different opening profile, splitting the part, and supports. Preserve the required opening envelope and ask before changing its functional shape.
+- Keep supports on where the chosen orientation needs them; turn them off for a part only with a reason the user accepts. An interface layer in another material, such as PLA under PETG, separates cleanly when the print profile sets one.
 - Check whether supports can be reached and removed, especially inside ducts, blind cavities, and enclosed assemblies. Keep support contact away from fit-critical or cosmetic surfaces where possible; document the trade-off instead of automatically choosing tree supports.
 - Bed-facing roundovers can create difficult lower overhangs; compare a chamfer or changed orientation. Do not remove a load-bearing fillet or mating datum solely for easier printing without reviewing the consequence.
 
@@ -78,7 +79,7 @@ Use separate statuses for each requirement: checked pass, checked fail, not chec
 Report these layers separately, identifying the model revision and actual printer/material/settings used where known:
 
 - Geometry: solid validity, intended body count, units, measured critical features, clearances, export/reimport checks, and limitations of any sampling.
-- Slicer: actual orientation and usable bed fit, missing walls/features, bridge direction, unsupported islands, support removal, first layers, and complete part toolpaths. Record whether the exported 3MF is geometry-only or a verified slicer project; CAD-Pilot's 3MF export is not a configured print preset.
+- Slicer: actual orientation and usable bed fit, missing walls/features, bridge direction, unsupported islands, support removal, first layers, and complete part toolpaths. Record whether a 3MF is geometry only (the `scripts/step --3mf` sidecar) or a Bambu Studio project from `scripts/print`, and whether its slice check ran. Give the user the project's 3MF path every time.
 - Physical: coupon measurements, real assembly, insert retention, cycling, or appropriate load/temperature trials actually performed. State the test conditions and do not extrapolate them to untested safety claims.
 
 Stop and ask when a missing fit-critical measurement, conflicting constraints, or significant failure consequences prevent a responsible next step. Do not certify load-bearing, pressure-retaining, electrical, medical, or food-contact suitability from these checks. Do not send G-code, change live printer settings, or start a print without explicit user approval.

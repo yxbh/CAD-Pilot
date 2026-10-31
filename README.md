@@ -94,11 +94,23 @@ There is no automatic chat-selection bridge. Your live browser selection or draw
 
 ## FDM Design Guidance
 
-The [FDM-design skill](.agents/skills/fdm-design/SKILL.md) covers layer-aware strength and orientation, walls and fine features, overhangs/bridges/support access, fits and tolerance budgets, first layers, inserts, snap-fits, and material/process selection. It complements modeling and visual review; it is not an automated printability validator or slicer integration.
+The [FDM-design skill](.agents/skills/fdm-design/SKILL.md) covers layer-aware strength and orientation, walls and fine features, overhangs/bridges/support access, fits and tolerance budgets, first layers, inserts, snap-fits, and material/process selection. It complements modeling and visual review; it is not an automated printability validator.
 
 Existing community skills were evaluated first. The resulting guidance is an original, engine-independent synthesis with manufacturer references, not a wholesale OpenSCAD import. See the [central provenance registry](.agents/skills/README.md#fdm-design) for the reviewed revisions and scope. Imported documentation remains unchanged.
 
 Start with known equipment and materials. Add useful fit measurements and print results to the project's existing notes as they happen, including the relevant configuration. No formal profile or calibration exercise is required to start designing. Assumptions are not measurements, and results from a different configuration need review before reuse.
+
+## Print Handoff
+
+The cad skill's `scripts/print` turns STEP or STL parts into one Bambu Studio project 3MF with named plates, checks each part in its print orientation, and slices the project with the installed Bambu Studio's command line. Printer, process, build plate, filaments and supports come from a personal print profile in `~/.cad-pilot/print-profile.json`, which each project's print job can override. Its [reference](.agents/skills/cad/references/print.md) owns the profile, job format and checks. With the variables from Start a Design, from the design root:
+
+```powershell
+& $Python "$Cad/scripts/print" profile
+& $Python "$Cad/scripts/print" project prints/part.print.json --slice
+& $Python "$Cad/scripts/print" project outputs/part.step --rotate 180 0 0 --slice --open
+```
+
+The last line of each project report is the 3MF path. `--open` opens the project in Bambu Studio; nothing is sent to a printer.
 
 ## Provenance
 
@@ -120,8 +132,8 @@ Independent stages run at the same time. Each stage's output is printed when it 
 
 For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` exercises the maintained UI; both Explorer commands build it first when it is out of date. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations.
 
-Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and CLIs, and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
+Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and CLIs, the print handoff and the maintained STEP converter. Print checks that need Bambu Studio skip when it is not installed. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
 
-The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
+The workbench slices only as a check, through an installed Bambu Studio's command line. It does not control printers, verify physical fit, or certify printability; its thin-wall check samples layer outlines.
 
 The maintained design-project viewer keeps running after `explorer.mjs open` exits; stop it from its project with `explorer.mjs stop`. Runtime files under `.local/`, `.venv/`, and generated outputs are ignored by Git.

@@ -150,7 +150,7 @@ def _triangle_area_twice(a: tuple[float, float, float], b: tuple[float, float, f
     return math.sqrt(cross_x * cross_x + cross_y * cross_y + cross_z * cross_z)
 
 
-def _format_number(value: float) -> str:
+def format_number(value: float) -> str:
     if not math.isfinite(value):
         raise ValueError(f"3MF mesh coordinate must be finite, got {value!r}")
     return f"{value:.9g}"
@@ -233,7 +233,54 @@ def _format_transform(transform: tuple[float, ...] | None) -> str | None:
         transform[7],
         transform[11],
     )
-    return " ".join(_format_number(value) for value in values)
+    return " ".join(format_number(value) for value in values)
+
+
+def shape_mesh(shape: object) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    """Every triangle of a meshed shape in its own coordinates: vertices, then vertex-index triples.
+    Each face keeps its own vertices, so faces meeting at an edge repeat those points."""
+    vertices: list[tuple[float, float, float]] = []
+    triangles: list[tuple[int, int, int]] = []
+    for face_mesh in _iter_shape_face_meshes(shape):
+        offset = len(vertices)
+        vertices.extend(face_mesh.vertices)
+        triangles.extend((a + offset, b + offset, c + offset) for a, b, c in face_mesh.triangles)
+    return vertices, triangles
+
+
+def append_mesh_object(
+    resources: ET.Element,
+    *,
+    object_id: int,
+    name: str,
+    vertices,
+    triangles,
+    triangle_materials: list[int] | None = None,
+) -> ET.Element:
+    """A mesh object; ``triangle_materials`` colours each triangle from the base materials, and
+    one shared value colours the whole object."""
+    object_attributes = {"id": str(object_id), "type": "model", "name": name}
+    unique_materials = set(triangle_materials or ())
+    if len(unique_materials) == 1:
+        object_attributes["pid"] = MATERIAL_RESOURCE_ID
+        object_attributes["pindex"] = str(next(iter(unique_materials)))
+    model_object = ET.SubElement(resources, f"{{{CORE_NS}}}object", object_attributes)
+    mesh = ET.SubElement(model_object, f"{{{CORE_NS}}}mesh")
+    vertices_element = ET.SubElement(mesh, f"{{{CORE_NS}}}vertices")
+    triangles_element = ET.SubElement(mesh, f"{{{CORE_NS}}}triangles")
+    for x, y, z in vertices:
+        ET.SubElement(
+            vertices_element,
+            f"{{{CORE_NS}}}vertex",
+            {"x": format_number(x), "y": format_number(y), "z": format_number(z)},
+        )
+    for index, (a, b, c) in enumerate(triangles):
+        triangle_attributes = {"v1": str(a), "v2": str(b), "v3": str(c)}
+        if len(unique_materials) > 1:
+            pindex = str(triangle_materials[index])
+            triangle_attributes.update({"pid": MATERIAL_RESOURCE_ID, "p1": pindex, "p2": pindex, "p3": pindex})
+        ET.SubElement(triangles_element, f"{{{CORE_NS}}}triangle", triangle_attributes)
+    return model_object
 
 
 def _append_mesh_object(
@@ -250,61 +297,27 @@ def _append_mesh_object(
     if not face_meshes:
         raise RuntimeError(f"Cannot write empty 3MF mesh object: {name}")
 
+    vertices: list[tuple[float, float, float]] = []
+    triangles: list[tuple[int, int, int]] = []
     triangle_materials: list[int] = []
     for face_mesh in face_meshes:
+        offset = len(vertices)
+        vertices.extend(face_mesh.vertices)
+        triangles.extend((a + offset, b + offset, c + offset) for a, b, c in face_mesh.triangles)
         triangle_materials.extend(
             [materials.index(face_colors.get(face_mesh.face_hash, default_color))] * len(face_mesh.triangles)
         )
-    unique_materials = set(triangle_materials)
-
-    object_attributes = {
-        "id": str(object_id),
-        "type": "model",
-        "name": name,
-    }
-    if len(unique_materials) == 1:
-        object_attributes["pid"] = MATERIAL_RESOURCE_ID
-        object_attributes["pindex"] = str(next(iter(unique_materials)))
-    model_object = ET.SubElement(resources, f"{{{CORE_NS}}}object", object_attributes)
-    mesh = ET.SubElement(model_object, f"{{{CORE_NS}}}mesh")
-    vertices_element = ET.SubElement(mesh, f"{{{CORE_NS}}}vertices")
-    triangles_element = ET.SubElement(mesh, f"{{{CORE_NS}}}triangles")
-
-    vertex_index = 0
-    material_index = 0
-    for face_mesh in face_meshes:
-        for x, y, z in face_mesh.vertices:
-            ET.SubElement(
-                vertices_element,
-                f"{{{CORE_NS}}}vertex",
-                {
-                    "x": _format_number(x),
-                    "y": _format_number(y),
-                    "z": _format_number(z),
-                },
-            )
-        for a, b, c in face_mesh.triangles:
-            triangle_attributes = {
-                "v1": str(vertex_index + a),
-                "v2": str(vertex_index + b),
-                "v3": str(vertex_index + c),
-            }
-            if len(unique_materials) > 1:
-                pindex = str(triangle_materials[material_index])
-                triangle_attributes.update(
-                    {
-                        "pid": MATERIAL_RESOURCE_ID,
-                        "p1": pindex,
-                        "p2": pindex,
-                        "p3": pindex,
-                    }
-                )
-            ET.SubElement(triangles_element, f"{{{CORE_NS}}}triangle", triangle_attributes)
-            material_index += 1
-        vertex_index += len(face_mesh.vertices)
+    append_mesh_object(
+        resources,
+        object_id=object_id,
+        name=name,
+        vertices=vertices,
+        triangles=triangles,
+        triangle_materials=triangle_materials,
+    )
 
 
-def _append_component_object(
+def append_component_object(
     resources: ET.Element,
     *,
     object_id: int,
@@ -416,7 +429,7 @@ class _SceneObjectWriter:
         for child in node.children:
             components.append((self.object_for_node(child), child.local_transform))
         object_id = self._allocate_object_id()
-        _append_component_object(
+        append_component_object(
             self.resources,
             object_id=object_id,
             name=_object_name(node.name or node.source_name, f"component-{object_id}"),
@@ -425,7 +438,7 @@ class _SceneObjectWriter:
         return object_id
 
 
-def _build_model_root() -> tuple[ET.Element, ET.Element, ET.Element]:
+def build_model_root(metadata: Mapping[str, str] | None = None) -> tuple[ET.Element, ET.Element, ET.Element]:
     model = ET.Element(
         f"{{{CORE_NS}}}model",
         {
@@ -433,15 +446,15 @@ def _build_model_root() -> tuple[ET.Element, ET.Element, ET.Element]:
             "{http://www.w3.org/XML/1998/namespace}lang": "en-US",
         },
     )
-    metadata = ET.SubElement(model, f"{{{CORE_NS}}}metadata", {"name": "Application"})
-    metadata.text = "tom-cad"
+    for name, value in (metadata or {"Application": "tom-cad"}).items():
+        ET.SubElement(model, f"{{{CORE_NS}}}metadata", {"name": name}).text = value
     resources = ET.SubElement(model, f"{{{CORE_NS}}}resources")
     build = ET.SubElement(model, f"{{{CORE_NS}}}build")
     return model, resources, build
 
 
 def _build_shape_model_xml(shape: object, *, color: ColorRGBA | None = None) -> bytes:
-    model, resources, build = _build_model_root()
+    model, resources, build = build_model_root()
     materials = _MaterialRegistry(_normalize_rgba(color))
     materials.append_xml(resources)
     _append_mesh_object(
@@ -466,7 +479,7 @@ def _build_scene_model_xml(
     if not scene.roots:
         raise RuntimeError(f"No CAD geometry available for 3MF export: {scene.step_path}")
 
-    model, resources, build = _build_model_root()
+    model, resources, build = build_model_root()
     materials = _MaterialRegistry(_normalize_rgba(color))
     writer = _SceneObjectWriter(scene, resources, materials, source_color=color, occurrence_colors=occurrence_colors)
 
@@ -480,7 +493,7 @@ def _build_scene_model_xml(
         ET.SubElement(build, f"{{{CORE_NS}}}item", attributes)
     else:
         root_object_id = writer._allocate_object_id()
-        _append_component_object(
+        append_component_object(
             resources,
             object_id=root_object_id,
             name=_object_name(scene.step_path.stem, f"component-{root_object_id}"),
@@ -500,47 +513,41 @@ def _build_scene_model_xml(
     return ET.tostring(model, encoding="utf-8", xml_declaration=True)
 
 
-def _content_types_xml() -> bytes:
-    types = ET.Element(f"{{{CONTENT_TYPES_NS}}}Types")
-    ET.SubElement(
-        types,
-        f"{{{CONTENT_TYPES_NS}}}Default",
-        {
-            "Extension": "rels",
-            "ContentType": "application/vnd.openxmlformats-package.relationships+xml",
-        },
-    )
-    ET.SubElement(
-        types,
-        f"{{{CONTENT_TYPES_NS}}}Default",
-        {
-            "Extension": "model",
-            "ContentType": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
-        },
-    )
+def content_types_xml(extra: Mapping[str, str] | None = None) -> bytes:
+    """Content types by file extension; ``extra`` adds types for other package parts. Package XML
+    uses a default namespace, not a prefix: Bambu Studio's reader does not resolve prefixes."""
+    types = ET.Element("Types", {"xmlns": CONTENT_TYPES_NS})
+    defaults = {
+        "rels": "application/vnd.openxmlformats-package.relationships+xml",
+        "model": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        **(extra or {}),
+    }
+    for extension, content_type in defaults.items():
+        ET.SubElement(types, "Default", {"Extension": extension, "ContentType": content_type})
     return ET.tostring(types, encoding="utf-8", xml_declaration=True)
 
 
-def _relationships_xml() -> bytes:
-    relationships = ET.Element(f"{{{RELATIONSHIPS_NS}}}Relationships")
-    ET.SubElement(
-        relationships,
-        f"{{{RELATIONSHIPS_NS}}}Relationship",
-        {
-            "Target": "/3D/3dmodel.model",
-            "Id": "rel0",
-            "Type": MODEL_REL_TYPE,
-        },
-    )
+def relationships_xml() -> bytes:
+    relationships = ET.Element("Relationships", {"xmlns": RELATIONSHIPS_NS})
+    ET.SubElement(relationships, "Relationship", {"Target": "/3D/3dmodel.model", "Id": "rel0", "Type": MODEL_REL_TYPE})
     return ET.tostring(relationships, encoding="utf-8", xml_declaration=True)
 
 
-def _write_package(target_path: Path, model_xml: bytes) -> Path:
+def write_package(
+    target_path: Path,
+    model_xml: bytes,
+    *,
+    parts: Mapping[str, bytes] | None = None,
+    content_types: Mapping[str, str] | None = None,
+) -> Path:
+    """Write a 3MF package atomically: the model, plus other ``parts`` by package path."""
     with replacing(target_path) as temp_path:
         with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as package:
-            package.writestr("[Content_Types].xml", _content_types_xml())
-            package.writestr("_rels/.rels", _relationships_xml())
+            package.writestr("[Content_Types].xml", content_types_xml(content_types))
+            package.writestr("_rels/.rels", relationships_xml())
             package.writestr("3D/3dmodel.model", model_xml)
+            for name, data in (parts or {}).items():
+                package.writestr(name, data)
         if not temp_path.exists() or temp_path.stat().st_size <= 0:
             raise RuntimeError(f"Failed to write 3MF output: {_display_path(target_path)}")
     return target_path
@@ -553,8 +560,8 @@ def export_scene_3mf(
     color: ColorRGBA | None = None,
     occurrence_colors: Mapping[str, ColorRGBA] | None = None,
 ) -> Path:
-    return _write_package(target_path, _build_scene_model_xml(scene, color=color, occurrence_colors=occurrence_colors))
+    return write_package(target_path, _build_scene_model_xml(scene, color=color, occurrence_colors=occurrence_colors))
 
 
 def export_shape_3mf(shape: object, target_path: Path) -> Path:
-    return _write_package(target_path, _build_shape_model_xml(shape))
+    return write_package(target_path, _build_shape_model_xml(shape))

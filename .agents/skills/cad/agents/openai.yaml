@@ -1,4 +1,4 @@
 interface:
   display_name: "CAD"
-  short_description: "Generate, inspect and validate CAD files."
+  short_description: "Generate, inspect and validate CAD files, and hand prints to Bambu Studio."
   default_prompt: "Use $cad to create, regenerate, inspect, and validate explicit CAD files and @cad references; show the results in CAD Explorer through the visual-review skill."

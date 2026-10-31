@@ -12,6 +12,7 @@ dependencies = [
     "numpy",
     "pillow",
     "playwright",
+    "scipy",
     "trimesh",
     "vtk",
 ]

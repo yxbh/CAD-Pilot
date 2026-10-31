@@ -1,0 +1,146 @@
+"""Slice check: slice a Bambu Studio project with Bambu Studio's command line and report each
+plate's estimated time, filament use and warnings."""
+
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+import time
+import zipfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+from .bambu import BambuStudio
+
+
+CONFLICT = re.compile(r"gcode path conflicts found between (.+?) and (.+?)\s*$", re.M)
+
+
+class SliceError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class FilamentUse:
+    slot: int
+    preset: str
+    colour: str
+    grams: float
+
+
+@dataclass
+class PlateSlice:
+    plate: int
+    name: str
+    seconds: float | None = None
+    filaments: list[FilamentUse] = field(default_factory=list)
+    support_seconds: float = 0.0
+    prime_tower: bool = False
+    warnings: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass
+class SliceReport:
+    project: Path
+    version: str
+    printer: str
+    process: str
+    bed_type: str
+    plates: list[PlateSlice]
+    elapsed_seconds: float
+
+    @property
+    def ok(self) -> bool:
+        return all(plate.error is None for plate in self.plates)
+
+    def as_dict(self) -> dict:
+        data = asdict(self)
+        data["project"] = str(self.project)
+        data["ok"] = self.ok
+        return data
+
+
+def project_contents(project: Path) -> tuple[dict, list[str]]:
+    """A project's settings and its plate names, in plate order."""
+    with zipfile.ZipFile(project) as archive:
+        settings = json.loads(archive.read("Metadata/project_settings.config"))
+        config = ET.fromstring(archive.read("Metadata/model_settings.config"))
+    names = []
+    for plate in config.iter("plate"):
+        values = {m.get("key"): m.get("value") for m in plate.findall("metadata")}
+        names.append((int(values.get("plater_id", len(names) + 1)), values.get("plater_name") or ""))
+    return settings, [name for _, name in sorted(names)]
+
+
+def _plate_result(entry: dict, plate: PlateSlice, settings: dict) -> None:
+    presets = settings.get("filament_settings_id", [])
+    colours = settings.get("filament_colour", [])
+    plate.seconds = float(entry.get("total_predication") or 0.0)
+    for used in entry.get("filaments", []):
+        slot = int(used["id"])
+        plate.filaments.append(
+            FilamentUse(
+                slot,
+                presets[slot - 1] if slot - 1 < len(presets) else f"slot {slot}",
+                colours[slot - 1] if slot - 1 < len(colours) else "",
+                round(float(used.get("total_used_g", 0.0)), 2),
+            )
+        )
+    features = entry.get("feature_type_times", {})
+    plate.support_seconds = float(sum(v for k, v in features.items() if k.startswith("Support")))
+    plate.prime_tower = features.get("Prime tower", 0) > 0
+    if entry.get("warning_message"):
+        plate.warnings.append(str(entry["warning_message"]))
+
+
+def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) -> SliceReport:
+    """Slice every plate. The command line stops at the first plate it cannot slice, so the plates
+    after a failure are sliced one at a time to report each of them."""
+    project = project.resolve()
+    settings, names = project_contents(project)
+    plates = {number: PlateSlice(number, name) for number, name in enumerate(names, start=1)}
+    started = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="cad-slice-") as temp:
+        work = Path(temp)
+        pending = sorted(plates)
+        target = 0
+        attempt = 0
+        while pending:
+            out = work / f"out-{attempt}"
+            out.mkdir()
+            run = studio.run(["--slice", str(target), "--outputdir", str(out), str(project)], work, timeout=timeout)
+            result_file = out / "result.json"
+            result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else {}
+            for entry in result.get("sliced_plates", []):
+                number = int(entry.get("id", 0))
+                if number in plates and (out / f"plate_{number}.gcode").is_file():
+                    _plate_result(entry, plates[number], settings)
+            failed = int(result.get("plate_index") or target or pending[0])
+            for first, second in CONFLICT.findall(run.output):
+                plates[failed].warnings.append(f"toolpaths of {first} and {second} cross")
+            failure = ""
+            if run.returncode != 0:
+                failure = (run.failure() if run.crashed else result.get("error_string") or run.failure()).strip()
+                if failed in plates and plates[failed].seconds is None:
+                    plates[failed].error = failure
+            resolved = [n for n in pending if plates[n].seconds is not None or plates[n].error is not None]
+            # Make progress even when a run explains nothing: the plate it was meant to slice fails.
+            stuck = target if target and target not in resolved else (pending[0] if not resolved else None)
+            if stuck is not None:
+                plates[stuck].error = f"not sliced: {failure or 'Bambu Studio wrote no G-code for it'}"
+                resolved.append(stuck)
+            pending = [n for n in pending if n not in resolved]
+            target = pending[0] if pending else 0
+            attempt += 1
+    return SliceReport(
+        project=project,
+        version=str(settings.get("version", "")),
+        printer=str(settings.get("printer_settings_id", "")),
+        process=str(settings.get("print_settings_id", "")),
+        bed_type=str(settings.get("curr_bed_type", "")),
+        plates=[plates[n] for n in sorted(plates)],
+        elapsed_seconds=round(time.perf_counter() - started, 2),
+    )
