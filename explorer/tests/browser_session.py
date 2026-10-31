@@ -1,6 +1,6 @@
 import time
 
-from playwright.sync_api import expect
+from playwright.sync_api import Error, expect
 
 
 def launch_chromium(playwright):
@@ -15,7 +15,13 @@ class BrowserSession:
         self.page, self.url, self.errors = page, url, errors
 
     def state(self):
-        response = self.page.request.get(self.url + "api/state")
+        # Reading state has no effect, so a request on a connection the server reset is simply repeated once.
+        try:
+            response = self.page.request.get(self.url + "api/state")
+        except Error as error:
+            if "ECONNRESET" not in str(error):
+                raise
+            response = self.page.request.get(self.url + "api/state")
         assert response.ok, response.text()
         return response.json()
 

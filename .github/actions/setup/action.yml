@@ -1,0 +1,52 @@
+name: Set up the workbench
+description: Python environment and Node.js, plus the Explorer's packages and Playwright Chromium when asked.
+inputs:
+  explorer:
+    description: Also install the Explorer's npm packages and Playwright Chromium.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # uv.lock and explorer/package-lock.json stay local, so each run resolves dependencies afresh.
+    - uses: astral-sh/setup-uv@v10.3.3
+      with:
+        enable-cache: true
+        # The newest Python the CAD dependencies publish wheels for; a runner's default can be newer.
+        python-version: "3.14"
+    - run: uv sync
+      shell: bash
+    - if: inputs.explorer != 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+    - if: inputs.explorer == 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: explorer/package.json
+    - if: inputs.explorer == 'true'
+      # No audit or funding requests: CI only needs the packages installed.
+      run: npm --prefix explorer install --no-audit --no-fund
+      shell: bash
+    - if: inputs.explorer == 'true'
+      id: playwright
+      shell: bash
+      run: |
+        echo "version=$(uv run python -c 'from importlib.metadata import version; print(version("playwright"))' | tr -d '\r')" >> "$GITHUB_OUTPUT"
+        case "$RUNNER_OS" in
+          macOS) echo "browsers=$HOME/Library/Caches/ms-playwright" ;;
+          Windows) echo "browsers=$LOCALAPPDATA\\ms-playwright" ;;
+          *) echo "browsers=$HOME/.cache/ms-playwright" ;;
+        esac >> "$GITHUB_OUTPUT"
+    - if: inputs.explorer == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.playwright.outputs.browsers }}
+        key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+    - if: inputs.explorer == 'true'
+      run: uv run python -m playwright install chromium
+      shell: bash
+    - if: inputs.explorer == 'true' && runner.os == 'Linux'
+      run: uv run python -m playwright install-deps chromium
+      shell: bash

@@ -193,11 +193,12 @@ Use these commands from the workbench root for narrower checks:
 | Complete Explorer | `npm --prefix explorer test` | Core checks, then the browser suite |
 | Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, section planes, commands, HTTP, references, persistence, cache compatibility and ownership |
 | Browser | `npm --prefix explorer run test:browser` | Real selection/clipboard, camera matrices, Studio, section caps, drawing recovery, diagnostics and delayed render reports |
+| One CI share | `node explorer/scripts/test.mjs shard 2/4` | What CI's `explorer 2/4` jobs run: a share of the core suite and browser files, balanced by measured time; `--list` prints the files |
 | Build only | `npm --prefix explorer run build` | Type-check and production assets; skipped when the sources, configuration and installed packages match the last successful build |
 | Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
 | Mesh reader and measurement | `uv run pytest explorer/tests/test_mesh.py -q` | Mesh formats, frames, faults, the geometry file, section fits and distances |
 
-Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run serially against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
+Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run a few files at a time (a quarter of the cores, at most three; scenarios within a file run in order) against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
 
 Both suites build the Explorer first when it is out of date, because the browser scenarios and the launcher's background viewers serve the built page. For a targeted run, build first if it uses either, then pass individual files to Node. For example:
 
@@ -215,7 +216,7 @@ Preserve these contracts when changing their owners:
 | Exact face/edge identity, pixel-space picking, occlusion and clipboard behavior | `references.test.mjs`, `edge-picking.test.ts`, `edge-browser.test.mjs`, `viewer-browser.test.mjs` |
 | Fresh measured cleanup versus unknown historical counts; immutable caches and failed-import recovery | `model-import.test.mjs`, `diagnostics.test.mjs`, `cache-migration.test.mjs`, `cleanup-persistence-browser.test.mjs`, `test_converter.py` |
 | Warning/info panels do not obscure controls or alter camera and drawings | `import-warnings-browser.test.mjs` |
-| Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `viewer-browser.test.mjs` |
+| Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `explode-camera-browser.test.mjs`, `studio-views-browser.test.mjs` |
 | Section planes in model-world coordinates across nested, repeated, fixed, hidden and exploded occurrences; caps that keep holes and gaps open; trimmed edge picking with unchanged references; persisted, captured and reviewed section poses; closed-solid identity for immutable caches | `section.test.ts`, `protocol.test.mjs`, `section-browser.test.mjs`, `cache-migration.test.mjs`, `test_converter.py` |
 | Review conflicts preserve unsaved local marks and other writers' data | `reviews.test.mjs`, `review-recovery-browser.test.mjs` |
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |

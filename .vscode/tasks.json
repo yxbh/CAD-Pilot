@@ -5,7 +5,7 @@
       "label": "CAD-Pilot: Test Python",
       "type": "process",
       "command": "uv",
-      "args": ["run", "pytest", "-q"],
+      "args": ["run", "pytest", "-q", "-n", "4"],
       "options": { "cwd": "${workspaceFolder}" },
       "group": "test",
       "problemMatcher": []

@@ -37,7 +37,8 @@ def run(url, output):
             point = {"x": bounds["width"] * 0.5, "y": bounds["height"] * 0.5}
 
             page.get_by_role("button", name="Faces", exact=True).click()
-            face_mode = wait_state(lambda current: current["selectionMode"] == "face")
+            # Face mode is the default, so wait for the click's own commit, not just the mode.
+            face_mode = wait_state(lambda current: current["selectionMode"] == "face" and current["revision"] > ready["revision"])
             page.mouse.move(bounds["x"] + 2, bounds["y"] + 2)
             page.wait_for_timeout(100)
             face_baseline = Image.open(io.BytesIO(canvas.screenshot())).convert("RGB")
