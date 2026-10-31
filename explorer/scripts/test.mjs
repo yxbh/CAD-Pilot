@@ -24,14 +24,16 @@ const cwd = fileURLToPath(new URL("../", import.meta.url));
 const tests = (await readdir(new URL("../tests/", import.meta.url))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
 const isBrowser = (file) => file.endsWith("-browser.test.mjs");
 
-// How long each test file's tests took on this platform's CI runners (tests/durations.json, which scripts/durations.mjs
-// refreshes from a CI run). Shards take the files longest first, each to the shard with the least time so far; a file
-// not listed counts as the median of its kind, browser or core.
+// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which
+// scripts/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with the least
+// time so far; a file not listed counts as the median of its kind, browser or core.
 const measured = JSON.parse(await readFile(new URL("../tests/durations.json", import.meta.url), "utf8"))[process.platform] ?? {};
-function estimate(file) {
-  const kind = Object.entries(measured).filter(([name]) => isBrowser(name) === isBrowser(file)).map(([, seconds]) => seconds).sort((a, b) => a - b);
-  return measured[file] ?? kind[Math.floor(kind.length / 2)] ?? 1;
-}
+const median = (browser) => {
+  const kind = Object.entries(measured).filter(([name]) => isBrowser(name) === browser).map(([, seconds]) => seconds).sort((a, b) => a - b);
+  return kind[Math.floor(kind.length / 2)] ?? 1;
+};
+const medians = { true: median(true), false: median(false) };
+const estimate = (file) => measured[file] ?? medians[isBrowser(file)];
 function shardFiles(index, count) {
   const shards = Array.from({ length: count }, () => ({ seconds: 0, files: [] }));
   for (const file of [...tests].sort((a, b) => estimate(b) - estimate(a) || a.localeCompare(b))) {
@@ -86,13 +88,13 @@ const statuses = [
 if (reports) {
   const seconds = {};
   for (const [name, { wall, filesAtOnce }] of Object.entries(timed)) {
-    let measured;
+    let report;
     try {
-      ({ seconds: measured } = JSON.parse(await readFile(path.join(reports, `${name}.json`), "utf8")));
+      report = JSON.parse(await readFile(path.join(reports, `${name}.json`), "utf8"));
     } catch {
       continue; // A run that was stopped may have left no report, or part of one; its exit status fails the check.
     }
-    const entries = Object.entries(measured);
+    const entries = Object.entries(report.seconds);
     const rest = Math.max(0, wall - entries.reduce((sum, [, value]) => sum + value, 0) / filesAtOnce);
     for (const [file, value] of entries) seconds[file] = value / filesAtOnce + rest / entries.length;
   }
