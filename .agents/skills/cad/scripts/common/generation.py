@@ -290,45 +290,36 @@ def _validate_cli_output_override(
             )
 
 
-def _apply_step_output_override(
+def _apply_output_override(
     selected_specs: Sequence[EntrySpec],
     *,
     output_path: Path | None,
     all_specs: Sequence[EntrySpec],
+    retarget: Callable[[EntrySpec, Path], EntrySpec],
 ) -> list[EntrySpec]:
+    """The selected specs, with the one target's output moved to ``--output`` when it is given."""
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise StepInputError(f"--output can only be used with exactly one target")
+        raise StepInputError("--output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise StepInputError(f"--output can only be used with generated Python targets")
+        raise StepInputError("--output can only be used with generated Python targets")
     _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
-    return [
-        replace(
-            spec,
-            cad_ref=cad_ref_from_step_path(output_path),
-            display_name=_display_name_for_path(output_path),
-            step_path=output_path,
-        )
-    ]
+    return [retarget(spec, output_path)]
 
 
-def _apply_dxf_output_override(
-    selected_specs: Sequence[EntrySpec],
-    *,
-    output_path: Path | None,
-    all_specs: Sequence[EntrySpec],
-) -> list[EntrySpec]:
-    if output_path is None:
-        return list(selected_specs)
-    if len(selected_specs) != 1:
-        raise StepInputError(f"--output can only be used with exactly one target")
-    spec = selected_specs[0]
-    if spec.source != "generated":
-        raise StepInputError(f"--output can only be used with generated Python targets")
-    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
-    return [replace(spec, dxf_path=output_path)]
+def _step_output(spec: EntrySpec, output_path: Path) -> EntrySpec:
+    return replace(
+        spec,
+        cad_ref=cad_ref_from_step_path(output_path),
+        display_name=_display_name_for_path(output_path),
+        step_path=output_path,
+    )
+
+
+def _dxf_output(spec: EntrySpec, output_path: Path) -> EntrySpec:
+    return replace(spec, dxf_path=output_path)
 
 
 def _resolve_discovery_root(root: Path | str) -> Path:
@@ -1364,10 +1355,11 @@ def generate_step_targets(
     )
     for spec in selected_specs:
         _validate_step_target(spec, direct_step_kind=direct_step_kind)
-    selected_specs = _apply_step_output_override(
+    selected_specs = _apply_output_override(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
+        retarget=_step_output,
     )
     if step_options is not None and step_options.has_metadata:
         selected_specs = [_apply_step_options_to_spec(spec, step_options) for spec in selected_specs]
@@ -1397,10 +1389,11 @@ def generate_dxf_targets(
     all_specs, selected_specs = _selected_specs_for_targets(targets)
     for spec in selected_specs:
         _validate_dxf_target(spec)
-    selected_specs = _apply_dxf_output_override(
+    selected_specs = _apply_output_override(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
+        retarget=_dxf_output,
     )
     _run_selected_specs(
         selected_specs,
@@ -1412,35 +1405,15 @@ def generate_dxf_targets(
     return 0
 
 
-def run_tool_cli(
+def run_cli(
+    parser: argparse.ArgumentParser,
     argv: Sequence[str] | None,
-    *,
-    prog: str,
-    description: str,
-    action: Callable[..., int],
-    target_help: str | None = None,
-    output_help: str | None = None,
+    action: Callable[[argparse.Namespace], int],
 ) -> int:
-    parser = argparse.ArgumentParser(prog=prog, description=description)
-    parser.add_argument(
-        "targets",
-        nargs="+",
-        help=target_help or "Explicit Python generator or STEP/STP file path to generate.",
-    )
-    if output_help is not None:
-        parser.add_argument("-o", "--output", metavar="PATH", help=output_help)
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed progress and timing information.",
-    )
+    """Run a generation tool: a problem with its inputs is one ``<prog>: error: <message>`` line and exit status 2."""
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if output_help is not None and args.output is not None and len(args.targets) != 1:
-        parser.error("--output can only be used with exactly one target")
     try:
-        if output_help is not None:
-            return action(args.targets, output=args.output, verbose=bool(args.verbose))
-        return action(args.targets, verbose=bool(args.verbose))
+        return action(args)
     except (GeneratorImportError, StepInputError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2

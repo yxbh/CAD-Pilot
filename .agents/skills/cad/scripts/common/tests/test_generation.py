@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import hashlib
 import io
@@ -1697,12 +1698,14 @@ class CadGenerationTests(unittest.TestCase):
 
 class ToolErrorTests(unittest.TestCase):
     def test_a_tool_error_is_one_line_named_once(self) -> None:
-        def fails(targets, **_options):
+        def fails(_args):
             raise cad_generation.StepInputError("--output must end in .dxf")
 
+        parser = argparse.ArgumentParser(prog="scripts/dxf")
+        parser.add_argument("targets", nargs="+")
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            status = cad_generation.run_tool_cli(["part.py"], prog="scripts/dxf", description="", action=fails, output_help="")
+            status = cad_generation.run_cli(parser, ["part.py"], fails)
         self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
 
 
