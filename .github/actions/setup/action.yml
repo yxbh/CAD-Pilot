@@ -1,12 +1,10 @@
 name: Set up the workbench
-description: Python environment and Node.js, plus the Explorer's packages and Playwright's headless Chromium shell when asked.
-inputs:
-  explorer:
-    description: Also install the Explorer's npm packages and Playwright's headless Chromium shell.
-    default: "false"
+description: Python environment, the Explorer's packages and Playwright's headless Chromium shell, on the runner's own Node.js.
 runs:
   using: composite
   steps:
+    # The runner images carry a Node.js the workbench supports (README.md, Setup), so none is installed: setting one up
+    # costs a Windows job several seconds.
     # uv.lock and explorer/package-lock.json stay local, so each run resolves the Python dependencies afresh, and the
     # Explorer's packages are resolved afresh at most once a day on each system.
     - uses: astral-sh/setup-uv@v10.3.3
@@ -20,11 +18,7 @@ runs:
         python-version: "3.14"
     - run: uv sync
       shell: bash
-    - uses: actions/setup-node@v7
-      with:
-        node-version: 24
-    - if: inputs.explorer == 'true'
-      id: versions
+    - id: versions
       shell: bash
       run: |
         echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
@@ -37,23 +31,20 @@ runs:
     # A job that finds no tree from earlier that day installs the packages the manifest allows then; later jobs restore
     # it instead of installing it again. Actions caches are per branch, so a pull request reuses its own tree or main's.
     # No package is built for a Node version, so the key leaves it out.
-    - if: inputs.explorer == 'true'
-      id: packages
+    - id: packages
       uses: actions/cache@v6
       with:
         path: explorer/node_modules
         key: explorer-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}
-    - if: inputs.explorer == 'true' && steps.packages.outputs.cache-hit != 'true'
+    - if: steps.packages.outputs.cache-hit != 'true'
       # No audit or funding requests: CI only needs the packages installed.
       run: npm --prefix explorer install --no-audit --no-fund
       shell: bash
     # The renderer and the browser scenarios launch only the headless shell, and the runner images already carry the
     # libraries it needs on Linux (install-deps adds only fonts there).
-    - if: inputs.explorer == 'true'
-      uses: actions/cache@v6
+    - uses: actions/cache@v6
       with:
         path: ${{ steps.versions.outputs.browsers }}
         key: playwright-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.playwright }}
-    - if: inputs.explorer == 'true'
-      run: uv run --no-sync python -m playwright install --only-shell chromium
+    - run: uv run --no-sync python -m playwright install --only-shell chromium
       shell: bash

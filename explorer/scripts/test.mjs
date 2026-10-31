@@ -24,9 +24,9 @@ const cwd = fileURLToPath(new URL("../", import.meta.url));
 const tests = (await readdir(new URL("../tests/", import.meta.url))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
 const isBrowser = (file) => file.endsWith("-browser.test.mjs");
 
-// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which
-// scripts/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with the least
-// time so far; a file not listed counts as the median of its kind, browser or core.
+// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which the
+// workbench's tools/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with
+// the least time so far; a file not listed counts as the median of its kind, browser or core.
 const measured = JSON.parse(await readFile(new URL("../tests/durations.json", import.meta.url), "utf8"))[process.platform] ?? {};
 const median = (browser) => {
   const kind = Object.entries(measured).filter(([name]) => isBrowser(name) === browser).map(([, seconds]) => seconds).sort((a, b) => a - b);
