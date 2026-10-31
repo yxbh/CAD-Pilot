@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request's run; every push to main is checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -55,4 +56,12 @@ jobs:
       - run: uv run python -m playwright install chromium
       - if: runner.os == 'Linux'
         run: uv run python -m playwright install-deps chromium
-      - run: node tools/check.mjs
+      # exec, so a cancelled run's signal reaches the check runner, which stops its stages and prints their output.
+      - run: exec node tools/check.mjs
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-logs-${{ matrix.os }}
+          path: .local/check/
+          include-hidden-files: true
+          if-no-files-found: ignore

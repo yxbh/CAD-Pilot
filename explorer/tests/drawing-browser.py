@@ -13,6 +13,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 from playwright.sync_api import expect, sync_playwright
+from browser_session import launch_chromium
 
 
 HARNESS = r"""
@@ -118,7 +119,7 @@ def run():
                 port = json.loads(line)["port"]
                 break
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+            browser = launch_chromium(playwright)
             try:
                 page = browser.new_page(viewport={"width": 1200, "height": 1000})
                 runtime_errors = []

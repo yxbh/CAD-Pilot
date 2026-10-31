@@ -52,9 +52,16 @@ def _load_source(path: Path):
     sys.path.insert(0, str(path.parent.resolve()))
     spec = importlib.util.spec_from_file_location(f"cad_explorer_sequence_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
+    # Registered like an import, so code that looks its module up while it runs (dataclasses do) finds it.
+    sys.modules[spec.name] = module
     # Compile the source itself: a cached .pyc is checked only against the source's whole-second mtime and its
-    # size, so an edit of the same length within a second would otherwise run the old code.
-    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
+    # size, so an edit of the same length within a second would otherwise run the old code. dont_inherit keeps
+    # this file's own __future__ imports out of the design's code.
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
     for name in ("gen_step", "gen_assembly"):
         if not callable(getattr(module, name, None)):
             raise SequenceError(f"{path} must define {name}()")

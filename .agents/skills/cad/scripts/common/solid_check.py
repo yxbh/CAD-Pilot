@@ -10,6 +10,10 @@ binary copy of the generated solids; when the kernel cannot finish on one, it
 retries that solid as read back from the written STEP, where the kernel
 completes some checks it abandons on freshly modelled shapes. Each unique solid
 is checked once: placed copies of a solid share a check.
+
+The budgets are wall-clock time. ``CAD_SOLID_CHECK_TIME_SCALE`` (a number of at
+least 1) stretches the defaults where other work competes for the CPU, as in the
+workbench's parallel test runs.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from pathlib import Path
 
 PART_BUDGET_SECONDS = 10.0
 TOTAL_BUDGET_SECONDS = 30.0
+TIME_SCALE_VARIABLE = "CAD_SOLID_CHECK_TIME_SCALE"
 _MARK = "cad-solid-check "
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 
@@ -136,8 +141,8 @@ class KernelCheck:
         scene,
         source_ref: str,
         *,
-        part_budget: float = PART_BUDGET_SECONDS,
-        total_budget: float = TOTAL_BUDGET_SECONDS,
+        part_budget: float | None = None,
+        total_budget: float | None = None,
         command: list[str] | None = None,
     ) -> None:
         from OCP.BinTools import BinTools
@@ -146,8 +151,9 @@ class KernelCheck:
 
         prototypes = _prototype_solids(scene)
         labelled = _labelled_solids(prototypes, source_ref)
-        self.part_budget = part_budget
-        self.total_budget = total_budget
+        scale = max(1.0, float(os.environ.get(TIME_SCALE_VARIABLE) or 1))
+        self.part_budget = PART_BUDGET_SECONDS * scale if part_budget is None else part_budget
+        self.total_budget = TOTAL_BUDGET_SECONDS * scale if total_budget is None else total_budget
         self._command = command or [sys.executable, "-P", "-m", "common.solid_check"]
         self._process: subprocess.Popen | None = None
         self._brep_path: str | None = None

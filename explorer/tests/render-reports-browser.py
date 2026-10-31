@@ -7,6 +7,7 @@ from pathlib import Path
 
 from build123d import Box, export_step
 from playwright.sync_api import expect, sync_playwright
+from browser_session import launch_chromium
 
 
 def fixtures(output):
@@ -23,7 +24,7 @@ def fixtures(output):
 
 def run(url, output):
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         pending_routes = set()
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})

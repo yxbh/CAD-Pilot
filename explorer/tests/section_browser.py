@@ -20,7 +20,7 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from PIL import Image, ImageChops, ImageStat
 from playwright.sync_api import expect, sync_playwright
 
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 
 FIXTURE_NAME = "section-fixture.step"
@@ -116,7 +116,7 @@ def run(url, output, fixture):
     output.mkdir(parents=True, exist_ok=True)
     source_before = hashlib.sha256(fixture.read_bytes()).hexdigest()
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1120, "height": 820}, permissions=["clipboard-read", "clipboard-write"])
             errors = []

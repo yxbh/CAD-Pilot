@@ -7,12 +7,13 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 from playwright.sync_api import expect, sync_playwright
+from browser_session import launch_chromium
 
 
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})
             errors = []

@@ -5,6 +5,7 @@ hangs or fails; the end-to-end cases run ``scripts/step`` on small models.
 """
 
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,14 +14,17 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from common import generation as cad_generation
 from common.cli_logging import CliLogger
-from common.solid_check import CheckedSolid, KernelCheck, KernelReport
+from common.solid_check import TIME_SCALE_VARIABLE, CheckedSolid, KernelCheck, KernelReport
 from common.step_scene import LoadedStepScene
 
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[2]
+# The end-to-end runs share the CPU with other tests, so their kernel checks get four times the default budgets.
+STRETCHED_BUDGETS = {**os.environ, TIME_SCALE_VARIABLE: "4"}
 
 # Reads the worker request and defines emit(), like the real worker's protocol.
 FAKE_WORKER = textwrap.dedent(
@@ -80,6 +84,21 @@ class KernelCheckBudgetTests(unittest.TestCase):
         )
         self.assertEqual((0, None), (report.unchecked, report.failure))
         self.assertIsNone(check._brep_path, "the copied solids are removed")
+
+    def test_the_time_scale_stretches_only_the_default_budgets(self) -> None:
+        def budgets(**explicit: float) -> tuple[float, float]:
+            check = KernelCheck(
+                Path("cup.step"), _two_part_scene(), "cup.py",
+                command=[sys.executable, "-c", FAKE_WORKER + "done(0)\ndone(1)\n"], **explicit,
+            )
+            check.report()
+            return check.part_budget, check.total_budget
+
+        with mock.patch.dict(os.environ, {TIME_SCALE_VARIABLE: "3"}):
+            self.assertEqual((30.0, 90.0), budgets())
+            self.assertEqual((0.5, 20.0), budgets(part_budget=0.5, total_budget=20.0))
+        with mock.patch.dict(os.environ, {TIME_SCALE_VARIABLE: ""}):
+            self.assertEqual((10.0, 30.0), budgets())
 
     def test_the_total_budget_stops_the_check(self) -> None:
         _check, report = self._report(
@@ -222,6 +241,7 @@ class StepSolidCheckTests(unittest.TestCase):
             return subprocess.run(
                 [sys.executable, str(SCRIPTS_ROOT / "step"), f"{name}.py", "--stl", f"{name}.stl", *OPTIONS.get(name, ())],
                 cwd=cls.project,
+                env=STRETCHED_BUDGETS,
                 capture_output=True,
                 text=True,
                 timeout=600,

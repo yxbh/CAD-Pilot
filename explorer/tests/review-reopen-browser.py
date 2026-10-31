@@ -6,12 +6,13 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
+from browser_session import launch_chromium
 
 
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         reads, opens = [], []
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})

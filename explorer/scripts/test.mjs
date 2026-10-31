@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { buildExplorer } from "./build.mjs";
+import { buildExplorer } from "./incremental-build.mjs";
 
 const [suite, ...options] = process.argv.slice(2);
 if (!["core", "browser"].includes(suite)) throw new Error("Choose the core or browser test suite");

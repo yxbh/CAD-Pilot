@@ -9,12 +9,13 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 from playwright.sync_api import expect, sync_playwright
+from browser_session import launch_chromium
 
 
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             context = browser.new_context(viewport={"width": 1100, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
             page = context.new_page()

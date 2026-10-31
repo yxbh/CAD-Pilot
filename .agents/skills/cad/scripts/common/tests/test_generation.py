@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import shutil
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -631,6 +633,19 @@ class CadGenerationTests(unittest.TestCase):
         self.assertEqual(f"{self.relative_dir}/custom/flat-output", calls[0].cad_ref)
         self.assertTrue(output_path.exists())
         self.assertFalse(script_path.with_suffix(".step").exists())
+
+    def test_cli_output_takes_either_separator_and_rejects_another_systems_anchor(self) -> None:
+        def resolve(value: str) -> Path:
+            return cad_generation._resolve_cli_output_path(value, expected_suffixes=(".step",), tool_name="scripts/step")
+
+        with contextlib.chdir(self.temp_root):
+            expected = (self.temp_root / "outputs" / "part.step").resolve()
+            self.assertEqual(expected, resolve("outputs/part.step"))
+            self.assertEqual(expected, resolve("outputs\\part.step"))
+            self.assertEqual(expected, resolve(str(self.temp_root / "outputs" / "part.step")))
+            foreign = "\\outputs\\part.step" if sys.platform == "win32" else "C:\\outputs\\part.step"
+            with self.assertRaisesRegex(ValueError, "relative to the design root or absolute on this system"):
+                resolve(foreign)
 
     def test_step_output_override_requires_single_target(self) -> None:
         first_path = self._generator_script("first")

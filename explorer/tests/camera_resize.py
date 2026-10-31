@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 
 # Observe the actual R3F store through React's devtools contract, without a
@@ -50,7 +50,7 @@ def same_camera(expected, actual, position=True):
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})
             cdp = page.context.new_cdp_session(page)

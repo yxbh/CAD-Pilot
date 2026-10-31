@@ -197,7 +197,12 @@ def _resolve_cli_output_path(
     value = str(raw_output).strip()
     if not value:
         raise ValueError(f"{tool_name} --output must be a non-empty path")
-    output_path = Path(value).expanduser()
+    # A relative path takes either separator, as everywhere else the tools read paths; an absolute one is the
+    # platform's. A drive or root that is not absolute here (C:\x on macOS, \x on Windows) names no single place.
+    relative = relative_path(value)
+    output_path = (Path(*relative.parts) if relative is not None else Path(value)).expanduser()
+    if relative is None and not output_path.is_absolute():
+        raise ValueError(f"{tool_name} --output must be relative to the design root or absolute on this system")
     resolved = output_path.resolve() if output_path.is_absolute() else (Path.cwd() / output_path).resolve()
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
