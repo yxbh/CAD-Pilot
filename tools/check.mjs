@@ -28,7 +28,7 @@ const build = { name: "explorer build", command: node, args: ["explorer/scripts/
 const explorer = (name, ...args) => ({ name, command: node, args: ["explorer/scripts/test.mjs", ...args, "--no-build"], needs: [env.name, build.name] });
 const python = {
   name: "python", command: "uv", needs: [env.name],
-  args: ["run", "--no-sync", "pytest", "-q", "-n", workers, "--dist", "loadscope", "--durations", "10"],
+  args: ["run", "--no-sync", "pytest", "-q", "-n", workers, "--dist", "loadscope", "--durations", "30"],
 };
 const STAGES = {
   full: [env, build, python, explorer("explorer core", "core"), explorer("explorer browser", "browser")],

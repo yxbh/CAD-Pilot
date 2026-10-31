@@ -157,7 +157,7 @@ Use these commands from the workbench root for narrower checks:
 | Build only | `npm --prefix explorer run build` | Type-check and production assets; skipped when the sources, configuration and installed packages match the last successful build |
 | Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
 
-Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run a few files at a time (half the cores, at most three; scenarios within a file run in order) against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
+Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run a few files at a time (a quarter of the cores, at most three; scenarios within a file run in order) against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
 
 Both suites build the Explorer first when it is out of date, because the browser scenarios and the launcher's background viewers serve the built page. For a targeted run, build first if it uses either, then pass individual files to Node. For example:
 

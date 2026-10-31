@@ -59,15 +59,18 @@ if (args.includes("--list")) {
 // running suites at the same time, so they must not rebuild into the same folder.
 if (!args.includes("--no-build")) await buildExplorer();
 
+// A test that sets no timeout of its own fails after two minutes, so a hang names itself instead of holding a CI job
+// until the job's own limit.
 function run(files, concurrency) {
   if (!files.length) return 0;
-  const result = spawnSync(process.execPath, ["--test", ...concurrency, ...files.map((name) => `tests/${name}`)], { cwd, stdio: "inherit" });
+  const result = spawnSync(process.execPath, ["--test", "--test-timeout=120000", ...concurrency, ...files.map((name) => `tests/${name}`)], { cwd, stdio: "inherit" });
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
-// Each browser scenario drives its own Chromium with software WebGL, so only a few run at once: half the cores, at
-// most three. Core files use Node's default concurrency.
-const browserConcurrency = `--test-concurrency=${Math.max(1, Math.min(3, Math.floor(availableParallelism() / 2)))}`;
+// Each browser scenario drives its own Chromium with software WebGL, plus Python fixtures, so only a few run at once:
+// a quarter of the cores, at most three. A 3- or 4-core CI runner runs them one at a time, which its shard allows for.
+// Core files use Node's default concurrency.
+const browserConcurrency = `--test-concurrency=${Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)))}`;
 const statuses = [
   units.includes("core") ? run(coreFiles, []) : 0,
   run(units.filter((unit) => unit !== "core"), [browserConcurrency]),

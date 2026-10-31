@@ -26,7 +26,8 @@ runs:
         cache: npm
         cache-dependency-path: explorer/package.json
     - if: inputs.explorer == 'true'
-      run: npm --prefix explorer install
+      # No audit or funding requests: CI only needs the packages installed.
+      run: npm --prefix explorer install --no-audit --no-fund
       shell: bash
     - if: inputs.explorer == 'true'
       id: playwright
