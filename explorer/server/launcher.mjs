@@ -183,13 +183,23 @@ export async function openViewer(location, file, options = {}, { spawnViewer = s
   return { started, reloaded: !started && !!file, pid: running.record.pid, ...(replaced ? { replaced } : {}), ...shown };
 }
 
+// Signal 0 only asks: ESRCH means no such process, EPERM one that exists but belongs to someone else.
+const processExists = (pid) => {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error.code === "EPERM"; }
+};
+
+// Stopped means exited, not only silent: until then the viewer holds its working directory, the project folder, which
+// Windows lets no one delete or rename.
 export async function stopViewer(location, { timeout = 10_000 } = {}) {
   const running = await runningViewer(location);
   if (!running) return { stopped: false, running: false };
   await call(running.record, "api/shutdown", {});
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (!(await probeEndpoint(running.record, { timeout: 500 }))) return { stopped: true, url: running.record.url };
+    if (!(await probeEndpoint(running.record, { timeout: 500 })) && !processExists(running.record.pid)) {
+      return { stopped: true, url: running.record.url };
+    }
     await delay(150);
   }
   throw new PrototypeError("stop_timeout", "The Explorer viewer did not stop in time", 504);
