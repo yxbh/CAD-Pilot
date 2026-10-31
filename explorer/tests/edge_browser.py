@@ -16,7 +16,7 @@ def run(url, output):
     with sync_playwright() as playwright:
         browser = launch_chromium(playwright)
         try:
-            page = browser.new_page(viewport={"width": 1100, "height": 900}, device_scale_factor=2,
+            page = browser.new_page(viewport={"width": 800, "height": 600}, device_scale_factor=2,
                                     permissions=["clipboard-read", "clipboard-write"])
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))

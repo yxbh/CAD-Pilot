@@ -74,10 +74,10 @@ function run(name, files, filesAtOnce, concurrency) {
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
-// Browser scenarios render with software WebGL and build Python fixtures, so only a few files run at once: a quarter
-// of the cores, at most three. Each test process starts one Python host and Chromium for its scenarios
-// (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its whole
-// shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
+// Browser scenarios render WebGL, in software where there is no GPU, and build Python fixtures, so only a few files
+// run at once: a quarter of the cores, at most three. Each test process starts one Python host and Chromium for its
+// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its
+// whole shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
 const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
 const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
