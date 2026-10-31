@@ -167,7 +167,10 @@ test("a changed model during a coalesced read rejects old and new requests indep
   });
   const old = assert.rejects(service.inspectReference(reference), { code: "stale_reference" });
   await entered.promise;
-  model.parts[0].positions[0] = 9;
+  // A change of length, so the file's signature differs on every file system. NTFS timestamps advance only with the
+  // system clock tick, so a same-length rewrite this soon after the fixture's write can keep every signature field,
+  // and the new request would then share the read this test is holding open.
+  model.parts[0].positions[0] = 9.5;
   await writeFile(modelFile, JSON.stringify(model));
   await assert.rejects(service.inspectReference(reference), { code: "invalid_model" });
   release.resolve();
