@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readEndpoint, validEndpoint, writeEndpoint } from "../server/endpoint.mjs";
-import { locateView, openViewer } from "../server/launcher.mjs";
+import { assertBuilt, locateView, openViewer } from "../server/launcher.mjs";
 import { actionInput, referenceFrom, run } from "../scripts/explorer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
@@ -28,6 +28,7 @@ function exec(script, args, options) {
 
 // Real background viewers in a disposable runtime; never the user's runtime or saved setups.
 async function launcherFixture(t) {
+  await assertBuilt();
   const runtimeRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-launcher-")));
   const project = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad design ")));
   const env = { ...process.env, CAD_EXPLORER_RUNTIME_ROOT: runtimeRoot };

@@ -23,5 +23,7 @@ dev = ["pytest", "pyyaml"]
 package = false
 
 [tool.pytest.ini_options]
+# importlib mode imports each test file under its own path, so test files in different folders may share a name.
+addopts = ["--import-mode=importlib"]
 pythonpath = [".agents/skills/cad/scripts"]
-testpaths = ["tests", "explorer/tests", ".agents/skills/cad/scripts/common/tests"]
+testpaths = ["tests", "explorer/tests", ".agents/skills/cad/scripts"]

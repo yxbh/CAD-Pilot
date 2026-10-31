@@ -8,6 +8,7 @@ fixture only checks that ``scripts/step`` still writes it and warns.
 """
 
 import collections
+import os
 import struct
 import subprocess
 import sys
@@ -18,6 +19,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+from common.solid_check import TIME_SCALE_VARIABLE
 
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[2]
@@ -152,6 +155,8 @@ class MeshExportManifoldTests(unittest.TestCase):
             return subprocess.run(
                 [sys.executable, str(SCRIPTS_ROOT / "step"), f"{name}.py", "--stl", f"{name}.stl", "--3mf", f"{name}.3mf", "--verbose", *options],
                 cwd=cls.project,
+                # Other tests share the CPU, so the kernel check gets four times its default budgets.
+                env={**os.environ, TIME_SCALE_VARIABLE: "4"},
                 capture_output=True,
                 text=True,
                 timeout=600,

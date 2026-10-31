@@ -1,5 +1,14 @@
 import time
 
+from playwright.sync_api import expect
+
+
+def launch_chromium(playwright):
+    """Every scenario's browser. Expectations get the same 30 s as wait(): on a busy machine or CI runner a reload
+    can take longer than Playwright's 5 s default."""
+    expect.set_options(timeout=30_000)
+    return playwright.chromium.launch()
+
 
 class BrowserSession:
     def __init__(self, page, url, errors):

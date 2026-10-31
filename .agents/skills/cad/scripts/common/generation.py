@@ -9,7 +9,7 @@ import shutil
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Sequence
 
 from common.inspect_imports import ensure_inspect_import_path
@@ -38,6 +38,7 @@ from common.catalog import (
     source_from_path,
 )
 from common.cli_logging import CliLogger
+from common.paths import relative_path
 from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
 from common.glb import read_step_topology_manifest_from_glb
@@ -196,9 +197,12 @@ def _resolve_cli_output_path(
     value = str(raw_output).strip()
     if not value:
         raise ValueError(f"{tool_name} --output must be a non-empty path")
-    if "\\" in value:
-        raise ValueError(f"{tool_name} --output must use POSIX '/' separators")
-    output_path = Path(value).expanduser()
+    # A relative path takes either separator, as everywhere else the tools read paths; an absolute one is the
+    # platform's. A drive or root that is not absolute here (C:\x on macOS, \x on Windows) names no single place.
+    relative = relative_path(value)
+    output_path = (Path(*relative.parts) if relative is not None else Path(value)).expanduser()
+    if relative is None and not output_path.is_absolute():
+        raise ValueError(f"{tool_name} --output must be relative to the design root or absolute on this system")
     resolved = output_path.resolve() if output_path.is_absolute() else (Path.cwd() / output_path).resolve()
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
@@ -216,10 +220,8 @@ def _resolve_step_option_output_path(
     value = str(raw_output or "").strip()
     if not value:
         raise ValueError(f"{field_name} must be a non-empty path")
-    if "\\" in value:
-        raise ValueError(f"{field_name} must use POSIX '/' separators")
-    pure = PurePosixPath(value)
-    if pure.is_absolute() or any(part in {"", "."} for part in pure.parts):
+    pure = relative_path(value)
+    if pure is None:
         raise ValueError(f"{field_name} must be relative")
     resolved = (base_step_path.resolve().parent / Path(*pure.parts)).resolve()
     if resolved.suffix.lower() not in expected_suffixes:

@@ -371,9 +371,4 @@ def _parse_path_field(
             f"{_display_path(script_path)} {function_name}() envelope {field_name} "
             "must be a non-empty string"
         )
-    if "\\" in value:
-        raise ValueError(
-            f"{_display_path(script_path)} {function_name}() envelope {field_name} "
-            "must use POSIX '/' separators"
-        )
     return value.strip()

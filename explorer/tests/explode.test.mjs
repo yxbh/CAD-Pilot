@@ -243,10 +243,12 @@ test("the first layout of a very large assembly stays quick", () => {
   };
   for (const [name, model] of [["side by side", grid(20000, 4)], ["overlapping", grid(20000, 6)], ["piled", pile]]) {
     for (const direction of ["radial", "x", "z"]) {
-      const started = performance.now();
+      // This process's CPU time, not wall time, so other suites running alongside cannot fail it.
+      const started = process.cpuUsage();
       placeParts(model, 1, direction, "");
-      const elapsed = performance.now() - started;
-      assert.ok(elapsed < 5000, `${name} ${direction}: ${Math.round(elapsed)} ms`);
+      const { user, system } = process.cpuUsage(started);
+      const elapsed = (user + system) / 1000;
+      assert.ok(elapsed < 5000, `${name} ${direction}: ${Math.round(elapsed)} ms of CPU time`);
     }
   }
 });

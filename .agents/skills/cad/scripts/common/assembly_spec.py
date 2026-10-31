@@ -6,10 +6,10 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from pathlib import PurePosixPath
 
 from common.catalog import find_source_by_cad_ref
 from common.metadata import parse_generator_metadata
+from common.paths import relative_path
 
 
 REPO_ROOT = Path.cwd().resolve()
@@ -431,10 +431,8 @@ def _resolve_instance_step_path(
     *,
     field_name: str,
 ) -> tuple[Path, str]:
-    if "\\" in raw_path:
-        raise AssemblySpecError(f"{_display_path(assembly_path)} {field_name} must use POSIX '/' separators")
-    pure = PurePosixPath(raw_path)
-    if pure.is_absolute() or any(part in {"", "."} for part in pure.parts):
+    pure = relative_path(raw_path)
+    if pure is None:
         raise AssemblySpecError(
             f"{_display_path(assembly_path)} {field_name} must be a relative STEP path"
         )

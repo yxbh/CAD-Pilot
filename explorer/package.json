@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/build.mjs",
     "test": "npm run test:core && npm run test:browser",
     "test:core": "node scripts/test.mjs core",
-    "test:browser": "npm run build && node scripts/test.mjs browser",
+    "test:browser": "node scripts/test.mjs browser",
     "serve": "node server/standalone.mjs"
   },
   "dependencies": {

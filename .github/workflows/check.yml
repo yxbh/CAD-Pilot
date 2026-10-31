@@ -1,0 +1,67 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push supersedes a pull request's run; every push to main is checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            browsers: ~/Library/Caches/ms-playwright
+          - os: windows-latest
+            browsers: ~\AppData\Local\ms-playwright
+          - os: ubuntu-latest
+            browsers: ~/.cache/ms-playwright
+    steps:
+      - uses: actions/checkout@v7
+      # uv.lock and explorer/package-lock.json stay local, so each run resolves dependencies afresh.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+          # The newest Python the CAD dependencies publish wheels for; a runner's default can be newer.
+          python-version: "3.14"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: explorer/package.json
+      - run: uv sync
+      - run: npm --prefix explorer install
+      - id: playwright
+        run: echo "version=$(uv run python -c 'from importlib.metadata import version; print(version("playwright"))' | tr -d '\r')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ matrix.browsers }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - run: uv run python -m playwright install chromium
+      - if: runner.os == 'Linux'
+        run: uv run python -m playwright install-deps chromium
+      # exec, so a cancelled run's signal reaches the check runner, which stops its stages and prints their output.
+      - run: exec node tools/check.mjs
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: check-logs-${{ matrix.os }}
+          path: .local/check/
+          include-hidden-files: true
+          if-no-files-found: ignore

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 SPACER_LIFT, COVER_LIFT = 45, 70
 
@@ -33,7 +33,7 @@ def section_max(page):
 
 def run(url, output):
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})
             errors = []

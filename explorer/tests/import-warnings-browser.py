@@ -12,7 +12,7 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Compound
 from OCP.gp import gp_Pnt
 from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 
 def rounded_fixture(path):
@@ -37,7 +37,7 @@ def rounded_fixture(path):
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1248, "height": 920})
             errors = []
@@ -314,7 +314,7 @@ def run(url, output):
 def check_restored_cleanup(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1100, "height": 800})
             errors = []

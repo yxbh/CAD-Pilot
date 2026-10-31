@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageChops
 from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 
 class ReferenceMarkup(HTMLParser):
@@ -25,7 +25,7 @@ class ReferenceMarkup(HTMLParser):
 def run(url, output):
     output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1000, "height": 1000}, permissions=["clipboard-read", "clipboard-write"])
             errors, external, draft_requests = [], [], []

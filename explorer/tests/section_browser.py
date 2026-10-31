@@ -20,7 +20,7 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from PIL import Image, ImageChops, ImageStat
 from playwright.sync_api import expect, sync_playwright
 
-from browser_session import BrowserSession
+from browser_session import BrowserSession, launch_chromium
 
 
 FIXTURE_NAME = "section-fixture.step"
@@ -116,7 +116,7 @@ def run(url, output, fixture):
     output.mkdir(parents=True, exist_ok=True)
     source_before = hashlib.sha256(fixture.read_bytes()).hexdigest()
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        browser = launch_chromium(playwright)
         try:
             page = browser.new_page(viewport={"width": 1120, "height": 820}, permissions=["clipboard-read", "clipboard-write"])
             errors = []
@@ -245,7 +245,8 @@ def run(url, output, fixture):
             number_input.fill(str(preview_max))
             number_input.press("Tab")
             target_position = preview_max
-            reached = wait(lambda current: current["explode"] == 1 and math.isclose(current["section"]["position"], target_position, abs_tol=1e-6))
+            wait(lambda current: current["explode"] == 1 and math.isclose(current["section"]["position"], target_position, abs_tol=1e-6))
+            reached = settled()
             assert math.isclose(reached["rendered"]["bounds"]["max"][2], preview_max, abs_tol=1e-6)
             assert reached["rendered"]["camera"] == section_camera
             page.get_by_role("button", name="Close section view settings").click()
