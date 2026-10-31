@@ -9,21 +9,22 @@ const USAGE = "Usage: node scripts/test.mjs core|browser|shard <i>/<n> [--no-bui
 // slowest sets a run's time), used to give shards similar work. The core suite is one unit and each browser file
 // another; a unit not listed counts as the median. Refresh from a run's per-test times when a file's time changes a lot.
 const SECONDS = {
-  "camera-browser.test.mjs": 115,
-  "edge-browser.test.mjs": 84,
-  "review-recovery-browser.test.mjs": 75,
-  core: 72,
-  "explode-camera-browser.test.mjs": 58,
-  "launcher-browser.test.mjs": 53,
-  "assembly-browser.test.mjs": 47,
-  "cleanup-persistence-browser.test.mjs": 38,
-  "import-warnings-browser.test.mjs": 38,
-  "studio-views-browser.test.mjs": 33,
-  "section-browser.test.mjs": 29,
-  "render-reports-browser.test.mjs": 21,
-  "viewer-browser.test.mjs": 21,
-  "renderer-browser.test.mjs": 6,
-}
+  "edge-browser.test.mjs": 78,
+  "explode-camera-browser.test.mjs": 70,
+  "review-recovery-browser.test.mjs": 70,
+  "launcher-browser.test.mjs": 44,
+  "studio-views-browser.test.mjs": 42,
+  "import-warnings-browser.test.mjs": 37,
+  "camera-browser.test.mjs": 31,
+  core: 31,
+  "render-reports-browser.test.mjs": 27,
+  "section-browser.test.mjs": 27,
+  "viewer-browser.test.mjs": 19,
+  "mesh-browser.test.mjs": 15,
+  "cleanup-persistence-browser.test.mjs": 14,
+  "assembly-browser.test.mjs": 13,
+  "renderer-browser.test.mjs": 5,
+};
 
 const args = process.argv.slice(2);
 const [mode, part] = args.filter((arg) => !arg.startsWith("--"));
@@ -69,12 +70,14 @@ function run(files, concurrency) {
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
-// Each browser scenario drives its own Chromium with software WebGL, plus Python fixtures, so only a few run at once:
-// a quarter of the cores, at most three. A 3- or 4-core CI runner runs them one at a time, which its shard allows for.
-// Core files use Node's default concurrency.
-const browserConcurrency = `--test-concurrency=${Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)))}`;
+// Browser scenarios render with software WebGL and build Python fixtures, so only a few files run at once: a quarter
+// of the cores, at most three. Each test process starts one Python host and Chromium for its scenarios
+// (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its whole
+// shard shares a single host. Core files use Node's default concurrency.
+const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
+const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
 const statuses = [
   units.includes("core") ? run(coreFiles, []) : 0,
-  run(units.filter((unit) => unit !== "core"), [browserConcurrency]),
+  run(units.filter((unit) => unit !== "core"), browserOptions),
 ];
 process.exitCode = statuses.find((status) => status !== 0) ?? 0;

@@ -18,9 +18,9 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.XCAFDoc import XCAFDoc_ColorSurf, XCAFDoc_DocumentTool
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from PIL import Image, ImageChops, ImageStat
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
-from browser_session import BrowserSession, launch_chromium
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 FIXTURE_NAME = "section-fixture.step"

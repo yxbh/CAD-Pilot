@@ -5,8 +5,7 @@ import time
 from pathlib import Path
 
 from PIL import Image, ImageChops
-from playwright.sync_api import sync_playwright
-from browser_session import launch_chromium
+from browser_session import launch_chromium, sync_playwright
 
 
 def run(url, output):

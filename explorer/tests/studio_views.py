@@ -7,8 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from PIL import Image, ImageChops, ImageStat
-from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession, launch_chromium
+from playwright.sync_api import expect
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 def run(url, output):

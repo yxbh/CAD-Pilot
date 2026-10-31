@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # A newer push supersedes a pull request's run; every push to main is checked.
+  # A newer push supersedes a pull request's run. Every push to main is checked: each commit gets its own group,
+  # because a group keeps only one pending run and a third quick push would otherwise replace the second's.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:

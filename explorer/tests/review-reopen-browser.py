@@ -5,8 +5,8 @@ import json
 import time
 from pathlib import Path
 
-from playwright.sync_api import expect, sync_playwright
-from browser_session import launch_chromium
+from playwright.sync_api import expect
+from browser_session import launch_chromium, sync_playwright
 
 
 def run(url, output):

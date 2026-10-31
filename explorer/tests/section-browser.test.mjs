@@ -1,16 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import test from "node:test";
-import { explorerRoot, workbenchPython, workbenchRoot } from "../server/paths.mjs";
+import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { runBrowser } from "./browser-fixture.mjs";
 import { createHeadlessRenderer } from "../server/renderer.mjs";
+import { runPython } from "./python-host.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
-const execute = promisify(execFile);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 
 test("visual section caps preserve holes, assembly gaps, picking and captured pose", { timeout: 210_000 }, async (t) => {
@@ -19,8 +17,7 @@ test("visual section caps preserve holes, assembly gaps, picking and captured po
   const output = path.join(explorerRoot, ".local", viewId);
   const fixture = path.join(output, "section-fixture.step");
   await mkdir(output, { recursive: true });
-  await execute(workbenchPython, ["-B", path.join(explorerRoot, "tests", "section_browser.py"), "--output", output, "--fixtures-only"],
-    { cwd: explorerRoot, timeout: 60_000 });
+  await runPython("section_browser.py", ["--output", output, "--fixtures-only"], { timeout: 60_000 });
   const sourceHash = digest(await readFile(fixture));
   const service = await createService({ projectRoot: workbenchRoot, viewId, file: path.relative(workbenchRoot, fixture), log: () => {}, renderer: createHeadlessRenderer });
   await service.initialize();

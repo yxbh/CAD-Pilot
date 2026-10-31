@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-import { explorerRoot, workbenchPython } from "../server/paths.mjs";
+import { runPython } from "./python-host.mjs";
 import { createTestRuntime, viewStateFile } from "./service-fixture.mjs";
 
 export async function renderReportFixture(run) {
@@ -11,9 +9,7 @@ export async function renderReportFixture(run) {
   const root = path.join(runtime.runtimeRoot, "project");
   try {
     await mkdir(root);
-    await promisify(execFile)(workbenchPython, [
-      "-B", path.join(explorerRoot, "tests", "render-reports-browser.py"), "--output", root, "--fixtures-only",
-    ], { timeout: 60_000, cwd: root });
+    await runPython("render-reports-browser.py", ["--output", root, "--fixtures-only"], { timeout: 60_000 });
     const service = await runtime.createService({ projectRoot: root, file: "a.step", log: () => {} });
     const stateFile = viewStateFile(runtime.runtimeRoot, service.projectRoot, "default");
     await service.initialize();
