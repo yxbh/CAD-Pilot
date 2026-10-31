@@ -21,10 +21,11 @@ from common.assembly_composition import (
     build_native_assembly_composition,
     component_name,
 )
-from common.assembly_spec import REPO_ROOT, assembly_spec_children, read_assembly_spec
+from common.assembly_spec import REPO_ROOT, AssemblySpecError, assembly_spec_children, read_assembly_spec
 from common.catalog import (
     CAD_ROOT,
     CadSource,
+    CadSourceError,
     STEP_SUFFIXES,
     StepImportOptions,
     cad_ref_from_step_path,
@@ -37,11 +38,11 @@ from common.catalog import (
 )
 from common.cli_logging import CliLogger
 from common.generator_module import GeneratorImportError, call_generator, load_generator
-from common.issued_refs import forget, mark, refs_issued_for
+from common.issued_refs import forget, issued_step_hash, mark
 from common.paths import command_line_path, relative_path
 from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.metadata import (
     DEFAULT_MESH_ANGULAR_TOLERANCE,
     DEFAULT_MESH_TOLERANCE,
@@ -290,45 +291,36 @@ def _validate_cli_output_override(
             )
 
 
-def _apply_step_output_override(
+def _apply_output_override(
     selected_specs: Sequence[EntrySpec],
     *,
     output_path: Path | None,
     all_specs: Sequence[EntrySpec],
+    retarget: Callable[[EntrySpec, Path], EntrySpec],
 ) -> list[EntrySpec]:
+    """The selected specs, with the one target's output moved to ``--output`` when it is given."""
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise StepInputError(f"--output can only be used with exactly one target")
+        raise StepInputError("--output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise StepInputError(f"--output can only be used with generated Python targets")
+        raise StepInputError("--output can only be used with generated Python targets")
     _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
-    return [
-        replace(
-            spec,
-            cad_ref=cad_ref_from_step_path(output_path),
-            display_name=_display_name_for_path(output_path),
-            step_path=output_path,
-        )
-    ]
+    return [retarget(spec, output_path)]
 
 
-def _apply_dxf_output_override(
-    selected_specs: Sequence[EntrySpec],
-    *,
-    output_path: Path | None,
-    all_specs: Sequence[EntrySpec],
-) -> list[EntrySpec]:
-    if output_path is None:
-        return list(selected_specs)
-    if len(selected_specs) != 1:
-        raise StepInputError(f"--output can only be used with exactly one target")
-    spec = selected_specs[0]
-    if spec.source != "generated":
-        raise StepInputError(f"--output can only be used with generated Python targets")
-    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
-    return [replace(spec, dxf_path=output_path)]
+def _step_output(spec: EntrySpec, output_path: Path) -> EntrySpec:
+    return replace(
+        spec,
+        cad_ref=cad_ref_from_step_path(output_path),
+        display_name=_display_name_for_path(output_path),
+        step_path=output_path,
+    )
+
+
+def _dxf_output(spec: EntrySpec, output_path: Path) -> EntrySpec:
+    return replace(spec, dxf_path=output_path)
 
 
 def _resolve_discovery_root(root: Path | str) -> Path:
@@ -543,7 +535,7 @@ def _warn_unlabelled_parts(script_path: Path, names: Sequence[str], *, logger: C
     logger.warning(
         f"{count} in {_display_path(script_path)} had no label and {'was' if len(names) == 1 else 'were'} named {shown}. "
         "Set .label on each part: .solids(), a Solid's .fillet() and Part(...) return unlabelled shapes, and a type "
-        "name such as SOLID, COMPOUND or Shell, which imported shapes carry, counts as none."
+        "name in capitals such as SOLID or COMPOUND, which imported shapes carry, or a label of digits alone counts as none."
     )
 
 
@@ -661,9 +653,21 @@ def _report_selector_manifest_change(
     logger: CliLogger,
 ) -> None:
     # Only a build someone took face or edge refs from is worth a word.
-    if spec.step_path is None or previous_manifest is None:
+    issued = issued_step_hash(spec.step_path) if spec.step_path is not None else None
+    if issued is None:
         return
-    if not refs_issued_for(spec.step_path, str(previous_manifest.get("stepHash") or "")):
+    if previous_manifest is None:
+        # The previous sidecar is missing, unreadable or from older tools, so its numbering cannot be compared. A STEP
+        # carries the time it was written, so rebuilt bytes almost always differ: this warns whenever refs were issued
+        # and stays silent only for the very file they were issued for.
+        if issued != next_manifest.get("stepHash"):
+            forget(spec.step_path)
+            logger.warning(
+                f"{spec.cad_ref} was rebuilt and its previous face and edge numbering could not be read; @cad refs taken "
+                "from an earlier build may no longer name the same geometry. Re-resolve them with scripts/inspect."
+            )
+        return
+    if issued != previous_manifest.get("stepHash"):
         return
     change = selector_manifest_diff(previous_manifest, next_manifest)
     if bool(change.get("topologyChanged")):
@@ -1364,10 +1368,11 @@ def generate_step_targets(
     )
     for spec in selected_specs:
         _validate_step_target(spec, direct_step_kind=direct_step_kind)
-    selected_specs = _apply_step_output_override(
+    selected_specs = _apply_output_override(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
+        retarget=_step_output,
     )
     if step_options is not None and step_options.has_metadata:
         selected_specs = [_apply_step_options_to_spec(spec, step_options) for spec in selected_specs]
@@ -1397,10 +1402,11 @@ def generate_dxf_targets(
     all_specs, selected_specs = _selected_specs_for_targets(targets)
     for spec in selected_specs:
         _validate_dxf_target(spec)
-    selected_specs = _apply_dxf_output_override(
+    selected_specs = _apply_output_override(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
+        retarget=_dxf_output,
     )
     _run_selected_specs(
         selected_specs,
@@ -1412,36 +1418,16 @@ def generate_dxf_targets(
     return 0
 
 
-def run_tool_cli(
+def run_cli(
+    parser: argparse.ArgumentParser,
     argv: Sequence[str] | None,
-    *,
-    prog: str,
-    description: str,
-    action: Callable[..., int],
-    target_help: str | None = None,
-    output_help: str | None = None,
+    action: Callable[[argparse.Namespace], int],
 ) -> int:
-    parser = argparse.ArgumentParser(prog=prog, description=description)
-    parser.add_argument(
-        "targets",
-        nargs="+",
-        help=target_help or "Explicit Python generator or STEP/STP file path to generate.",
-    )
-    if output_help is not None:
-        parser.add_argument("-o", "--output", metavar="PATH", help=output_help)
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed progress and timing information.",
-    )
+    """Run a generation tool: a problem with its inputs is one ``<prog>: error: <message>`` line and exit status 2."""
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if output_help is not None and args.output is not None and len(args.targets) != 1:
-        parser.error("--output can only be used with exactly one target")
     try:
-        if output_help is not None:
-            return action(args.targets, output=args.output, verbose=bool(args.verbose))
-        return action(args.targets, verbose=bool(args.verbose))
-    except (GeneratorImportError, StepInputError) as exc:
+        return action(args)
+    except (GeneratorImportError, StepInputError, CadSourceError, AssemblySpecError, AssemblyCompositionError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
 

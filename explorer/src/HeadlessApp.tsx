@@ -26,9 +26,6 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
   const [composed, setModel] = useState<Model | null>(null);
   const [surface, setSurface] = useState<{ width: number; height: number; background: string | null }>({ ...defaultSize, background: null });
   const latest = useRef<ViewState | null>(null);
-  // The surface React has committed: a capture is drawn only once its own size and backdrop are in place.
-  const applied = useRef(surface);
-  useEffect(() => { applied.current = surface; }, [surface]);
   const lastReport = useRef<RenderReport | null>(null);
   const capture = useRef<(() => ViewCapture) | null>(null);
   // A graphics failure is reported once: the server answers it by restarting the browser in software rendering.
@@ -58,16 +55,18 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     setState(latest.current);
   }, []);
 
+  // A capture waits for a frame the scene reported at its own size and backdrop. The scene commits apart from this
+  // component, so the surface it was given here says nothing about what the scene has drawn yet.
   const settle = useCallback(async (revision: number, width: number, height: number, background: string | null) => {
     await nextFrame(); await nextFrame();
     for (let frame = 0; frame < 900; frame++) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
-      const surfaceReady = applied.current.width === width && applied.current.height === height && applied.current.background === background;
-      if (capture.current && surfaceReady && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height) return;
+      if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
+          report.background === background) return;
       await nextFrame();
     }
-    throw new Error("The background renderer did not draw the view at the requested size");
+    throw new Error("The background renderer did not draw the view at the requested size and backdrop");
   }, []);
 
   const onCapture = useCallback((request: CaptureRequest) => {

@@ -2,8 +2,9 @@
 
 ``scripts/inspect`` notes a build when it reports ``@cad`` face, edge or
 corner refs for it. When ``scripts/step`` rebuilds that STEP with different
-topology, it warns once that those refs no longer name the same geometry;
-a rebuild nobody took refs from says nothing.
+topology, or as different bytes whose previous topology it cannot read, it
+warns once that those refs may no longer name the same geometry; a rebuild
+nobody took refs from says nothing.
 """
 
 from __future__ import annotations
@@ -22,13 +23,12 @@ def _marker(step_path: Path) -> Path:
     return cache_path(KIND, f"{key}.json")
 
 
-def refs_issued_for(step_path: Path, step_hash: str | None) -> bool:
-    if not step_hash:
-        return False
+def issued_step_hash(step_path: Path) -> str | None:
+    """The hash of the STEP build refs were last handed out for, or None when nobody took any."""
     try:
-        return json.loads(_marker(step_path).read_text(encoding="utf-8")).get("stepHash") == step_hash
+        return str(json.loads(_marker(step_path).read_text(encoding="utf-8")).get("stepHash") or "") or None
     except (OSError, ValueError, AttributeError):
-        return False
+        return None
 
 
 def mark(step_path: Path, step_hash: str) -> None:

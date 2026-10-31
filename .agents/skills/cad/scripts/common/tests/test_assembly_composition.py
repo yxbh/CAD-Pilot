@@ -5,9 +5,13 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from common.assembly_composition import build_linked_assembly_composition, build_native_assembly_composition
+from common.assembly_composition import (
+    AssemblyCompositionError,
+    build_linked_assembly_composition,
+    build_native_assembly_composition,
+)
 from common.assembly_spec import AssemblyInstanceSpec, AssemblyNodeSpec, AssemblySpec
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION, read_step_topology_manifest_from_glb
 from common.render import part_glb_path
 from common.tests.cad_test_roots import IsolatedCadRoots
 
@@ -20,9 +24,9 @@ def _pad4(payload: bytes, *, byte: bytes = b"\0") -> bytes:
     return payload + (byte * padding)
 
 
-def _write_topology_glb(path: Path, manifest: dict[str, object]) -> None:
+def _write_topology_glb(path: Path, manifest: dict[str, object], *, schema_version: int = STEP_TOPOLOGY_SCHEMA_VERSION) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_payload = json.dumps({"schemaVersion": 1, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
+    manifest_payload = json.dumps({"schemaVersion": schema_version, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
     binary = _pad4(manifest_payload)
     gltf = {
         "asset": {"version": "2.0"},
@@ -31,7 +35,7 @@ def _write_topology_glb(path: Path, manifest: dict[str, object]) -> None:
         "extensionsUsed": ["STEP_topology"],
         "extensions": {
             "STEP_topology": {
-                "schemaVersion": 1,
+                "schemaVersion": schema_version,
                 "indexView": 0,
                 "entryKind": "assembly" if manifest.get("assembly") else "part",
                 "encoding": "utf-8",
@@ -98,7 +102,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
     def _assembly_mesh_path(self) -> Path:
         return part_glb_path(self.temp_root / "assembly.step")
 
-    def _write_source_topology(self, step_path: Path) -> None:
+    def _write_source_topology(self, step_path: Path, *, schema_version: int = STEP_TOPOLOGY_SCHEMA_VERSION) -> None:
         _write_topology_glb(
             part_glb_path(step_path),
             {
@@ -108,6 +112,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "edgeCount": 12,
                 }
             },
+            schema_version=schema_version,
         )
 
     def _read_topology(self, topology_path: Path) -> dict[str, object]:
@@ -206,7 +211,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "o1.1",
                     "o1",
                     "1.1",
-                    "=>[0:1:1:54]",
+                    None,
                     "sample_component",
                     IDENTITY_TRANSFORM,
                     {"min": [0, 0, 0], "max": [1, 1, 1]},
@@ -237,7 +242,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "o1.1",
                     "o1",
                     "1.1",
-                    "=>[0:1:1:2]",
+                    None,
                     "leaf",
                     IDENTITY_TRANSFORM,
                     {"min": [0, 0, 0], "max": [1, 1, 1]},
@@ -250,8 +255,8 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "o1.1.1",
                     "o1.1",
                     "1.1.1",
-                    "=>[0:1:1:3]",
-                    "=>[0:1:1:3]",
+                    None,
+                    None,
                     IDENTITY_TRANSFORM,
                     {"min": [0, 0, 0], "max": [1, 1, 1]},
                     1,
@@ -314,7 +319,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "o1.1",
                     "o1",
                     "1.1",
-                    "=>[0:1:1:2]",
+                    None,
                     "custom_leaf_instance",
                     IDENTITY_TRANSFORM,
                     {"min": [0, 0, 0], "max": [1, 1, 1]},
@@ -357,6 +362,52 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
         child = payload["root"]["children"][0]
         self.assertEqual("custom_leaf_instance", child["displayName"])
 
+    def test_linked_assembly_names_every_part_whose_topology_is_missing_or_out_of_date(self) -> None:
+        # One error for all of them, so the parts can be generated again in one go rather than one per attempt.
+        steps = {name: self._write_catalog_step(f"parts/{name}") for name in ("current", "old", "never")}
+        self._write_source_topology(steps["current"])
+        self._write_source_topology(steps["old"], schema_version=STEP_TOPOLOGY_SCHEMA_VERSION - 1)
+        placed = ["current", "old", "never", "old"]
+        rows = [["o1", "", "1", "assembly", "assembly", IDENTITY_TRANSFORM, None, 4, 24, 48, 32]]
+        rows += [[f"o1.{i}", "o1", f"1.{i}", f"{name}_{i}", name, IDENTITY_TRANSFORM, None, 1, 6, 12, 8]
+                 for i, name in enumerate(placed, start=1)]
+        topology_path = self._write_topology(rows)
+        assembly_spec = AssemblySpec(
+            assembly_path=self.temp_root / "assembly.py",
+            instances=tuple(
+                AssemblyInstanceSpec(
+                    instance_id=f"{name}_{i}",
+                    source_path=steps[name].resolve(),
+                    path=f"{name}.step",
+                    name=f"{name}_{i}",
+                    transform=tuple(float(value) for value in IDENTITY_TRANSFORM),
+                    use_source_colors=False,
+                )
+                for i, name in enumerate(placed, start=1)
+            ),
+        )
+
+        with self.assertRaises(AssemblyCompositionError) as raised:
+            build_linked_assembly_composition(
+                cad_ref="assemblies/assembly",
+                topology_path=topology_path,
+                topology_manifest=self._read_topology(topology_path),
+                assembly_spec=assembly_spec,
+                mesh_path=self._assembly_mesh_path(),
+                entries_by_step_path={
+                    step.resolve(): SimpleNamespace(kind="part", step_path=step, source_ref=f"parts/{name}.py")
+                    for name, step in steps.items()
+                } | {
+                    # An imported STEP is generated again with its kind.
+                    steps["never"].resolve(): SimpleNamespace(kind="part", step_path=steps["never"], source_ref="imports/never.step"),
+                },
+                read_assembly_spec=lambda path: (_ for _ in ()).throw(AssertionError(path)),
+            )
+
+        message = str(raised.exception)
+        self.assertIn("parts/old.py, imports/never.step --kind part. Generate each again with scripts/step as given", message)
+        self.assertNotIn("current", message)
+
     def test_linked_generated_subassembly_expands_to_descendant_leaf_nodes(self) -> None:
         module_step_path = self._write_catalog_step("assemblies/module")
         module_source_path = module_step_path.with_suffix(".py")
@@ -371,7 +422,7 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                     "o1.1.1",
                     "o1.1",
                     "1.1.1",
-                    "=>[0:1:1:3]",
+                    None,
                     "module__leaf",
                     IDENTITY_TRANSFORM,
                     {"min": [0, 0, 0], "max": [1, 1, 1]},

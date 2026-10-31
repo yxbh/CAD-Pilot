@@ -4,9 +4,10 @@ import { access, glob, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { explorerRoot } from "../server/paths.mjs";
 
-// Everything the type-check (tsconfig "include") and the page bundle read, plus the installed package tree.
+// Everything the type-check (tsconfig "include") and the page bundle read, the installed package tree, and this script,
+// which says how they are built.
 const INPUTS = [
-  "index.html", "package.json", "tsconfig.json", "vite.config.ts",
+  "index.html", "package.json", "tsconfig.json", "vite.config.ts", "scripts/incremental-build.mjs",
   "src/**/*", "shared/**/*", "tests/*.test.ts", "node_modules/.package-lock.json",
 ];
 const stamp = path.join(explorerRoot, "dist", ".inputs.sha256");
