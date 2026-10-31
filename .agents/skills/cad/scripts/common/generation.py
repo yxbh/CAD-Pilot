@@ -543,7 +543,7 @@ def _warn_unlabelled_parts(script_path: Path, names: Sequence[str], *, logger: C
     logger.warning(
         f"{count} in {_display_path(script_path)} had no label and {'was' if len(names) == 1 else 'were'} named {shown}. "
         "Set .label on each part: .solids(), a Solid's .fillet() and Part(...) return unlabelled shapes, and a type "
-        "name such as SOLID, COMPOUND or Shell, which imported shapes carry, counts as none."
+        "name in capitals such as SOLID or COMPOUND, which imported shapes carry, or a label of digits alone counts as none."
     )
 
 
