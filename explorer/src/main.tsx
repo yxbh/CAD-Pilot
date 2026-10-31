@@ -200,7 +200,7 @@ export function App({ host }: { host: ViewerHost }) {
             <div className="tool-group" role="group" aria-label="Appearance">
               <IconButton label="Inspect appearance" icon={Glasses} aria-pressed={state?.appearance === "inspect"}
                 onClick={() => run("set_appearance", { mode: "inspect" })} />
-              <IconButton label="Studio appearance" icon={Sun} aria-pressed={state?.appearance === "studio"}
+              <IconButton label="Studio appearance" icon={Sun} aria-pressed={state?.appearance === "studio" || state?.appearance === "raytraced"}
                 onClick={() => run("set_appearance", { mode: "studio" })} />
               <IconButton label="Appearance settings" icon={SlidersHorizontal} aria-expanded={appearanceOpen}
                 onClick={() => { setAppearanceOpen(!appearanceOpen); section.setOpen(false); setAnalysisOpen(false); }} />
@@ -235,13 +235,15 @@ export function App({ host }: { host: ViewerHost }) {
       {appearanceOpen && !drawingActive && <div className="appearance-popover" role="dialog" aria-label="Appearance settings"
         onKeyDown={(event) => { if (event.key === "Escape") setAppearanceOpen(false); }}>
         <div className="panel-heading"><strong>Appearance</strong><IconButton label="Close appearance settings" icon={X} onClick={() => setAppearanceOpen(false)} /></div>
-        <label>Finish <select aria-label="Studio finish" disabled={state?.appearance !== "studio"} value={state?.materialFinish ?? "plastic"}
+        <label>Finish <select aria-label="Studio finish" disabled={state?.appearance === "inspect"} value={state?.materialFinish ?? "plastic"}
           onChange={(event) => run("set_appearance", { finish: event.target.value })}>
           <option value="plastic">Plastic</option><option value="satin">Satin metal</option>
           <option value="polished">Polished metal</option><option value="rubber">Rubber</option>
         </select></label>
         <label><input type="checkbox" checked={state?.showEdges ?? true} onChange={(event) => run("set_appearance", { showEdges: event.target.checked })} /> Outlines</label>
-        <p>Visual finish only. STEP colors and geometry are unchanged.</p>
+        <label><input type="checkbox" checked={state?.appearance === "raytraced"}
+          onChange={(event) => run("set_appearance", { mode: event.target.checked ? "raytraced" : "studio" })} /> Ray traced</label>
+        <p>Visual finish only. STEP colors and geometry are unchanged. Ray traced path-traces Studio's light and finishes, refining as it goes.</p>
       </div>}
       {section.open && !drawingActive && <SectionPanel control={section} busy={busy} />}
       {analysisOpen && !drawingActive && state && <AnalysisPanel analysis={state.analysis} busy={busy}
@@ -275,7 +277,8 @@ export function App({ host }: { host: ViewerHost }) {
             <span>{activeReview ? `${activeReview.drawing.present.length} marks` : ""}</span>
             <span>{activeReview ? activeReview.pose.step !== undefined ? `Assembly step ${activeReview.pose.step}` : `${Math.round(activeReview.pose.explode * 100)}% exploded` : ""}</span>
             <span>{activeReview?.pose.camera.projection === "orthographic" ? "Orthographic (parallel)" : "Perspective"}</span>
-            <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "plastic"}` : "Inspect"}</span>
+            <span>{activeReview?.pose.appearance === "studio" ? `Studio / ${activeReview.pose.materialFinish ?? "plastic"}`
+              : activeReview?.pose.appearance === "raytraced" ? `Ray traced / ${activeReview.pose.materialFinish ?? "plastic"}` : "Inspect"}</span>
             <span>{activeReview?.pose.section?.enabled
               ? `${activeReview.pose.section.axis.toUpperCase()} section at ${activeReview.pose.section.position.toFixed(2)} mm${activeReview.pose.section.flipped ? " / flipped" : ""}`
               : "Section off"}</span>

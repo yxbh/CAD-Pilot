@@ -1,6 +1,7 @@
 import type { EdgeSelection, FaceSelection, Model, PointSelection, ViewState } from "./model.ts";
 import type { CameraState } from "../shared/view-settings.mjs";
 import type { AnalysisSettings, AnalysisStats } from "../shared/analysis.mjs";
+import type { TraceLimits, TraceReport } from "../shared/raytrace.mjs";
 export type { CameraState } from "../shared/view-settings.mjs";
 import type { Review } from "./drawing/types.ts";
 import type { DrawingState } from "../shared/drawing.mjs";
@@ -9,7 +10,9 @@ import { attachMeshGeometry, meshViews } from "../shared/mesh.mjs";
 import { copyPreparedReference, createClipboardWriter, type NativeCopyResult } from "./clipboard.ts";
 import { post, request } from "./api.ts";
 
-export type ViewCapture = { dataUrl: string; width: number; height: number; camera: CameraState; analysisStats?: AnalysisStats };
+export type ViewCapture = { dataUrl: string; width: number; height: number; camera: CameraState; analysisStats?: AnalysisStats; trace?: TraceReport };
+// Draws the view for a capture; a ray-traced view resolves once it has traced to the limits.
+export type CaptureView = (limits?: TraceLimits) => ViewCapture | Promise<ViewCapture>;
 export type RenderReport = {
   revision: number; modelHash: string; topologyRevision: string; visibleParts: number;
   selectedIds: string[]; selectedFace: FaceSelection | null; highlightedTriangles: number;
@@ -29,8 +32,9 @@ export type RenderReport = {
 export type CaptureRequest = {
   id: string; revision: number; reviewId?: string | null; reviewVersion?: number;
   width?: number; height?: number; background?: string;
-  // Analysis settings for this image only, drawn by the background renderer.
+  // Analysis settings for this image only, and how far to ray trace it, drawn by the background renderer.
   analysis?: AnalysisSettings;
+  trace?: TraceLimits;
 };
 // A person's viewer page, or the background page that draws views when no visible tab does.
 export type RendererKind = "viewer" | "headless";

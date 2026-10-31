@@ -116,7 +116,7 @@ export type ViewState = {
   // A named view, or "azimuth:elevation" in degrees.
   cameraPreset: "iso" | "top" | "bottom" | "front" | "back" | "right" | "left" | `${number}:${number}`;
   projection: "perspective" | "orthographic";
-  appearance: "inspect" | "studio";
+  appearance: "inspect" | "studio" | "raytraced";
   materialFinish: "plastic" | "satin" | "polished" | "rubber";
   showEdges: boolean;
   analysis: AnalysisSettings;

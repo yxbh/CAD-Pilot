@@ -1,4 +1,5 @@
-import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mjs";
+import { APPEARANCES, MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mjs";
+import { MAX_SAMPLES, MAX_SECONDS } from "./raytrace.mjs";
 import { SECTION_AXES } from "./section.mjs";
 import { STEP_MODES } from "./placement.mjs";
 import { MESH_UNITS, MESH_UP_AXES } from "./mesh.mjs";
@@ -88,8 +89,8 @@ export const COMMANDS = Object.freeze({
     elevation: { type: "number", minimum: -90, maximum: 90 },
   }),
   set_projection: command("Switch perspective or orthographic projection while retaining viewing direction and target-plane scale.", { projection: { enum: PROJECTIONS } }, ["projection"]),
-  set_appearance: command("Choose Inspect or Studio and a visual finish. Source CAD colors and geometry stay unchanged.", {
-    mode: { enum: ["inspect", "studio"] }, finish: { enum: MATERIAL_FINISHES }, showEdges: { type: "boolean" },
+  set_appearance: command("Choose Inspect, Studio or the ray-traced view, and a visual finish. Ray traced path-traces Studio's light and finishes progressively, with a sample counter and denoising. Source CAD colors and geometry stay unchanged.", {
+    mode: { enum: APPEARANCES }, finish: { enum: MATERIAL_FINISHES }, showEdges: { type: "boolean" },
   }),
   set_section: command("Set one visual cutaway plane in original model-world millimeters. Display-derived caps do not modify, export or measure CAD geometry.", {
     enabled: { type: "boolean" },
@@ -118,6 +119,8 @@ export const COMMANDS = Object.freeze({
     height: { type: "integer", minimum: 16, maximum: 4096 },
     background: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Background colour for this image only, such as #ffffff." },
     analysis: { ...objectSchema(analysis), description: "Analysis settings for this image only, over the view's own (see set_analysis)." },
+    samples: { type: "integer", minimum: 1, maximum: MAX_SAMPLES, description: "Ray trace this image to this many samples (default 128 when only the view is ray traced)." },
+    seconds: { type: "number", exclusiveMinimum: 0, maximum: MAX_SECONDS, description: "Ray trace this image for at most this long (default 60 s; software WebGL stops sooner and says so)." },
   }, [], { revision: "unchecked", render: "capture", duringReview: true }),
   list_reviews: read("List saved drawing review summaries."),
   get_review: read("Read a review's source, captured pose and mark count without image bytes.", { id: { type: "string" } }, ["id"]),

@@ -1,6 +1,8 @@
 export const VIEW_PRESETS = ["iso", "top", "bottom", "front", "back", "right", "left"];
 export const PROJECTIONS = ["perspective", "orthographic"];
 export const MATERIAL_FINISHES = ["plastic", "satin", "polished", "rubber"];
+// Inspect is for reading geometry; Studio lights it with soft boxes; ray traced path-traces Studio's light and finishes.
+export const APPEARANCES = ["inspect", "studio", "raytraced"];
 
 // A camera direction by angles: azimuth 0 looks from the front (-Y) and 90 from the right (+X); elevation 90 looks down from the top.
 const anglePattern = /^(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)$/;

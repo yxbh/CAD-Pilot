@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs
 import path from "node:path";
 import { analysisInput, changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
 import { analysisFields, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
+import { traceAnswer, traceLimits } from "../shared/raytrace.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -595,12 +596,17 @@ async function startOwnedService({
   // itself as the client so the image matches what that person sees.
   // The background page has one drawing surface, so its captures (each with its own size and backdrop) take turns.
   async function captureImage(input = {}) {
-    const { client, analysis, ...requested } = input;
+    const { client, analysis, samples, seconds, ...requested } = input;
     const options = captureOptions(requested);
-    // An image's own analysis settings are drawn by the background renderer, which waits for the data they need.
-    if (analysis !== undefined) {
-      if (client !== undefined) throw new PrototypeError("bad_capture", "A viewer page captures what it shows; capture without a client to choose analysis settings");
-      options.analysis = analysisInput(state.analysis, analysis);
+    // An image's own analysis settings and ray tracing are drawn by the background renderer, which waits for them.
+    if (client !== undefined && (analysis !== undefined || samples !== undefined || seconds !== undefined)) {
+      throw new PrototypeError("bad_capture", "A viewer page captures what it shows; capture without a client to choose analysis settings or ray tracing");
+    }
+    if (analysis !== undefined) options.analysis = analysisInput(state.analysis, analysis);
+    // Samples or a time trace this image; a ray-traced view's images trace to the defaults.
+    if (samples !== undefined || seconds !== undefined || state.appearance === "raytraced") {
+      try { options.trace = traceLimits({ samples, seconds }); }
+      catch (error) { throw new PrototypeError("bad_capture", error.message); }
     }
     if (client !== undefined) return captureFrom(client, options);
     const turn = headlessCaptures.then(() => captureFrom(undefined, options));
@@ -628,7 +634,8 @@ async function startOwnedService({
       const timer = setTimeout(() => {
         captures.delete(id);
         reject(new PrototypeError("capture_timeout", "The renderer did not return an image", 408));
-      }, options.analysis && analysisFields(options.analysis).length ? renderTimeoutMs : 30_000);
+      // A traced image may first wait for its tracer to compile, which software WebGL takes a minute or more over.
+      }, options.trace ? options.trace.seconds * 1000 + 2 * renderTimeoutMs : options.analysis && analysisFields(options.analysis).length ? renderTimeoutMs : 30_000);
       const request = { id, revision, reviewId: review?.id ?? null, reviewVersion: review?.version, ...options };
       captures.set(id, { ...request, kind: target[1].kind, resolve, reject, timer });
       send(target[0], "capture", request);
@@ -644,6 +651,8 @@ async function startOwnedService({
     const imagePath = path.join(captureDir, `${hash(bytes).slice(0, 32)}.png`);
     // The analysis the image shows, with the numbers its legend printed.
     const analysis = analysisReport(pending.analysis ?? state.analysis, payload.analysisStats);
+    // A traced image's samples and time, with a note when software rendering cut it short.
+    const raytrace = pending.trace ? traceAnswer(payload.trace) : null;
     const result = {
       path: imagePath, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20), by: pending.kind,
       revision: state.revision, documentRevision: state.documentRevision, topologyRevision: state.topologyRevision,
@@ -654,6 +663,7 @@ async function startOwnedService({
       appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
       section: state.section,
       ...(analysis ? { analysis } : {}),
+      ...(raytrace ? { raytrace } : {}),
     };
     if (await stat(imagePath).then(() => true, () => false)) await markUsed(imagePath);
     else await writeFile(imagePath, bytes);

@@ -39,7 +39,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "", 
   const view = {
     revision: state.revision,
     camera: cameraSummary(state, drawnCamera),
-    appearance: state.appearance === "studio" ? `studio ${state.materialFinish}` : "inspect",
+    appearance: state.appearance === "inspect" ? "inspect" : `${state.appearance} ${state.materialFinish}`,
     ...(state.showEdges ? {} : { outlines: false }),
     ...(state.explode ? { explode: { amount: state.explode, direction: state.direction, ...(state.fixedId ? { fixed: name(state.fixedId) } : {}) } } : {}),
     ...(state.step !== null ? { step: `${state.step} of ${steps.length}${state.step ? `: ${steps[state.step - 1]?.title ?? ""}` : ""}`, stepMode: state.stepMode } : {}),
