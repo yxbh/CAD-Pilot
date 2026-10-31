@@ -130,21 +130,21 @@ To relocate a runtime directory within this checkout, stop its Explorer processe
 
 ## Validation
 
-The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Check all** task. It covers both the workbench and maintained Explorer. **Test Python** and **Test Explorer core** provide narrower editor tasks without launching Chromium. Python discovery includes `explorer/tests/test_converter.py` and the cad skill's common/export suite; see the root README for dependency/API compatibility and fresh-resolution guidance.
+The repository-wide entry point is `node tools/check.mjs`, also available as the VS Code **CAD-Pilot: Check all** task. It covers both the workbench and maintained Explorer. **Test Python** and **Test Explorer core** provide narrower editor tasks without launching Chromium. Python discovery includes `explorer/tests/test_converter.py` and all of the cad skill's tests; see the root README for dependency/API compatibility and fresh-resolution guidance.
 
 Use these commands from the workbench root for narrower checks:
 
 | Scope | Command | Coverage |
 | --- | --- | --- |
-| Complete Explorer | `npm --prefix explorer test` | Core checks, then a fresh build and the browser suite |
+| Complete Explorer | `npm --prefix explorer test` | Core checks, then the browser suite |
 | Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, section planes, commands, HTTP, references, persistence, cache compatibility and ownership |
-| Browser | `npm --prefix explorer run test:browser` | Build/type-check, real selection/clipboard, camera matrices, Studio, section caps, drawing recovery, diagnostics and delayed render reports |
-| Build only | `npm --prefix explorer run build` | TypeScript and production assets |
+| Browser | `npm --prefix explorer run test:browser` | Real selection/clipboard, camera matrices, Studio, section caps, drawing recovery, diagnostics and delayed render reports |
+| Build only | `npm --prefix explorer run build` | Type-check and production assets; skipped when the sources, configuration and installed packages match the last successful build |
 | Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
 
 Core checks do not launch a browser; some require the workbench's Python environment for native fixtures. Browser checks also require Playwright Chromium from the root setup. They run serially against isolated synthetic views, never a user's open model. The camera resize/DPR scenario is included, not an opt-in environment flag. Context-loss scenarios deliberately damage only their disposable renderer.
 
-For a targeted run, build first if it uses the browser, then pass individual files to Node. For example:
+Both suites build the Explorer first when it is out of date, because the browser scenarios and the launcher's background viewers serve the built page. For a targeted run, build first if it uses either, then pass individual files to Node. For example:
 
 ```text
 node --test explorer/tests/commands.test.mjs explorer/tests/protocol.test.mjs explorer/tests/copilot-host.test.mjs

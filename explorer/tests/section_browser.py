@@ -245,7 +245,8 @@ def run(url, output, fixture):
             number_input.fill(str(preview_max))
             number_input.press("Tab")
             target_position = preview_max
-            reached = wait(lambda current: current["explode"] == 1 and math.isclose(current["section"]["position"], target_position, abs_tol=1e-6))
+            wait(lambda current: current["explode"] == 1 and math.isclose(current["section"]["position"], target_position, abs_tol=1e-6))
+            reached = settled()
             assert math.isclose(reached["rendered"]["bounds"]["max"][2], preview_max, abs_tol=1e-6)
             assert reached["rendered"]["camera"] == section_camera
             page.get_by_role("button", name="Close section view settings").click()

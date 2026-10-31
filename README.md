@@ -17,7 +17,7 @@ Run setup from the workbench root. Playwright Chromium is needed for the Explore
 
 Commit `pyproject.toml`; keep `uv.lock` local and Git-ignored. Normal `uv sync` and `uv run` create or reuse the local lock using each machine's configured feeds. Exact Python dependency versions may differ across machines.
 
-The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The cad skill's CLI carries a provenance-recorded OCP API patch. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes the cad skill's common/export tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
+The CAD integration uses build123d 0.13+ and the OCP 8+ collection, topology-cast and bounding-box APIs. The dependency manifest declares minimums without workbench-imposed upper caps; build123d's own dependency constraints select its compatible OCP family. The cad skill's CLI carries a provenance-recorded OCP API patch. For dependency updates, resolve afresh with `uv sync --upgrade` in a disposable checkout using the configured feeds, then run `node tools/check.mjs`. Python discovery includes all of the cad skill's tests as well as the maintained converter. New releases must earn compatibility through these checks; minimum versions alone do not certify future releases.
 
 For the first-party CAD Explorer, build its separate package:
 
@@ -110,21 +110,17 @@ Keep workbench content evergreen: document supported workflows, current limitati
 
 ## Validation and Limits
 
-From the workbench root, the aggregate check runs Python workbench/converter tests, Explorer core tests, a fresh type-check/build, and isolated browser scenarios:
+From the workbench root, one command runs every check: the Python suites (workbench, Explorer converter and all of the cad skill's tests), Explorer core tests and isolated browser scenarios, after a type-check and build of the Explorer whenever its sources or installed packages changed:
 
 ```text
 node tools/check.mjs
 ```
 
-For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` builds and exercises the maintained UI. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations. A failed stage stops the aggregate command with a nonzero exit code.
+Independent stages run at the same time. Each stage's output is printed when it ends, followed by a summary; a failed stage makes the command exit nonzero, skips the stages that need it and lets the others finish. GitHub Actions runs the same command on macOS, Windows and Linux for pull requests and pushes to `main`, resolving dependencies afresh because the locks stay local.
 
-The cad skill's CLI inspection suite runs separately from the workbench root, because its `test_cli.py` basename overlaps with the other CLI test directories:
+For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` exercises the maintained UI; both Explorer commands build it first when it is out of date. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations.
 
-```text
-uv run pytest .agents/skills/cad/scripts/inspect -q
-```
-
-Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
+Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and CLIs, and the maintained STEP converter. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
 
 The workbench does not perform slicing, control printers, verify physical fit, or certify minimum wall thickness.
 

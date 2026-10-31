@@ -1,5 +1,10 @@
 import time
 
+from playwright.sync_api import expect
+
+# Match wait()'s default: on a busy machine or CI runner a reload can take longer than Playwright's 5 s.
+expect.set_options(timeout=30_000)
+
 
 class BrowserSession:
     def __init__(self, page, url, errors):

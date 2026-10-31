@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { assertBuilt } from "../server/launcher.mjs";
 import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { workbenchPython } from "../server/paths.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
@@ -11,6 +12,7 @@ import { createTestRuntime } from "./service-fixture.mjs";
 const execute = promisify(execFile);
 
 export async function runBrowser(script, { url, output, timeout = 210_000 }) {
+  await assertBuilt();
   const result = await execute(workbenchPython, [
     "-B", path.join(explorerRoot, "tests", script), "--url", url, "--output", output,
   ], { cwd: explorerRoot, encoding: "utf8", timeout, maxBuffer: 2 * 1024 * 1024 });
