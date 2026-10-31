@@ -35,7 +35,7 @@ This is for writing sidecar meshes. To inspect a STEP, run `scripts/inspect` on 
 
 ## Outputs
 
-Besides the STEP and any requested sidecars (`supported-exports.md`, `dxf.md`), `scripts/step` writes a hidden `.<name>.step.glb` topology index beside the STEP. `scripts/inspect` reads `@cad` selectors from it while it matches the STEP and otherwise indexes the STEP into its per-user cache, so a missing or stale GLB is never an error; never edit it. When a rebuild renumbers faces and edges, `scripts/step` warns once if face or edge refs were handed out for the previous build.
+Besides the STEP and any requested sidecars (`supported-exports.md`, `dxf.md`), `scripts/step` writes a hidden `.<name>.step.glb` topology index beside the STEP. `scripts/inspect` reads `@cad` selectors from it while it matches the STEP and otherwise indexes the STEP into its per-user cache, so a missing or stale GLB is never an error; never edit it. When a rebuild renumbers faces and edges, or changes a STEP whose previous index it cannot read, `scripts/step` warns once if face or edge refs were handed out for the previous build.
 
 ## Solid check
 

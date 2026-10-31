@@ -37,7 +37,7 @@ from common.catalog import (
 )
 from common.cli_logging import CliLogger
 from common.generator_module import GeneratorImportError, call_generator, load_generator
-from common.issued_refs import forget, mark, refs_issued_for
+from common.issued_refs import forget, issued_step_hash, mark
 from common.paths import command_line_path, relative_path
 from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
@@ -652,9 +652,19 @@ def _report_selector_manifest_change(
     logger: CliLogger,
 ) -> None:
     # Only a build someone took face or edge refs from is worth a word.
-    if spec.step_path is None or previous_manifest is None:
+    issued = issued_step_hash(spec.step_path) if spec.step_path is not None else None
+    if issued is None:
         return
-    if not refs_issued_for(spec.step_path, str(previous_manifest.get("stepHash") or "")):
+    if previous_manifest is None:
+        # The previous sidecar is missing, unreadable or from older tools, so its numbering cannot be compared.
+        if issued != next_manifest.get("stepHash"):
+            forget(spec.step_path)
+            logger.warning(
+                f"{spec.cad_ref} was rebuilt and its previous face and edge numbering could not be read; @cad refs taken "
+                "from an earlier build may no longer name the same geometry. Re-resolve them with scripts/inspect."
+            )
+        return
+    if issued != previous_manifest.get("stepHash"):
         return
     change = selector_manifest_diff(previous_manifest, next_manifest)
     if bool(change.get("topologyChanged")):
