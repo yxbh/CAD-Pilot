@@ -95,7 +95,7 @@ Use lower plane limits and compact facts for normal validation. Use topology enu
 python scripts/inspect parts path/to/model.step --format text
 ```
 
-Each part has its name and group path, size, bounding-box centre, the placement origin of its local frame, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. `scripts/step` writes a part nobody labelled under its group's name, `kit 1`, `kit 2`, and warns about it then; in a STEP from elsewhere, a part with no name is listed the same way and marked unlabelled. Part names are what `hygiene --parts`, `clearance` and `gen_poses()` match, with `*` and `?` as wildcards and a group's name covering its parts.
+Each part has its name and the path of groups someone labelled, size, bounding-box centre, the placement origin of its local frame, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. `scripts/step` writes a part nobody labelled under its group's name, `kit 1`, `kit 2`, and warns about it then; in a STEP from elsewhere, a part with no name is listed the same way and marked unlabelled. Part names are what `hygiene --parts`, `clearance` and `gen_poses()` match, with `*` and `?` as wildcards and a labelled group's name covering its parts; the file's own name is not a group.
 
 ## Geometry hygiene
 
@@ -109,7 +109,7 @@ Each finding names the part, says what is wrong in plain words, and gives the `@
 - `split-face`: two or more faces lie on one surface, the seam a viewer shows across a flat face.
 - `sliver-face` and `short-edge`: faces narrower and edges shorter than `--sliver` (0.05 mm by default), usually left by a Boolean between nearly coincident faces.
 - `open-edge`, `non-manifold`, `no-solid` and `invalid`: geometry that does not enclose a volume properly or fails the kernel's validity check.
-- `sharp-edge` and `small-round`: with `--round R`, the project's comfort radius, convex edges whose faces meet at 15 degrees or more, and rounds smaller than R. Without `--round` they are counted per part, not reported.
+- `sharp-edge` and `small-round`: with `--round R`, the project's comfort radius, convex edges whose faces meet at 15 degrees or more, and rounds smaller than R, measured by how sharply the rounded face curves across its tangent edge, spline fillets included. Without `--round` they are counted per part, not reported.
 
 Use `--parts` to check some parts only. Parts with the same shape are checked once. A finding is a prompt to look, not a verdict: a crisp edge or a part made of several solids can be intended. Self-intersection is checked by `scripts/step` at generation, not here. `build123d-modeling.md` covers fusing before rounding and merging split faces.
 

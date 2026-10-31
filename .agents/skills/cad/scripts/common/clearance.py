@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 from common.step_parts import StepPart, StepParts, match_parts
 
-OVERLAP_TOLERANCE_MM3 = 1e-3
+OVERLAP_TOLERANCE_MM3 = 1e-3  # shared volume below this is contact; CAD Explorer's assembly check is to import it
 DEFAULT_HORIZON = 5.0
 AS_ASSEMBLED = "as assembled"
 
@@ -97,7 +97,8 @@ def _pairs_for(patterns: object, parts: tuple[StepPart, ...], default_gap: float
         for pair in patterns
     ):
         raise PoseError("pairs must be a list of [part, part] or [part, part, gap mm] entries")
-    pairs: dict[tuple[str, str], tuple[StepPart, StepPart, float | None]] = {}
+    position = {part.occurrence_id: index for index, part in enumerate(parts)}
+    pairs: dict[tuple[int, int], tuple[StepPart, StepPart, float | None]] = {}
     for entry in patterns:
         left, right = entry[0], entry[1]
         gap = _gap(entry[2], f"pairs gap for {left!r} and {right!r}") if len(entry) == 3 else default_gap
@@ -108,14 +109,10 @@ def _pairs_for(patterns: object, parts: tuple[StepPart, ...], default_gap: float
         for a in lefts:
             for b in rights:
                 if a.occurrence_id != b.occurrence_id:
-                    key = tuple(sorted((a.occurrence_id, b.occurrence_id)))
-                    pairs.setdefault(key, ((a, b) if key[0] == a.occurrence_id else (b, a)) + (gap,))
-    return [pairs[key] for key in sorted(pairs, key=lambda key: _order(parts, key))]
-
-
-def _order(parts: tuple[StepPart, ...], key: tuple[str, str]) -> tuple[int, int]:
-    index = {part.occurrence_id: position for position, part in enumerate(parts)}
-    return index[key[0]], index[key[1]]
+                    first, second = sorted((a, b), key=lambda part: position[part.occurrence_id])
+                    # The first entry naming a pair sets its gap; pairs come back in STEP order.
+                    pairs.setdefault((position[first.occurrence_id], position[second.occurrence_id]), (first, second, gap))
+    return [pairs[key] for key in sorted(pairs)]
 
 
 def read_pose_set(raw: object, step_parts: StepParts, *, selected: list[StepPart] | None = None,
@@ -244,7 +241,7 @@ def check_clearance(pose_set: PoseSet, *, horizon: float = DEFAULT_HORIZON) -> l
                     result.touching_poses.append(pose_name)
         if result.distance is not None and result.at_least is not None and result.at_least < result.distance:
             # A skipped pose may be closer than every measured one; all of them lie beyond the horizon.
-            result.at_least, result.distance, result.pose, result.points = result.at_least, None, None, None
+            result.distance, result.pose, result.points = None, None, None
     return results
 
 

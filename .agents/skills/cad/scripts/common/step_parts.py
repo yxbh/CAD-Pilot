@@ -2,7 +2,9 @@
 
 Names follow ``part_names``: a part's label, or a fallback after its group.
 Patterns match like CAD Explorer's assembly steps: ``*`` and ``?`` are the only
-wildcards, and a group's name covers every part in it.
+wildcards, and the name of a group someone labelled covers every part in it.
+This module is the matcher's home; CAD Explorer's assembly sequences are to
+import it rather than keep their own copy.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from common.part_names import tree_names
 class StepPart:
     occurrence_id: str
     name: str
-    groups: tuple[str, ...]  # enclosing group names, outermost first
+    groups: tuple[str, ...]  # enclosing groups someone labelled, outermost first
     prototype_key: int
     prototype: object  # the part's shape in its own frame
     placed: object  # the part's shape where the STEP places it
@@ -71,8 +73,9 @@ def load_step_parts(step_path: Path, cad_path: str) -> StepParts:
                 placed=scene_occurrence_shape(scene, node),
                 transform=tuple(node.transform),
             ))
+        inner = (*groups, name) if (node.name or node.source_name) else groups
         for child in node.children:
-            visit(child, (*groups, name))
+            visit(child, inner)
 
     for top in scene.roots:
         visit(top, ())

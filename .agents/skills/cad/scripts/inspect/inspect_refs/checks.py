@@ -89,11 +89,12 @@ def hygiene_report(
             },
             "findings": findings,
         })
-    errors = sum(1 for report in reports if "error" in report)
+    errors = [{"message": f"{report['path']}: {report['error']}", "ref": report["ref"]} for report in reports if "error" in report]
     return {
         "ok": True,
         "cadPath": step_parts.cad_path,
-        "clean": total == 0 and errors == 0,
+        "clean": total == 0,
+        "errors": errors,
         "roundRadius": round_radius,
         "sliver": sliver,
         "findingCount": total,
@@ -169,17 +170,14 @@ def clearance_report(
 
 
 def _generator_poses(source: Path) -> object:
-    from common.generator_module import GeneratorImportError, call_generator, load_generator
+    from common.generator_module import GeneratorImportError, MissingGeneratorError, call_generator, load_generator
 
     if source.suffix != ".py" or not source.is_file():
         raise CadRefError(f"Pose generator not found: {source}")
     try:
-        module = load_generator(source)
-        if not callable(getattr(module, "gen_poses", None)):
-            raise CadRefError(f"{source} does not define gen_poses()")
-        return call_generator(module, "gen_poses", script_path=source)
-    except (CadRefError, GeneratorImportError):
-        raise
+        return call_generator(load_generator(source), "gen_poses", script_path=source)
+    except (GeneratorImportError, MissingGeneratorError) as exc:
+        raise CadRefError(str(exc)) from exc
     except Exception as exc:
         raise CadRefError(f"{source} gen_poses() failed: {type(exc).__name__}: {exc}") from exc
 

@@ -135,48 +135,46 @@ def _edge_joins(shape, faces_map, edges_map) -> tuple[list[_Join], list[tuple[in
     return joins, odd
 
 
-def _round_radius(face) -> float | None:
-    """The radius of a convex cylinder, torus or sphere face: how round a rounded edge is."""
-    from OCP.BRepAdaptor import BRepAdaptor_Surface
-    from OCP.BRepTools import BRepTools
-    from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Sphere, GeomAbs_Torus
-    from OCP.gp import gp_Pnt, gp_Vec, gp_Pnt2d
+def _round_radius(face, edge) -> float | None:
+    """How round a face is across the tangent edge it meets a neighbour at: the radius of a rounded edge.
 
-    surface = BRepAdaptor_Surface(face)
-    kind = surface.GetType()
-    if kind not in (GeomAbs_Cylinder, GeomAbs_Sphere, GeomAbs_Torus):
+    The curvature is taken in the direction that leaves the edge into the face,
+    so a fillet strip, a corner blend or a spline fillet gives its rounding
+    radius, while a pin's side between two rounded ends, straight in that
+    direction, gives none. Only faces that bulge outward count.
+    """
+    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Curve2d, BRepAdaptor_Surface
+    from OCP.BRepLProp import BRepLProp_SLProps
+    from OCP.TopAbs import TopAbs_REVERSED
+    from OCP.gp import gp_Dir, gp_Pnt, gp_Vec
+
+    curve = BRepAdaptor_Curve(edge)
+    middle = 0.5 * (curve.FirstParameter() + curve.LastParameter())
+    point, tangent = gp_Pnt(), gp_Vec()
+    curve.D1(middle, point, tangent)
+    uv = BRepAdaptor_Curve2d(edge, face).Value(middle)
+    props = BRepLProp_SLProps(BRepAdaptor_Surface(face), uv.X(), uv.Y(), 2, 1e-7)
+    if tangent.Magnitude() < 1e-12 or not props.IsNormalDefined() or not props.IsCurvatureDefined():
         return None
-    u0, u1, v0, v1 = BRepTools.UVBounds_s(face)
-    uv = gp_Pnt2d(0.5 * (u0 + u1), 0.5 * (v0 + v1))
-    normal = _face_normal(face, uv)
-    point = surface.Value(uv.X(), uv.Y())
-    if kind == GeomAbs_Cylinder:
-        cylinder = surface.Cylinder()
-        axis = cylinder.Axis()
-        offset = gp_Vec(axis.Location(), point)
-        direction = gp_Vec(axis.Direction())
-        outward = offset - direction * offset.Dot(direction)
-        radius = cylinder.Radius()
-    elif kind == GeomAbs_Sphere:
-        sphere = surface.Sphere()
-        outward = gp_Vec(sphere.Location(), point)
-        radius = sphere.Radius()
+    normal = gp_Vec(props.Normal())
+    if face.Orientation() == TopAbs_REVERSED:
+        normal.Reverse()
+    across = normal.Crossed(tangent)
+    if across.Magnitude() < 1e-12:
+        return None
+    if props.IsUmbilic():
+        curvature = props.MaxCurvature()
     else:
-        torus = surface.Torus()
-        axis = torus.Axis()
-        offset = gp_Vec(axis.Location(), point)
-        direction = gp_Vec(axis.Direction())
-        radial = offset - direction * offset.Dot(direction)
-        if radial.Magnitude() < 1e-12:
-            return None
-        radial.Normalize()
-        origin = axis.Location()
-        tube_centre = gp_Pnt(*(origin.Coord(i) + radial.Coord(i) * torus.MajorRadius() for i in (1, 2, 3)))
-        outward = gp_Vec(tube_centre, point)
-        radius = torus.MinorRadius()
-    if normal is None or outward.Magnitude() < 1e-12:
-        return None
-    return radius if normal.Dot(outward) > 0 else None
+        largest, smallest = gp_Dir(), gp_Dir()
+        props.CurvatureDirections(largest, smallest)
+        cos = across.Normalized().Dot(gp_Vec(largest))
+        curvature = props.MaxCurvature() * cos * cos + props.MinCurvature() * (1 - cos * cos)
+    # Curvature is signed against the surface's own normal; a reversed face turns it.
+    if face.Orientation() == TopAbs_REVERSED:
+        curvature = -curvature
+    if curvature > -1e-9:
+        return None  # flat across the edge, or hollow like a fillet in an inside corner
+    return 1.0 / -curvature
 
 
 def _split_faces(solid, faces_map) -> list[list[int]]:
@@ -291,11 +289,11 @@ def check_part(shape, *, round_radius: float | None = None, sliver: float = DEFA
         if join.length < sliver:
             found.append(Finding("short-edge", f"has an edge only {join.length:.3g} mm long", edges=(join.ordinal,), at=join.at, value=join.length))
 
-    smooth_by_face: dict[int, int] = {}
+    smooth_by_face: dict[int, list[int]] = {}
     for join in joins:
         if join.angle < SMOOTH_ANGLE:
             for face in join.faces:
-                smooth_by_face[face] = smooth_by_face.get(face, 0) + 1
+                smooth_by_face.setdefault(face, []).append(join.ordinal)
         elif join.convex:
             report.convex_edges += 1
             if join.angle >= CREASE_ANGLE:
@@ -310,11 +308,13 @@ def check_part(shape, *, round_radius: float | None = None, sliver: float = DEFA
                         value=round(join.angle, 1),
                     ))
     for ordinal, smooth in smooth_by_face.items():
-        if smooth < 2:
-            continue  # a round meets its neighbours tangentially on two sides; a pin or boss does not
-        radius = _round_radius(TopoDS.Face(faces_map.FindKey(ordinal)))
-        if radius is None:
+        if len(smooth) < 2:
+            continue  # a round meets its neighbours tangentially on two sides
+        face = TopoDS.Face(faces_map.FindKey(ordinal))
+        radii = [r for r in (_round_radius(face, TopoDS.Edge(edges_map.FindKey(edge))) for edge in smooth) if r is not None]
+        if not radii:
             continue
+        radius = min(radii)
         report.rounds += 1
         report.smallest_round = radius if report.smallest_round is None else min(report.smallest_round, radius)
         if round_radius is not None and radius < round_radius - 1e-6:

@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 
 PART_BUDGET_SECONDS = 10.0
@@ -55,9 +55,7 @@ class KernelReport:
 
 
 def part_label(name: str | None, source_ref: str, index: int = 1, count: int = 1) -> str:
-    # An unlabelled single part is written under its file's name; the file says it once.
-    named = name and name != PurePosixPath(source_ref).stem
-    label = f'part "{name}" in {source_ref}' if named else source_ref
+    label = f'part "{name}" in {source_ref}' if name else source_ref
     return label if count == 1 else f"{label} (solid {index} of {count})"
 
 

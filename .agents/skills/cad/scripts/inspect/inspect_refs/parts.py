@@ -17,7 +17,12 @@ def _rounded(values: object, digits: int = 3) -> list[float] | None:
 
 
 def occurrence_names(index: lookup.SelectorIndex, *, root_name: str) -> tuple[dict[str, str], dict[str, str]]:
-    """Each occurrence's name and slash-joined path, by occurrence id, with fallback names for unlabelled ones."""
+    """Each occurrence's name and path, by occurrence id.
+
+    Unlabelled occurrences get fallback names; a path runs through the groups
+    someone labelled, as part matching does, so an unlabelled top node named
+    after the file never prefixes or matches its parts.
+    """
     rows = index.occurrences
     children: dict[str, list[dict[str, object]]] = {}
     for row in rows:
@@ -30,10 +35,12 @@ def occurrence_names(index: lookup.SelectorIndex, *, root_name: str) -> tuple[di
     )
     names = {str(row["id"]): by_node[id(row)] for row in rows}
     paths: dict[str, str] = {}
+    labelled_prefix: dict[str, str] = {}
     for row in rows:  # parents precede their children in the table
-        parent = str(row.get("parentId") or "")
-        own = names[str(row["id"])]
-        paths[str(row["id"])] = f"{paths[parent]}/{own}" if parent in paths else own
+        occurrence_id = str(row["id"])
+        prefix = labelled_prefix.get(str(row.get("parentId") or ""), "")
+        paths[occurrence_id] = f"{prefix}/{names[occurrence_id]}" if prefix else names[occurrence_id]
+        labelled_prefix[occurrence_id] = paths[occurrence_id] if (row.get("name") or row.get("sourceName")) else prefix
     return names, paths
 
 

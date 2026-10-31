@@ -38,11 +38,11 @@ Passing a generated assembly `.step` directly treats it as imported native STEP.
 
 ### Project imports and dependencies
 
-Run `scripts/step` from the design root. A generator imports modules beside it, at the design root and, in a `src/` layout, the project's own packages, with no `sys.path` code of its own; lazy imports inside `gen_step()` work too. Third-party packages come from the interpreter running the tool: when the design project has its own environment with build123d, such as a uv project, run the tool with that interpreter (`uv run python <cad>/scripts/step ...` from the design root), so `gen_step()` finds the project's dependencies. A module the interpreter cannot import is reported as one line naming the module and the interpreter.
+Run `scripts/step` from the design root. A generator imports modules beside it, at the design root and, in a `src/` layout, the project's own packages, with no `sys.path` code of its own; lazy imports inside `gen_step()` work too. Every load reads the generator and those modules from disk again, so two generators with same-named sibling modules each get their own. Third-party packages come from the interpreter running the tool: when the design project has its own environment with build123d, such as a uv project, run the tool with that interpreter (`uv run python <cad>/scripts/step ...` from the design root), so `gen_step()` finds the project's dependencies. A module the interpreter cannot import is reported as one line naming the module and the interpreter.
 
 ### Part names
 
-Label every part you export. A part without a label is named after its group, as `kit 1` and `kit 2`, or takes its group's name when it is the only child, and `scripts/step` prints one warning listing them. `.solids()`, a `Solid`'s `.fillet()` and `Part(...)` return unlabelled shapes, so set labels after the last operation. `scripts/inspect parts` lists the names the STEP ended up with.
+Label every part you export. A placed part without a label is named after its group, as `kit 1` and `kit 2`, or takes its group's name when it is the only child, and `scripts/step` prints one warning listing them. Identical unlabelled copies still share one shape in the STEP; only their placements carry the names. `.solids()`, a `Solid`'s `.fillet()` and `Part(...)` return unlabelled shapes, so set labels after the last operation. `scripts/inspect parts` lists the names the STEP ended up with.
 
 ## Direct STEP/STP targets
 

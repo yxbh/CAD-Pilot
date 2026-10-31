@@ -147,7 +147,7 @@ def create_bin_xcaf_doc() -> Any:
     return doc
 
 
-def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
+def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> Any:
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.TopLoc import TopLoc_Location
     from build123d.exporters3d import (
@@ -193,7 +193,7 @@ def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
         return (float(rgb.Red()), float(rgb.Green()), float(rgb.Blue()), float(color.wrapped.Alpha()))
 
     def leaf_shape_for_definition(unlocated: object, shape: object) -> object:
-        signature = (color_signature(getattr(shape, "color", None)), names.get(id(shape)))
+        signature = (color_signature(getattr(shape, "color", None)), getattr(shape, "label", None) or None)
         bucket = leaf_variants.setdefault(hash(unlocated), [])
         for native_shape, variants in bucket:
             # IsEqual includes orientation (location is already stripped).
@@ -241,7 +241,7 @@ def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
             # colour down to its children, and STEPCAF writes a coloured
             # sub-assembly occurrence as a presentation with no items, which
             # readers report as a parse error.
-            set_label_name(definition_label, names.get(id(shape)))
+            set_label_name(definition_label, getattr(shape, "label", None))
             for child in children:
                 child_definition = shape_definition_for_tree(child)
                 child_location = shape_location(child)
@@ -255,7 +255,8 @@ def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
                     child_definition,
                     child_location,
                 )
-                set_label_name(child_component, names.get(id(child)))
+                # A placed part carries its fallback name, so unlabelled copies still share one definition.
+                set_label_name(child_component, occurrence_names.get(id(child)))
                 if not getattr(child, "children", None):
                     set_label_color(child_component, getattr(child, "color", None))
             return definition_label
@@ -263,7 +264,7 @@ def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
         unlocated = leaf_shape_for_definition(shape_without_location(shape), shape)
         definition_label = shape_tool.AddShape(unlocated, False)
         shape_definitions[key] = definition_label
-        set_label_name(definition_label, names.get(id(shape)))
+        set_label_name(definition_label, getattr(shape, "label", None))
         set_label_color(definition_label, getattr(shape, "color", None))
         return definition_label
 
@@ -272,7 +273,7 @@ def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
         shape_tool.UpdateAssemblies()
         return doc
 
-    set_label_name(shape_tool.AddShape(to_export.wrapped, is_assembly), names.get(id(to_export)))
+    shape_tool.AddShape(to_export.wrapped, is_assembly)
 
     for node in PreOrderIter(to_export):
         if not node.label and node.color is None:
@@ -380,10 +381,13 @@ def export_xcaf_doc_step_scene(
 
 
 def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStepScene:
-    """Write a build123d shape or labelled assembly tree; unlabelled parts get fallback names.
+    """Write a build123d shape or labelled assembly tree; unlabelled placed parts get fallback names.
 
-    The scene's ``unlabelled_parts`` lists the names given to parts that had
-    no label, so the caller can say which ones need one.
+    Fallback names go on occurrences only: definitions and the root keep the
+    user's own labels, so identical unlabelled copies share one definition
+    and an unlabelled root is not mistaken for a group someone named. The
+    scene's ``unlabelled_parts`` lists the names given, so the caller can say
+    which parts need a label.
     """
     names, unlabelled = tree_names(
         to_export,
@@ -392,6 +396,6 @@ def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStep
         label=lambda node: getattr(node, "label", None),
     )
     doc = _create_bin_xcaf_doc(to_export, names)
-    scene = export_xcaf_doc_step_scene(doc, output_path, label=names[id(to_export)])
+    scene = export_xcaf_doc_step_scene(doc, output_path, label=getattr(to_export, "label", None))
     scene.unlabelled_parts = tuple(unlabelled)
     return scene

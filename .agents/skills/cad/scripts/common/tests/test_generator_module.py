@@ -72,6 +72,35 @@ class GeneratorModuleTests(unittest.TestCase):
                 values.append(load_generator(script).VALUE)
         self.assertEqual(["aaa", "bbb"], values)
 
+    def test_same_named_sibling_modules_of_two_generators_are_each_their_own(self) -> None:
+        for folder, width in (("a", 10), ("b", 99)):
+            (self.root / folder).mkdir()
+            self.write(f"{folder}/params.py", f"WIDTH = {width}\n")
+            self.write(f"{folder}/model.py", "from params import WIDTH\n\ndef gen_step():\n    return WIDTH\n")
+        self.addCleanup(sys.modules.pop, "params", None)
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            widths = [
+                call_generator(load_generator(script), "gen_step", script_path=script)
+                for script in (self.root / "a" / "model.py", self.root / "b" / "model.py")
+            ]
+        self.assertEqual([10, 99], widths)
+
+    def test_an_edited_src_module_is_read_again_by_the_next_load(self) -> None:
+        script = self.write("review/model.py", "from widgets import SIZE\n")
+        with mock.patch.object(Path, "cwd", return_value=self.root):
+            first = load_generator(script).SIZE
+            (self.root / "src" / "widgets" / "__init__.py").write_text("SIZE = 34.0\n")
+            second = load_generator(script).SIZE
+        self.assertEqual((12.0, 34.0), (first, second))
+
+    def test_the_tools_own_modules_are_kept_when_the_design_root_holds_them(self) -> None:
+        import common.generator_module as loader
+
+        script = self.write("review/model.py", "VALUE = 1\n")
+        with mock.patch.object(Path, "cwd", return_value=SCRIPTS_ROOT.parents[3]):
+            load_generator(script)
+        self.assertIs(loader, sys.modules["common.generator_module"])
+
     def test_a_missing_module_names_the_module_and_the_interpreter(self) -> None:
         script = self.write("review/vendor.py", "def gen_step():\n    import missing_vendor_package\n")
         with mock.patch.object(Path, "cwd", return_value=self.root):

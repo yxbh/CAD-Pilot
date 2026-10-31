@@ -476,10 +476,6 @@ def _selector_options_for_part(spec: EntrySpec) -> SelectorOptions:
     )
 
 
-def _load_generator_module(script_path: Path) -> object:
-    return load_generator(script_path, display_path=_display_path(script_path))
-
-
 def _normalize_step_payload(
     result: object,
     *,
@@ -600,7 +596,7 @@ def run_script_generator(
         raise ValueError(f"{spec.source_ref} is not a generated Python CAD source")
     generated_scene: LoadedStepScene | None = None
     with logger.timed(f"load generator {spec.source_ref}"):
-        module = _load_generator_module(spec.script_path)
+        module = load_generator(spec.script_path, display_path=_display_path(spec.script_path))
     with logger.timed(f"run {generator_name} {spec.source_ref}"):
         raw_payload = call_generator(
             module,
@@ -729,7 +725,7 @@ def _script_step_material_colors(spec: EntrySpec) -> dict[str, ColorRGBA]:
     if spec.script_path is None:
         return {}
     try:
-        module = _load_generator_module(spec.script_path)
+        module = load_generator(spec.script_path, display_path=_display_path(spec.script_path))
     except Exception:
         return {}
     raw_materials = getattr(module, "URDF_MATERIALS", {})

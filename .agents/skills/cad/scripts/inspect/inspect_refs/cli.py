@@ -346,8 +346,11 @@ def _format_clearance(result: dict[str, object], *, quiet: bool, verbose: bool) 
 
 
 def _exit_code(result: dict[str, object]) -> int:
-    """0 when the command worked and found nothing, 1 when a check found something, 2 on an error."""
-    if not bool(result.get("ok")):
+    """0 when the command worked and found nothing, 1 when a check found something, 2 on any error.
+
+    A check that could not run on part of the model is an error, not a finding.
+    """
+    if not bool(result.get("ok")) or result.get("errors"):
         return 2
     return 1 if result.get("clean") is False else 0
 
@@ -355,8 +358,8 @@ def _exit_code(result: dict[str, object]) -> int:
 def _computed(args: argparse.Namespace) -> dict[str, object]:
     try:
         return args.compute(args)
-    except CadRefError as exc:
-        return {"ok": False, "errors": [cad_ref_error_payload(exc)]}
+    except Exception as exc:  # every failure is reported as data with exit status 2, never as a traceback
+        return {"ok": False, "errors": [_exception_error_payload(exc)]}
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -429,10 +432,7 @@ def inspect_command_result(argv: Sequence[str]) -> tuple[int, dict[str, object]]
         return _system_exit_result(exc, stderr=stderr.getvalue())
     if args.command == "refs" and not args.inputs and not args.input_file:
         return 2, {"ok": False, "errors": [{"message": "No input text provided."}]}
-    try:
-        result = _computed(args)
-    except Exception as exc:
-        result = {"ok": False, "errors": [_exception_error_payload(exc)]}
+    result = _computed(args)
     if args.command in REF_COMMANDS:
         note_refs_issued(result)
     return _exit_code(result), result
@@ -576,12 +576,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command_label = str(getattr(args, "command", "inspect") or "inspect")
     logger = CliLogger("scripts/inspect", verbose=bool(getattr(args, "verbose", False)))
-    try:
-        with logger.timed(command_label):
-            return int(args.handler(args))
-    except CadRefError as exc:
-        _emit_result(args, {"ok": False, "errors": [cad_ref_error_payload(exc)]}, _format_errors)
-        return 2
+    with logger.timed(command_label):
+        return int(args.handler(args))
 
 
 if __name__ == "__main__":

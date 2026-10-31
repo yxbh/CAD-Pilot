@@ -26,6 +26,23 @@ class HygieneTests(unittest.TestCase):
         self.assertEqual(["small-round"] * 20, checks(report))
         self.assertTrue(all(len(finding.faces) == 1 for finding in report.findings))
 
+    def test_a_pin_side_between_rounded_ends_is_not_a_round(self) -> None:
+        plate = bd.fillet(bd.Box(20, 20, 6).edges(), 2)
+        body = plate + bd.Pos(0, 0, 8) * bd.Cylinder(1.5, 10)
+        ends = [edge for edge in body.edges().filter_by(bd.GeomType.CIRCLE) if abs(edge.radius - 1.5) < 1e-6]
+        body = bd.fillet(ends, 0.5)
+        report = check_part(body.wrapped, round_radius=2)
+        # Only the pin's rounded tip is below 2 mm; its 1.5 mm side and hollow base fillet are not rounds.
+        self.assertEqual([("small-round", 0.5)], [(f.check, f.value) for f in report.findings])
+
+    def test_a_spline_fillet_is_measured_by_its_curvature(self) -> None:
+        tray = bd.extrude(bd.Ellipse(10, 5), 4)
+        tray = bd.fillet(tray.edges().sort_by(bd.Axis.Z)[-1:], 0.3)
+        report = check_part(tray.wrapped, round_radius=1)
+        rounds = [f for f in report.findings if f.check == "small-round"]
+        self.assertEqual(1, len(rounds))
+        self.assertAlmostEqual(0.3, rounds[0].value, places=3)
+
     def test_sharp_edges_are_counted_and_reported_only_against_a_radius(self) -> None:
         plate = bd.Box(60, 40, 4) - bd.Cylinder(2.5, 6)
         counted = check_part(plate.wrapped)

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from common.assembly_spec import REPO_ROOT, find_step_path, resolve_cad_source_path
-from common.cad_ref_syntax import normalize_cad_path, parse_cad_tokens
+from common.cad_ref_syntax import ABSOLUTE_PREFIX_RE, ParsedToken, normalize_cad_path, parse_cad_tokens
 from common.cache import cache_path, prune, touch
-from common.glb_topology import read_step_topology_bundle_from_glb, read_step_topology_manifest_from_glb
+from common.glb_topology import (
+    STEP_TOPOLOGY_SCHEMA_VERSION,
+    read_step_topology_bundle_from_glb,
+    read_step_topology_manifest_from_glb,
+)
 from common.render import existing_part_glb_path, sha256_file
 from common.selector_types import SelectorBundle, SelectorProfile
 
@@ -59,22 +63,40 @@ def cad_path_from_target(target: str) -> str:
     return entry_target_from_target(target).cad_path
 
 
+def canonical_cad_path(cad_path: str) -> str:
+    """The path a ref is reported with: from the design root for a STEP inside it, as given for one elsewhere.
+
+    ``/parts/foo`` naming the root's ``parts/foo.step``, or an absolute path
+    into the root, becomes ``parts/foo``, so refs never carry machine paths
+    for the project's own files.
+    """
+    if not (cad_path.startswith(("/", "..")) or ABSOLUTE_PREFIX_RE.match(cad_path)):
+        return cad_path
+    step_path = _direct_step_path(cad_path)
+    if step_path is None:
+        return cad_path
+    try:
+        return step_path.relative_to(REPO_ROOT).with_suffix("").as_posix()
+    except ValueError:
+        return cad_path
+
+
+def cad_tokens(text: str) -> list[ParsedToken]:
+    """The ``@cad`` tokens in text, with canonical paths."""
+    return [replace(token, cad_path=canonical_cad_path(token.cad_path)) for token in parse_cad_tokens(text)]
+
+
 def entry_target_from_target(target: str) -> EntryTarget:
-    parsed_tokens = parse_cad_tokens(target)
+    parsed_tokens = cad_tokens(target)
     if parsed_tokens:
         if len(parsed_tokens) != 1:
             raise CadRefError("Expected exactly one @cad[...] token.")
         parsed = parsed_tokens[0]
         return EntryTarget(parsed.cad_path, parsed.selectors)
-    raw_target = str(target or "").strip()
-    if _raw_step_path(raw_target) is not None:
-        normalized = normalize_cad_path(raw_target)
-        if normalized is not None:
-            return EntryTarget(normalized)
     normalized = normalize_cad_path(target)
     if normalized is None:
         raise CadRefError(f"Invalid CAD entry target: {target}")
-    return EntryTarget(normalized)
+    return EntryTarget(canonical_cad_path(normalized))
 
 
 def step_path_from_target(target: str) -> Path:
@@ -146,6 +168,9 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
 
 
 TOPOLOGY_CACHE = "topology"
+# Bump when the selector extraction in step_scene or the GLB topology changes how a STEP is numbered or
+# described: cached indexes are named by it, so an old index is never read for the new numbering.
+TOPOLOGY_INDEX_VERSION = 1
 
 
 def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False) -> StepTopologyArtifact:
@@ -158,7 +183,7 @@ def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False)
     """
     step_hash = sha256_file(target.step_path)
     sidecar = existing_part_glb_path(target.step_path)
-    cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.glb")
+    cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{TOPOLOGY_INDEX_VERSION}.glb")
     for glb_path in (sidecar, cached):
         artifact = _current_topology(target, glb_path, step_hash, require_selector=require_selector)
         if artifact is not None:
@@ -186,7 +211,7 @@ def _current_topology(
     if glb_path is None or not glb_path.is_file():
         return None
     manifest = read_step_topology_manifest_from_glb(glb_path)
-    if manifest is None or str(manifest.get("schemaVersion")) != "1" or manifest.get("stepHash") != step_hash:
+    if manifest is None or manifest.get("schemaVersion") != STEP_TOPOLOGY_SCHEMA_VERSION or manifest.get("stepHash") != step_hash:
         return None
     selector_bundle = read_step_topology_bundle_from_glb(glb_path) if require_selector else None
     if require_selector and selector_bundle is None:

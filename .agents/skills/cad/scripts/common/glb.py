@@ -18,6 +18,7 @@ from common.glb_mesh_payload import (
     scene_glb_mesh_payload_key,
 )
 from common.render import REPO_ROOT, part_glb_path
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION
 from common.step_scene import ColorRGBA, LoadedStepScene, OccurrenceNode, SelectorBundle, occurrence_selector_id
 
 
@@ -27,7 +28,6 @@ FLOAT = 5126
 UNSIGNED_INT = 5125
 TRIANGLES = 4
 STEP_TOPOLOGY_EXTENSION = "STEP_topology"
-STEP_TOPOLOGY_SCHEMA_VERSION = 1
 GLB_MAGIC = 0x46546C67
 GLB_VERSION = 2
 

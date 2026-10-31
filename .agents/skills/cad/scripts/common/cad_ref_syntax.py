@@ -65,10 +65,10 @@ def normalize_cad_path(raw_cad_path: str) -> str | None:
 
     A STEP elsewhere keeps its absolute path or its leading ``..`` segments.
     """
-    normalized = str(raw_cad_path or "").replace("\\", "/").strip().rstrip("/")
+    normalized = str(raw_cad_path or "").replace("\\", "/").strip()
     prefix_match = ABSOLUTE_PREFIX_RE.match(normalized)
     prefix = prefix_match.group(1) if prefix_match else ""
-    normalized = normalized[len(prefix):]
+    normalized = normalized[len(prefix):].rstrip("/")
     if not normalized:
         return None
     for suffix in (".step", ".stp"):

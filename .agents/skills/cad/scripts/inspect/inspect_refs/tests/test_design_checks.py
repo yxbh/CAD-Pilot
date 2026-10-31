@@ -70,6 +70,35 @@ UNLABELLED = textwrap.dedent(
 )
 
 
+# A box and its lid in an unlabelled compound, saved as box.step: the file's
+# name is not a group, so "box" names the box alone.
+NAMED_LIKE_ITS_FILE = textwrap.dedent(
+    """\
+    from build123d import Box, Compound, Pos
+
+    def gen_step():
+        base = Box(20, 20, 10)
+        base.label = "box"
+        lid = Pos(0, 0, 5.5) * Box(20, 20, 1)
+        lid.label = "lid"
+        return Compound(children=[base, lid])
+
+    def gen_poses():
+        return [{"name": "box pushed up", "move": {"box": (0, 0, 0.5)}}]
+    """
+)
+
+SCREWS = textwrap.dedent(
+    """\
+    from build123d import Compound, Cylinder, Pos
+
+    def gen_step():
+        screw = Cylinder(1.5, 10)
+        return Compound(children=[Pos(x * 5, 0, 0) * screw for x in range(30)], label="screws")
+    """
+)
+
+
 class DesignChecksTests(unittest.TestCase):
     def setUp(self) -> None:
         temp = tempfile.TemporaryDirectory(prefix="design checks ")
@@ -143,6 +172,45 @@ class DesignChecksTests(unittest.TestCase):
         hygiene = self.inspect_json("hygiene", "out/kit.step")
         self.assertTrue(hygiene["clean"])
 
+    def test_a_part_named_like_its_file_names_only_itself(self) -> None:
+        self.generate("box", NAMED_LIKE_ITS_FILE)
+        listing = self.inspect_json("parts", "out/box.step")
+        self.assertEqual(["box", "lid"], [part["path"] for part in listing["parts"]])
+        hygiene = self.inspect_json("hygiene", "out/box.step", "--parts", "box")
+        self.assertEqual(["box"], [part["path"] for part in hygiene["parts"]])
+        report = self.inspect_json("clearance", "out/box.step", "--poses", "box.py", expect=1)
+        (pair,) = report["pairs"]
+        self.assertEqual(("overlap", ["box pushed up"]), (pair["status"], pair["overlapPoses"]))
+
+    def test_identical_unlabelled_copies_share_one_shape(self) -> None:
+        self.generate("screws", SCREWS)
+        step_text = (self.root / "out" / "screws.step").read_text()
+        self.assertEqual(1, step_text.count("MANIFOLD_SOLID_BREP"))
+        listing = self.inspect_json("parts", "out/screws.step")
+        self.assertEqual([f"screws {n}" for n in range(1, 31)], [part["name"] for part in listing["parts"]])
+        hygiene = self.inspect_json("hygiene", "out/screws.step")
+        (shape,) = hygiene["parts"]
+        self.assertEqual(29, len(shape["sameShape"]))
+
+    def test_errors_are_exit_status_2_with_a_message_not_a_traceback(self) -> None:
+        self.generate("box", NAMED_LIKE_ITS_FILE)
+        (self.root / "poses.py").write_text("import missing_pose_helper\n\ndef gen_poses():\n    return []\n")
+        (self.root / "no_poses.py").write_text("VALUE = 1\n")
+        for poses, message in (("poses.py", "imports 'missing_pose_helper'"), ("no_poses.py", "does not define gen_poses()")):
+            with self.subTest(poses=poses):
+                result = self.run_tool("inspect", "clearance", "out/box.step", "--poses", poses)
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIn(message, json.loads(result.stdout)["errors"][0]["message"])
+
+    def test_refs_to_a_step_inside_the_root_are_reported_from_the_root(self) -> None:
+        self.generate("box", NAMED_LIKE_ITS_FILE)
+        for target in (f"@cad[{self.root.as_posix()}/out/box#o1.1]", "@cad[/out/box#o1.1]"):
+            with self.subTest(target=target):
+                report = self.inspect_json("refs", target, "--verbose")
+                self.assertEqual("out/box", report["tokens"][0]["cadPath"])
+                self.assertEqual("@cad[out/box#o1.1]", report["tokens"][0]["selections"][0]["copyText"])
+
     def test_any_step_is_indexed_without_writing_beside_it(self) -> None:
         self.generate("cabinet", CABINET)
         elsewhere = self.root / "downloads"
@@ -158,7 +226,8 @@ class DesignChecksTests(unittest.TestCase):
                 face = self.inspect_json("refs", f"@cad[{report['tokens'][0]['cadPath']}#o1.1.f1]", cwd=project)
                 self.assertEqual("resolved", face["tokens"][0]["selections"][0]["status"])
         self.assertEqual(["vendor cabinet.step"], sorted(path.name for path in elsewhere.iterdir()))
-        self.assertEqual(1, len(list((self.root / "cache" / "topology").glob("*.glb"))))
+        (index,) = (self.root / "cache" / "topology").iterdir()
+        self.assertRegex(index.name, r"^[0-9a-f]{64}\.v\d+\.glb$")
 
     def test_renumbered_faces_warn_once_and_only_after_refs_were_taken(self) -> None:
         source = self.root / "plate.py"
