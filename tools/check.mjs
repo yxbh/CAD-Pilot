@@ -21,14 +21,14 @@ if (!(shard ? options.length === 2 : options.length <= 1 && ["full", "--quick", 
 // Sized from the cores this machine has: up to four pytest workers.
 const workers = String(Math.max(1, Math.min(4, availableParallelism())));
 // The Python environment is synced once (inexactly, like `uv run`) before the suites that use it start together;
-// the Explorer is built once before its suites, which then must not rebuild into the same folder. pytest keeps
-// each test module and class on one worker, so a class's shared fixture is still built once.
+// the Explorer is built once before its suites, which then must not rebuild into the same folder. conftest.py keeps
+// a class with setUpClass on one pytest worker and spreads every other test.
 const env = { name: "python env", command: "uv", args: ["sync", "--inexact"] };
 const build = { name: "explorer build", command: node, args: ["explorer/scripts/build.mjs"] };
 const explorer = (name, ...args) => ({ name, command: node, args: ["explorer/scripts/test.mjs", ...args, "--no-build"], needs: [env.name, build.name] });
 const python = {
   name: "python", command: "uv", needs: [env.name],
-  args: ["run", "--no-sync", "pytest", "-q", "-n", workers, "--dist", "loadscope", "--durations", "30"],
+  args: ["run", "--no-sync", "pytest", "-q", "-n", workers, "--durations", "30"],
 };
 const STAGES = {
   full: [env, build, python, explorer("explorer core", "core"), explorer("explorer browser", "browser")],
