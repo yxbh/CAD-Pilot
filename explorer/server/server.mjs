@@ -244,6 +244,8 @@ async function startOwnedService({
 
   async function python(script, args) {
     await stat(workbenchPython);
+    const began = performance.now();
+    const timed = (value) => { console.error(`[timing] server python ${script} ${((performance.now() - began) / 1000).toFixed(2)} s`); return value; };
     return new Promise((resolve, reject) => {
       let stderr = "";
       let expired = false;
@@ -259,7 +261,7 @@ async function startOwnedService({
         clearTimeout(timer); children.delete(child);
         if (expired) reject(new PrototypeError("conversion_timeout", "Reading the file took longer than two minutes", 408));
         else if (code !== 0) reject(new PrototypeError("conversion_failed", stderr.trim() || `Python exited with ${code}`, 422));
-        else resolve();
+        else resolve(timed());
       });
     });
   }

@@ -34,15 +34,22 @@ export async function withBrowserView(name, run) {
   const viewId = `${name}-${randomUUID()}`;
   const output = path.join(explorerRoot, ".local", viewId);
   await mkdir(output, { recursive: true });
+  const t0 = performance.now();
+  const mark = (what) => console.error(`[timing] ${name} ${what} at ${((performance.now() - t0) / 1000).toFixed(2)} s`);
   const runtime = await createTestRuntime();
   try {
     await cp(await demoTemplate(), runtime.runtimeRoot, { recursive: true });
+    mark("demo copied");
     const service = await runtime.createService({ projectRoot: workbenchRoot, viewId, renderer: createHeadlessRenderer });
+    mark("service created");
     await service.initialize();
+    mark("initialized");
     assert.equal(service.getState().error, "");
     return await run({ service, output });
   } finally {
+    mark("scenario done");
     await runtime.dispose();
+    mark("disposed");
   }
 }
 

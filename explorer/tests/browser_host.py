@@ -20,6 +20,8 @@ MARK = "cad-explorer-test-host "
 sys.path.insert(0, str(TESTS))
 
 import browser_session  # noqa: E402  (after the folder is importable)
+import _timing  # noqa: E402
+_timing.install()
 
 
 def run(job):
@@ -27,6 +29,7 @@ def run(job):
     stdout, stderr = io.StringIO(), io.StringIO()
     argv, sys.argv = sys.argv, [str(script), *job["args"]]
     code = 0
+    _timing.begin()
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             runpy.run_path(str(script), run_name="__main__")
@@ -39,6 +42,7 @@ def run(job):
         code = 1
     finally:
         sys.argv = argv
+        _timing.end(job['script'], stderr)
     return {"code": code, "stdout": stdout.getvalue(), "stderr": stderr.getvalue()}
 
 

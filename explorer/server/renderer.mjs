@@ -154,6 +154,7 @@ export function createHeadlessRenderer({
     return stopping;
   }
   async function start() {
+    const began = performance.now();
     await stopping;
     const executable = await find();
     await sweepProfiles(tmp);
@@ -191,6 +192,7 @@ export function createHeadlessRenderer({
       await pipe.send("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
         throw error instanceof PrototypeError ? error : new PrototypeError("renderer_failed", `Headless renderer did not open the viewer: ${error.message}`, 503);
       });
+      console.error(`[timing] headless renderer started${software ? " (software)" : ""} in ${((performance.now() - began) / 1000).toFixed(2)} s`);
     } catch (error) {
       if (child === browser) child = null;
       await stop(browser);
