@@ -40,34 +40,34 @@ test("file actions cannot read outside the configured root or execute source", a
     const upload = await fetch(service.url + "api/upload", {
       method: "POST", headers: { "x-file-name": "generator.py" }, body: "print('not allowed')",
     });
-
-    test("failed uploads preserve the prior model and leave no durable failed-attempt input", async (t) => {
-      const runtime = await createTestRuntime(t);
-      const service = await runtime.createService({ viewId: "failed-upload", log: () => {} });
-      await service.initialize();
-      assert.equal(service.getState().error, "");
-      const previous = service.getState();
-      const inputs = await readdir(path.join(runtime.runtimeRoot, "inputs"));
-      const models = await readdir(path.join(runtime.runtimeRoot, "models"));
-      const response = await fetch(service.url + "api/upload", {
-        method: "POST", headers: { "x-file-name": "broken.step" }, body: "not a STEP",
-      });
-      assert.equal(response.status, 422);
-      assert.equal((await response.json()).code, "conversion_failed");
-      assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "inputs")), inputs);
-      assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "models")), models);
-      const current = service.getState();
-      assert.equal(current.loading, false);
-      assert.equal(current.documentRevision, previous.documentRevision);
-      assert.equal(current.topologyRevision, previous.topologyRevision);
-      assert.match(current.error, /STEP conversion failed/);
-      const saved = JSON.parse(await readFile(viewStateFile(runtime.runtimeRoot, service.projectRoot, "failed-upload"), "utf8"));
-      assert.equal(saved.modelCache, `${previous.topologyRevision}.json`);
-      assert.equal(path.basename(saved.inputFile), `${previous.documentRevision}.step`);
-    });
     assert.equal(upload.status, 400);
   } finally {
     await service.close();
     await rm(root, { recursive: true });
   }
+});
+
+test("failed uploads preserve the prior model and leave no durable failed-attempt input", async (t) => {
+  const runtime = await createTestRuntime(t);
+  const service = await runtime.createService({ viewId: "failed-upload", log: () => {} });
+  await service.initialize();
+  assert.equal(service.getState().error, "");
+  const previous = service.getState();
+  const inputs = await readdir(path.join(runtime.runtimeRoot, "inputs"));
+  const models = await readdir(path.join(runtime.runtimeRoot, "models"));
+  const response = await fetch(service.url + "api/upload", {
+    method: "POST", headers: { "x-file-name": "broken.step" }, body: "not a STEP",
+  });
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, "conversion_failed");
+  assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "inputs")), inputs);
+  assert.deepEqual(await readdir(path.join(runtime.runtimeRoot, "models")), models);
+  const current = service.getState();
+  assert.equal(current.loading, false);
+  assert.equal(current.documentRevision, previous.documentRevision);
+  assert.equal(current.topologyRevision, previous.topologyRevision);
+  assert.match(current.error, /STEP conversion failed/);
+  const saved = JSON.parse(await readFile(viewStateFile(runtime.runtimeRoot, service.projectRoot, "failed-upload"), "utf8"));
+  assert.equal(saved.modelCache, `${previous.topologyRevision}.json`);
+  assert.equal(path.basename(saved.inputFile), `${previous.documentRevision}.step`);
 });
