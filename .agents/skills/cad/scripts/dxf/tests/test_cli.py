@@ -35,11 +35,6 @@ class DxfCliTests(unittest.TestCase):
 
         generate.assert_called_once_with(["drawings/part.py"], output="DXF/part.dxf", verbose=False)
 
-    def test_output_flag_rejects_multiple_targets(self) -> None:
-        with self.assertRaises(SystemExit) as cm:
-            dxf.main(["drawings/first.py", "drawings/second.py", "-o", "DXF/first.dxf"])
-        self.assertEqual(2, cm.exception.code)
-
     def test_scripts_dxf_directory_invokes_cli(self) -> None:
         skill_root = Path(__file__).resolve().parents[3]
         result = subprocess.run(

@@ -11,11 +11,10 @@ from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
-from common.glb import (
+from common.glb import _GlbBuilder, export_assembly_glb_from_scene, export_part_glb_from_scene
+from common.glb_topology import (
     STEP_TOPOLOGY_EXTENSION,
-    _GlbBuilder,
-    export_assembly_glb_from_scene,
-    export_part_glb_from_scene,
+    STEP_TOPOLOGY_SCHEMA_VERSION,
     read_step_topology_bundle_from_glb,
     read_step_topology_manifest_from_glb,
 )
@@ -122,54 +121,9 @@ class GlbExportTests(unittest.TestCase):
             embedded = read_step_topology_bundle_from_glb(glb_path)
             self.assertIsNotNone(embedded)
             assert embedded is not None
-            self.assertEqual(1, embedded.manifest["schemaVersion"])
+            self.assertEqual(STEP_TOPOLOGY_SCHEMA_VERSION, embedded.manifest["schemaVersion"])
             self.assertEqual("fixtures/box", embedded.manifest["cadRef"])
             self.assertEqual([7, 11], list(embedded.buffers["edgeIds"]))
-
-    def test_legacy_topology_json_and_bin_bundle_is_read_when_glb_lacks_extension(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
-            artifact_dir = Path(temp_dir) / ".fixture.step"
-            artifact_dir.mkdir()
-            glb_path = artifact_dir / "model.glb"
-            glb_path.write_bytes(b"legacy visual glb without embedded topology")
-
-            edge_ids = array("I", [19, 23])
-            edge_bytes = edge_ids.tobytes()
-            (artifact_dir / "topology.bin").write_bytes(edge_bytes)
-            (artifact_dir / "topology.json").write_text(
-                json.dumps(
-                    {
-                        "schemaVersion": 1,
-                        "profile": "artifact",
-                        "cadRef": "fixtures/legacy",
-                        "buffers": {
-                            "uri": "topology.bin",
-                            "littleEndian": True,
-                            "views": {
-                                "edgeIds": {
-                                    "dtype": "uint32",
-                                    "byteOffset": 0,
-                                    "byteLength": len(edge_bytes),
-                                    "count": 2,
-                                    "itemSize": 4,
-                                }
-                            },
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            index = read_step_topology_manifest_from_glb(glb_path)
-            self.assertIsNotNone(index)
-            assert index is not None
-            self.assertEqual("fixtures/legacy", index.get("cadRef"))
-
-            bundle = read_step_topology_bundle_from_glb(glb_path)
-            self.assertIsNotNone(bundle)
-            assert bundle is not None
-            self.assertEqual("fixtures/legacy", bundle.manifest.get("cadRef"))
-            self.assertEqual([19, 23], list(bundle.buffers["edgeIds"]))
 
     def test_assembly_glb_preserves_face_colors_as_material_primitives(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
@@ -324,6 +278,17 @@ class GlbSelectorManifestEntryKindTests(unittest.TestCase):
 
         self.assertEqual("part", extension["entryKind"])
         self.assertEqual("part", selector_manifest["entryKind"])
+
+    def test_a_topology_index_from_another_schema_version_is_not_read(self) -> None:
+        # A sidecar written by an earlier scripts/step describes the STEP by older rules, so readers treat it as absent.
+        builder = _GlbBuilder()
+        builder.add_step_topology(SelectorBundle(manifest=_bundle_manifest(assembly=False)), include_selector_topology=True)
+        builder.json["extensions"][STEP_TOPOLOGY_EXTENSION]["schemaVersion"] = STEP_TOPOLOGY_SCHEMA_VERSION - 1
+        with tempfile.TemporaryDirectory(prefix="cad-glb-test-") as temp_dir:
+            glb_path = builder.write(Path(temp_dir) / ".sample.step.glb")
+
+            self.assertIsNone(read_step_topology_manifest_from_glb(glb_path))
+            self.assertIsNone(read_step_topology_bundle_from_glb(glb_path))
 
 
 if __name__ == "__main__":

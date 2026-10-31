@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from common.part_names import tree_names
+from common.part_names import root_name, tree_names
 
 
 @dataclass(frozen=True)
@@ -48,14 +48,20 @@ class StepParts:
         return build_cad_token(self.cad_path, self.selector(part, entity))
 
 
-def load_step_parts(step_path: Path, cad_path: str) -> StepParts:
+def load_step_parts(step_path: Path, cad_path: str | None = None) -> StepParts:
+    """The STEP's parts, named as ``inspect parts`` names them.
+
+    ``cad_path`` is the path refs name the STEP by, and its last segment names an unlabelled root. It defaults to the
+    STEP's own path without its suffix; pass it when they differ, as for a STEP reached through a link.
+    """
     from common.step_scene import load_step_scene, occurrence_selector_id, scene_occurrence_shape
 
+    cad_path = cad_path or step_path.with_suffix("").as_posix()
     scene = load_step_scene(step_path)
     root = _Root(scene.roots)
     names, _ = tree_names(
         root,
-        root_name=Path(cad_path).name,
+        root_name=root_name(cad_path),
         children=lambda node: node.children,
         label=lambda node: node.name or node.source_name,
     )
@@ -93,6 +99,7 @@ class _Root:
 
 
 def label_pattern(glob: str) -> re.Pattern[str]:
+    """A part name pattern as CAD Explorer reads one everywhere: * and ? are the only wildcards, all else is literal."""
     return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
 
 

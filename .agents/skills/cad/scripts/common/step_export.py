@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from common.atomic_replace import replacing
-from common.part_names import own_label, tree_names
+from common.part_names import own_label, root_name, tree_names
 from common.cache import sha256_file
 from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc
 
@@ -397,7 +397,7 @@ def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStep
     """
     names, unlabelled = tree_names(
         to_export,
-        root_name=Path(output_path).stem,
+        root_name=root_name(Path(output_path).name),
         children=lambda node: list(getattr(node, "children", None) or ()),
         label=lambda node: getattr(node, "label", None),
     )
