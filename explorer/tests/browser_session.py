@@ -40,6 +40,9 @@ class _Shared:
 # there is one, then on Windows with Direct3D's software rasterizer (WARP), and last with SwiftShader, which is all
 # Playwright's Chromium would use on its own, many times slower, even beside a GPU.
 _BEFORE_SWIFTSHADER = {"darwin": [["--use-angle=metal"]], "win32": [["--use-angle=d3d11"], ["--use-angle=d3d11-warp"]]}
+# Scrolls land at once. Chromium otherwise animates a keyboard scroll over frames, which a busy runner can stall long
+# enough for an expectation about the scrolled-to content to time out.
+_SCROLLING = ["--disable-smooth-scrolling"]
 _RENDERER = """() => {
     const gl = document.createElement('canvas').getContext('webgl2');
     return gl && gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER);
@@ -48,7 +51,7 @@ _RENDERER = """() => {
 
 def _launch(playwright):
     for args in _BEFORE_SWIFTSHADER.get(sys.platform, []):
-        browser = playwright.chromium.launch(args=args)
+        browser = playwright.chromium.launch(args=args + _SCROLLING)
         try:
             page = browser.new_page()
             # A backend Chromium cannot use may still answer, with SwiftShader.
@@ -60,7 +63,7 @@ def _launch(playwright):
             pass
         with contextlib.suppress(Error):
             browser.close()
-    return playwright.chromium.launch()
+    return playwright.chromium.launch(args=_SCROLLING)
 
 
 class _Contexts:

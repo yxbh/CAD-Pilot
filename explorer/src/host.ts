@@ -14,7 +14,7 @@ export type RenderReport = {
   selectedIds: string[]; selectedFace: FaceSelection | null; highlightedTriangles: number;
   selectedEdge: EdgeSelection | null; highlightedSegments: number; selectedEdgeScreen: number[] | null;
   selectedFaceScreen: number[] | null; bounds: { min: number[]; max: number[] } | null;
-  pixels: [number, number];
+  pixels: [number, number]; background: string | null;
   selectedPoint: PointSelection | null; selectedPointScreen: number[] | null; faultMarks: number; sectionOutlineSegments: number; ghostParts: number; meshTriangles: number; pickingTrees: number;
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
