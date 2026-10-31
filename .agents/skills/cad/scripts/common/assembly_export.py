@@ -22,7 +22,7 @@ from common.catalog import (
     normalize_cad_ref,
     source_from_path,
 )
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.render import existing_part_glb_path, part_glb_path
 from common.step_export import ascii_name, create_bin_xcaf_doc, export_xcaf_doc_step_scene
 from common.step_scene import LoadedStepScene, load_step_scene, occurrence_selector_id

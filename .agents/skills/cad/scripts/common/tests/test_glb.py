@@ -11,14 +11,8 @@ from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
-from common.glb import (
-    STEP_TOPOLOGY_EXTENSION,
-    _GlbBuilder,
-    export_assembly_glb_from_scene,
-    export_part_glb_from_scene,
-    read_step_topology_bundle_from_glb,
-    read_step_topology_manifest_from_glb,
-)
+from common.glb import _GlbBuilder, export_assembly_glb_from_scene, export_part_glb_from_scene
+from common.glb_topology import STEP_TOPOLOGY_EXTENSION, read_step_topology_bundle_from_glb, read_step_topology_manifest_from_glb
 from common.step_scene import LoadedStepScene, OccurrenceNode, SelectorBundle, _shape_hash
 
 

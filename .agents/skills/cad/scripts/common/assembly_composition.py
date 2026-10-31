@@ -10,7 +10,7 @@ from common.assembly_spec import (
     assembly_spec_children,
     multiply_transforms,
 )
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.cache import sha256_file
 from common.render import existing_part_glb_path, part_glb_path, relative_to_repo
 

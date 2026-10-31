@@ -41,7 +41,7 @@ from common.issued_refs import forget, mark, refs_issued_for
 from common.paths import command_line_path, relative_path
 from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.metadata import (
     DEFAULT_MESH_ANGULAR_TOLERANCE,
     DEFAULT_MESH_TOLERANCE,

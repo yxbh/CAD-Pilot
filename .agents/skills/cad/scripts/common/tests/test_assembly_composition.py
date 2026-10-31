@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from common.assembly_composition import build_linked_assembly_composition, build_native_assembly_composition
 from common.assembly_spec import AssemblyInstanceSpec, AssemblyNodeSpec, AssemblySpec
-from common.glb import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_manifest_from_glb
 from common.render import part_glb_path
 from common.tests.cad_test_roots import IsolatedCadRoots
 
