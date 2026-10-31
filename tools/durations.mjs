@@ -31,6 +31,8 @@ const named = `${runs.length === 1 ? "run" : "runs"} ${runs.join(", ")}`;
 const folder = await mkdtemp(path.join(tmpdir(), "check-durations-"));
 try {
   for (const run of runs) gh("run", "download", run, "--pattern", "check-logs-*", "--dir", path.join(folder, run));
+  // Every suite's records are read before either table is written, so both tables always come from the same runs.
+  const tables = [];
   for (const [suite, { table, folder: files }] of Object.entries(SUITES)) {
     // Per platform and file, the seconds each run recorded.
     const recorded = {};
@@ -54,8 +56,11 @@ try {
         return existsSync(path.join(files, name)) ? [[name, Math.round(seconds * 10) / 10]] : [];
       }))];
     }));
-    await writeFile(table, `${JSON.stringify(durations, null, 2)}\n`);
     const counts = Object.entries(measured).map(([platform, seconds]) => `${platform} ${Object.keys(seconds).length} files`);
+    tables.push({ table, durations, counts });
+  }
+  for (const { table, durations, counts } of tables) {
+    await writeFile(table, `${JSON.stringify(durations, null, 2)}\n`);
     console.log(`Wrote ${path.relative(process.cwd(), table)} from ${named}: ${counts.join(", ")}`);
   }
 } finally {

@@ -18,24 +18,30 @@ defaults:
   run:
     shell: bash
 
-# Each system runs its checks in five jobs: each runs a share of the Python test files and a share of the Explorer's,
+# Each system runs its checks in several jobs: each runs a share of the Python test files and a share of the Explorer's,
 # both split by each file's measured time on that system's runners, so a run takes as long as its slowest job rather
-# than the sum. Five is as many macOS jobs as an account may run at once.
+# than the sum. macOS runs five, as many macOS jobs as an account may run at once; the others six.
 jobs:
   check:
-    name: check ${{ matrix.share }}/5 (${{ matrix.os }})
+    name: check ${{ matrix.share }}/${{ matrix.shares }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
-        share: [1, 2, 3, 4, 5]  # the 5 in the job name and command below
+        share: [1, 2, 3, 4, 5, 6]
+        exclude:
+          - { os: macos-latest, share: 6 }
+        include:
+          - { os: macos-latest, shares: 5 }
+          - { os: windows-latest, shares: 6 }
+          - { os: ubuntu-latest, shares: 6 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       # exec, so a cancelled run's signal reaches the check runner, which stops its stages and prints their output.
-      - run: exec node tools/check.mjs --share ${{ matrix.share }}/5
+      - run: exec node tools/check.mjs --share ${{ matrix.share }}/${{ matrix.shares }}
       - if: always()
         uses: actions/upload-artifact@v7
         with:

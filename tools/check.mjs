@@ -12,7 +12,8 @@ const USAGE = `Usage: node tools/check.mjs [--quick | --share <i>/<n>]
   --share <i>/<n>  share i of n of the Python and Explorer test files, as CI splits them across its jobs`;
 const options = process.argv.slice(2);
 const mode = options[0] ?? "full";
-const share = mode === "--share" && /^\d+\/\d+$/.test(options[1] ?? "") ? options[1] : null;
+const [index, count] = mode === "--share" && /^\d+\/\d+$/.test(options[1] ?? "") ? options[1].split("/").map(Number) : [];
+const share = index >= 1 && index <= count ? options[1] : null;
 if (!(share ? options.length === 2 : options.length <= 1 && ["full", "--quick"].includes(mode))) {
   console.error(USAGE);
   process.exit(2);
@@ -31,8 +32,10 @@ const explorer = (name, ...args) => ({
   name, command: node, needs: [env.name, build.name],
   args: ["explorer/scripts/test.mjs", ...args, "--no-build", "--durations", durations("explorer", ...args)],
 });
+// In a CI share the Python tests start once the Explorer is built: the Explorer's share waits on the build, so the
+// build gets the runner's few cores to itself.
 const python = {
-  name: share ? `python ${share}` : "python", command: "uv", needs: [env.name],
+  name: share ? `python ${share}` : "python", command: "uv", needs: share ? [env.name, build.name] : [env.name],
   args: [
     "run", "--no-sync", "pytest", "-q", "-n", workers, "--durations", "30",
     ...(share ? ["--share", share] : []), "--record-durations", durations("python", ...(share ? [share] : [])),

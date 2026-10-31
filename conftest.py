@@ -39,15 +39,17 @@ def _file(nodeid):
     return nodeid.partition("::")[0]
 
 
+def _share(config):
+    index, _, count = (config.getoption("share") or "").partition("/")
+    return (int(index), int(count)) if index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count) else None
+
+
 def pytest_collection_modifyitems(config, items):
-    share = config.getoption("share")
-    if not share:
+    if not config.getoption("share"):
         return
-    index, _, count = share.partition("/")
-    if not (index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count)):
-        raise pytest.UsageError(f"--share takes I/N with 1 <= I <= N, not {share}")
+    index, count = _share(config)
     measured = json.loads(DURATIONS.read_text(encoding="utf-8")).get(sys.platform, {}) if DURATIONS.is_file() else {}
-    chosen = set(shares(sorted({_file(item.nodeid) for item in items}), measured, int(count))[int(index) - 1])
+    chosen = set(shares(sorted({_file(item.nodeid) for item in items}), measured, count)[index - 1])
     config.hook.pytest_deselected(items=[item for item in items if _file(item.nodeid) not in chosen])
     items[:] = [item for item in items if _file(item.nodeid) in chosen]
 
@@ -72,6 +74,9 @@ class _Durations:
 
 
 def pytest_configure(config):
+    # Checked here, before pytest-xdist starts any worker, so a bad share is a usage error, not a crashed worker.
+    if config.getoption("share") and not _share(config):
+        raise pytest.UsageError(f"--share takes I/N with 1 <= I <= N, not {config.getoption('share')}")
     # Only the process that reports the run records it; pytest-xdist's workers pass their reports to it.
     target = config.getoption("record_durations")
     if target and not hasattr(config, "workerinput"):
