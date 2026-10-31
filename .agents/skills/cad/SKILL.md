@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Create, modify, inspect, and validate STEP-first build123d/Python CAD parts and assemblies. Use for natural-language CAD specs, STEP/STP generation, build123d source, build123d source-level joints, @cad references, geometry facts, measurements, mating deltas, and secondary DXF/STL/3MF outputs. Viewing and images go through the visual-review skill and the maintained CAD Explorer.
+description: Create, modify, inspect, and validate STEP-first build123d/Python CAD parts and assemblies. Use for natural-language CAD specs, STEP/STP generation, build123d source, build123d source-level joints, @cad references, geometry facts, measurements, mating deltas, secondary DXF/STL/3MF outputs, and print handoffs (Bambu Studio project 3MFs, slice checks, print-orientation checks and fit coupons). Viewing and images go through the visual-review skill and the maintained CAD Explorer.
 ---
 
 # CAD generation, inspection, and validation
@@ -13,7 +13,7 @@ Create or modify parametric CAD models from natural-language requirements, gener
 
 Use this skill when the user asks for CAD files, STEP/STP files, build123d source, `@cad[...]` references, mechanical parts, assemblies, enclosures, brackets, fixtures, holes, counterbores, countersinks, slots, pockets, bosses, standoffs, ribs, fillets, chamfers, shells, source-level joints, mating, or measurements.
 
-Also use it when the user asks for DXF, STL, or 3MF output from CAD geometry. Keep those workflows secondary and load `dxf.md` or `supported-exports.md` for details.
+Also use it when the user asks for DXF, STL, or 3MF output from CAD geometry. Keep those workflows secondary and load `dxf.md` or `supported-exports.md` for details. For a print, such as a Bambu Studio project, a slice check, a check of a print orientation or a fit coupon, load `print.md`.
 
 To open, show, compare or capture a model, use the workbench's visual-review skill, which drives the maintained CAD Explorer; this skill does not start viewers.
 
@@ -41,7 +41,7 @@ Do not ask the user to provide a JSON specification and do not make JSON the use
 
 Keep these roots separate:
 
-- **CAD skill directory**: this folder. Tool launchers live here as `scripts/step`, `scripts/inspect`, and `scripts/dxf`.
+- **CAD skill directory**: this folder. Tool launchers live here as `scripts/step`, `scripts/inspect`, `scripts/dxf`, and `scripts/print`.
 - **Tool process cwd**: relative CAD targets are resolved from the command's current working directory. Use absolute target paths when running from the skill directory, or run from the design project's root and invoke the launchers with a path to this skill directory.
 - **Viewer root**: the maintained CAD Explorer lives in the workbench's `explorer/` folder, not in this skill. The visual-review skill opens it from the design project's root with the same project-relative STEP path used for generation and inspection.
 
@@ -57,6 +57,7 @@ From the CAD skill directory, the launcher shape is:
 python scripts/step ...
 python scripts/inspect ...
 python scripts/dxf ...
+python scripts/print ...
 ```
 
 Use the active project Python interpreter. If only the repo-local virtualenv is available, invoke that interpreter while keeping the root model above explicit.
@@ -99,6 +100,7 @@ Load these files only when their trigger applies:
 - `references/rendering-and-explorer.md` — showing models in the maintained CAD Explorer, self-review captures, images for the user, and reporting visual review.
 - `references/dxf.md` — secondary DXF workflow.
 - `references/supported-exports.md` — secondary STL/3MF sidecar workflows.
+- `references/print.md` — print handoff: the personal print profile, print jobs, Bambu Studio projects, slice checks, print-orientation checks and fit coupons.
 - `references/build123d-modeling.md` — build123d modeling patterns, topology, selectors, features, assemblies, and placement, fillet, loft, Boolean and validity pitfalls.
 - `references/repair-loop.md` — diagnosis and repair procedures.
 

@@ -1,4 +1,5 @@
 build123d
 ezdxf
 numpy
+scipy
 trimesh

@@ -4,7 +4,7 @@ Read this file when the user requests STL or 3MF output from CAD geometry. Read 
 
 ## Policy
 
-STL and 3MF are mesh sidecars, not substitutes for STEP. Generate and validate STEP first, then export requested sidecars from the same `scripts/step` run. Do not view or inspect STL or 3MF in place of the STEP; show or inspect the STEP when visual review is needed.
+STL and 3MF are mesh sidecars, not substitutes for STEP. A sidecar 3MF holds geometry only; for a Bambu Studio project with plates, printer, filament and support settings, use `scripts/print` (see `print.md`). Generate and validate STEP first, then export requested sidecars from the same `scripts/step` run. Do not view or inspect STL or 3MF in place of the STEP; show or inspect the STEP when visual review is needed.
 
 A mesh is only as closed as its solid. When `scripts/step` warns that a part is not a sound or closed solid, or is inside out, its meshes can have zero-area triangles, open edges or inward-facing triangles, for example where a swept handle folds through itself; repair the source as `repair-loop.md` describes before sending the mesh to a slicer. A `could not check` notice leaves the part unverified.
 
