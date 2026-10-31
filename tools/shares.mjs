@@ -1,8 +1,9 @@
-// Splits the workbench's test files across CI's jobs (tools/check.mjs --share): each job gets Python and Explorer test
-// files that together take about as long as any other job's. A file weighs what it added to its job's time on that
-// platform's runners (tests/durations.json and explorer/tests/durations.json, which tools/durations.mjs refreshes from
-// CI); the files go longest first, each to the job with the least time so far. A file not measured yet counts as the
-// median of its kind: Python, Explorer browser scenario or other Explorer test.
+// Splits the workbench's test files across CI's jobs (tools/check.mjs --share). A job runs its Python and Explorer
+// tests side by side, so it takes about as long as the slower of the two plus the build. Each file weighs what it
+// added to its suite's time on that platform's runners (tests/durations.json and explorer/tests/durations.json, which
+// tools/durations.mjs refreshes from CI); the files go longest first, each to a job where it leaves the slowest job
+// quickest, and among those to the one with the least of its own suite, so that each suite is spread evenly. A file not
+// measured yet counts as the median of its kind: Python, Explorer browser scenario or other Explorer test.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,11 +46,18 @@ export function shares(count, { platform = process.platform, python = pythonTest
   const files = [...python.map((file) => ["python", file]), ...explorer.map((file) => ["explorer", file])]
     .map(([suite, file]) => ({ suite, file, seconds: measured[suite][file] ?? medians[kind(suite, file)] ?? 1 }))
     .sort((a, b) => b.seconds - a.seconds || a.suite.localeCompare(b.suite) || a.file.localeCompare(b.file));
-  const jobs = Array.from({ length: count }, () => ({ seconds: 0, python: [], explorer: [] }));
+  const jobs = Array.from({ length: count }, () => ({ python: [], explorer: [], load: { python: 0, explorer: 0 } }));
+  const slower = (load) => Math.max(load.python, load.explorer);
   for (const { suite, file, seconds } of files) {
-    const lightest = jobs.reduce((best, job) => (job.seconds < best.seconds ? job : best));
-    lightest.seconds += seconds;
-    lightest[suite].push(file);
+    const slowest = Math.max(...jobs.map((job) => slower(job.load)));
+    const after = (job) => ({ ...job.load, [suite]: job.load[suite] + seconds });
+    const cost = (job) => [Math.max(slowest, slower(after(job))), after(job)[suite]];
+    const chosen = jobs.reduce((best, job) => {
+      const [[run, own], [bestRun, bestOwn]] = [cost(job), cost(best)];
+      return run < bestRun || (run === bestRun && own < bestOwn) ? job : best;
+    });
+    chosen.load = after(chosen);
+    chosen[suite].push(file);
   }
   for (const job of jobs) job.python.sort(), job.explorer.sort();
   return jobs;

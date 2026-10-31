@@ -24,7 +24,7 @@ const workers = String(Math.max(1, Math.min(4, availableParallelism())));
 const logs = path.join(root, ".local", "check");
 const job = share && shares(count)[index - 1];
 if (job) {
-  console.log(`Share ${share}, about ${Math.round(job.seconds)} s on a CI runner`);
+  console.log(`Share ${share}: about ${Math.round(job.load.python)} s of Python and ${Math.round(job.load.explorer)} s of Explorer tests on a CI runner`);
   console.log(`  Python: ${job.python.join(" ") || "none"}\n  Explorer: ${job.explorer.join(" ") || "none"}`);
 }
 // The Python environment is synced once (inexactly, like `uv run`) before the suites that use it start together;
