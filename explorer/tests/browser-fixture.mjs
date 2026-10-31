@@ -20,7 +20,7 @@ export async function runBrowser(script, { url, output, timeout = 210_000 }) {
 // The demo assembly and its sequence, written once per test process. Each browser test's runtime gets a copy, where
 // the service finds it and skips building it again; core tests still build it themselves.
 let demo;
-function demoTemplate() {
+export function demoTemplate() {
   demo ??= (async () => {
     const folder = await mkdtemp(path.join(os.tmpdir(), "cad-explorer-demo-"));
     process.once("exit", () => rmSync(folder, { recursive: true, force: true }));
