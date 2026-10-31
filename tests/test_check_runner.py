@@ -59,7 +59,9 @@ def test_failures_skip_their_dependents_and_piped_output_is_complete(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-def test_a_signal_stops_each_stage_tree_and_prints_what_it_wrote(tmp_path):
+# SIGHUP is what a closed terminal or a stopped editor task sends; stages run in their own sessions, so it must reach them.
+@pytest.mark.parametrize(("stop_signal", "exit_code"), [("SIGTERM", 143), ("SIGHUP", 129)])
+def test_a_signal_stops_each_stage_tree_and_prints_what_it_wrote(tmp_path, stop_signal, exit_code):
     grandchild = tmp_path / "grandchild.pid"
     slow = (
         "const { spawn } = require('node:child_process');"
@@ -83,13 +85,13 @@ def test_a_signal_stops_each_stage_tree_and_prints_what_it_wrote(tmp_path):
             seen.append(lines.get(timeout=max(0.01, deadline - time.monotonic())))
         log = tmp_path / "logs/slow.log"
         _wait_for(lambda: grandchild.exists() and log.exists() and "partial" in log.read_text(encoding="utf-8"))
-        runner.send_signal(signal.SIGTERM)
+        runner.send_signal(getattr(signal, stop_signal))
         runner.wait(timeout=30)
         reader.join(timeout=30)
     finally:
         runner.kill()
     output = "".join(seen + list(lines.queue))
-    assert runner.returncode == 143
+    assert runner.returncode == exit_code
     assert "── ✖ slow interrupted after" in output and "partial" in output
     assert "✔ quick passed after" in output
     assert "never" not in output
