@@ -43,7 +43,6 @@ class CadgenRenderTests(unittest.TestCase):
         glb_path = cad_render.part_glb_path(step_path)
 
         self.assertEqual(self.temp_root / ".part.step.glb", glb_path)
-        self.assertEqual(self.temp_root / ".part.step" / "model.glb", cad_render.legacy_part_glb_path(step_path))
 
     def test_glb_path_preserves_stp_extension(self) -> None:
         step_path = self._write_step("part-stp", extension=".stp")
@@ -51,7 +50,6 @@ class CadgenRenderTests(unittest.TestCase):
         glb_path = cad_render.part_glb_path(step_path)
 
         self.assertEqual(self.temp_root / ".part-stp.stp.glb", glb_path)
-        self.assertEqual(self.temp_root / ".part-stp.stp" / "model.glb", cad_render.legacy_part_glb_path(step_path))
 
 
 if __name__ == "__main__":

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 import zipfile
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
 import numpy as np
+import trimesh
+from trimesh.graph import connected_components
 
 from common.cache import cache_path, prune, sha256_file, touch
 from common.step_scene import load_step_scene, mesh_step_scene, scene_leaf_occurrences, scene_occurrence_shape
@@ -24,32 +25,11 @@ MESH_SUFFIXES = {".stl"}
 # Checked STEP meshes are kept in the cad tools' user cache, named by the STEP's contents and the
 # meshing limits. Bump the version when meshing or the checks a kept mesh has passed change.
 MESH_CACHE = "print-meshes"
-MESH_CACHE_VERSION = 1
+MESH_CACHE_VERSION = 2
 
 
 class MeshError(ValueError):
     pass
-
-
-def _workbench_python() -> Path | None:
-    """The interpreter of the workbench holding this skill (<workbench>/.agents/skills/cad/scripts/print)."""
-    venv = Path(__file__).resolve().parents[5] / ".venv"
-    return next((python for python in (venv / "bin" / "python", venv / "Scripts" / "python.exe") if python.is_file()), None)
-
-
-def trimesh_module():
-    """trimesh and its graph functions, which the workbench's environment has and a design project's own
-    environment may not: imported only when a part is meshed, so the other print commands run without it."""
-    try:
-        import trimesh
-        import trimesh.graph
-    except ModuleNotFoundError as error:
-        workbench = _workbench_python()
-        raise MeshError(
-            f"scripts/print needs {error.name or 'trimesh'}, which {sys.executable} cannot import; run it with the "
-            f"workbench's Python interpreter{f' ({workbench})' if workbench else ''}"
-        ) from None
-    return trimesh
 
 
 @dataclass(frozen=True, eq=False)
@@ -108,8 +88,19 @@ class PrintMesh:
         return PrintMesh(turned - low, self.faces, turn @ self.rotation, turn @ self.offset - low, self.bodies)
 
 
-def _closed(vertices, faces, source: str):
-    trimesh = trimesh_module()
+def _winding(triangles: np.ndarray, point: np.ndarray) -> float:
+    """How many times these closed shells' triangles wind around a point not on them: 1 inside a shell
+    facing outwards, 0 outside, from the solid angle each triangle spans."""
+    a, b, c = triangles[:, 0] - point, triangles[:, 1] - point, triangles[:, 2] - point
+    la, lb, lc = (np.linalg.norm(v, axis=1) for v in (a, b, c))
+    volume = np.einsum("ij,ij->i", a, np.cross(b, c))
+    spread = la * lb * lc + np.einsum("ij,ij->i", a, b) * lc + np.einsum("ij,ij->i", a, c) * lb + np.einsum("ij,ij->i", b, c) * la
+    return float(np.arctan2(volume, spread).sum() / (2 * np.pi))
+
+
+def _closed(vertices, faces, source: str) -> tuple[trimesh.Trimesh, int]:
+    """A closed mesh with every triangle facing outwards, and how many separate solids it holds: its
+    connected shells that enclose material, not the inward-facing shells of voids inside them."""
     mesh = trimesh.Trimesh(vertices=np.asarray(vertices, dtype=float), faces=np.asarray(faces, dtype=np.int64), process=True)
     if len(mesh.faces) == 0:
         raise MeshError(f"{source} holds no triangles")
@@ -125,24 +116,31 @@ def _closed(vertices, faces, source: str):
         )
     if mesh.volume < 0:
         mesh.invert()
-    return mesh
-
-
-def _solids(mesh) -> int:
-    """The separate solids in a closed mesh: its connected shells that enclose material (a positive
-    signed volume), not the inward-facing shells of voids inside them."""
-    groups = trimesh_module().graph.connected_components(mesh.face_adjacency, nodes=np.arange(len(mesh.faces)), min_len=1)
     tri = np.asarray(mesh.triangles)
     signed = np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])) / 6.0
-    return max(1, sum(1 for group in groups if signed[np.asarray(group)].sum() > 0))
+    shells = [np.asarray(shell) for shell in connected_components(mesh.face_adjacency, nodes=np.arange(len(tri)), min_len=1)]
+    volumes = [float(signed[shell].sum()) for shell in shells]
+    for shell in (shell for shell, volume in zip(shells, volumes) if volume < 0):
+        # Consistent winding is checked only where triangles share an edge, so a separate shell can face
+        # inwards on its own: that is a void only inside the material of the others.
+        others = np.ones(len(tri), dtype=bool)
+        others[shell] = False
+        if _winding(tri[others], tri[shell[0], 0]) < 0.5:
+            raise MeshError(
+                f"{source} is not a closed solid: a separate shell faces inwards but lies inside no other, so it "
+                "is no void; repair it (turn that shell's triangles outwards) before printing"
+            )
+    return mesh, max(1, sum(1 for volume in volumes if volume > 0))
 
 
-def _joined(bodies: list) -> PrintMesh:
-    """Bodies as one print object, each kept closed on its own: touching bodies share no vertices."""
-    offsets = np.cumsum([0] + [len(body.vertices) for body in bodies[:-1]])
-    vertices = np.concatenate([np.asarray(body.vertices, dtype=float) for body in bodies])
-    faces = np.concatenate([np.asarray(body.faces, dtype=np.int64) + offset for body, offset in zip(bodies, offsets)])
-    return PrintMesh(vertices, faces, bodies=sum(_solids(body) for body in bodies))
+def _joined(bodies: list[tuple[trimesh.Trimesh, int]]) -> PrintMesh:
+    """Bodies (each a closed mesh and its count of solids) as one print object, each kept closed on its
+    own: touching bodies share no vertices."""
+    meshes = [mesh for mesh, _ in bodies]
+    offsets = np.cumsum([0] + [len(mesh.vertices) for mesh in meshes[:-1]])
+    vertices = np.concatenate([np.asarray(mesh.vertices, dtype=float) for mesh in meshes])
+    faces = np.concatenate([np.asarray(mesh.faces, dtype=np.int64) + offset for mesh, offset in zip(meshes, offsets)])
+    return PrintMesh(vertices, faces, bodies=sum(solids for _, solids in bodies))
 
 
 def load_mesh(path: Path) -> PrintMesh:
@@ -154,7 +152,7 @@ def load_mesh(path: Path) -> PrintMesh:
     if suffix in STEP_SUFFIXES:
         return _cached_step_mesh(path)
     if suffix in MESH_SUFFIXES:
-        loaded = trimesh_module().load_mesh(path, force="mesh", process=False)
+        loaded = trimesh.load_mesh(path, force="mesh", process=False)
         return _joined([_closed(loaded.vertices, loaded.faces, str(path))])
     raise MeshError(f"Part files must be STEP, STP or STL, not {path.name}")
 

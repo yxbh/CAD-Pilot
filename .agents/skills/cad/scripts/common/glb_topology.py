@@ -12,7 +12,11 @@ from common.selector_types import SelectorBundle
 
 
 STEP_TOPOLOGY_EXTENSION = "STEP_topology"
-STEP_TOPOLOGY_SCHEMA_VERSION = 1
+# Sidecars beside STEPs and the per-user cache's indexes carry it, and cache files are named by it, so neither is read
+# once it is out of date. Bump it when the selector extraction in step_scene or the GLB topology changes how a STEP is
+# numbered or described, always to a number no earlier tools used in either place: tools of different versions share
+# one cache, and two writing the same file name would keep replacing each other's index.
+STEP_TOPOLOGY_SCHEMA_VERSION = 3
 GLB_MAGIC = 0x46546C67
 GLB_VERSION = 2
 REPO_ROOT = Path.cwd().resolve()
@@ -151,24 +155,6 @@ def _array_from_view(gltf: Mapping[str, Any], binary_payload: bytes, view: Mappi
     return values
 
 
-def _array_from_legacy_binary_view(binary_payload: bytes, view: Mapping[str, Any]) -> array:
-    dtype = str(view.get("dtype") or "")
-    typecode = "f" if dtype == "float32" else "I" if dtype == "uint32" else ""
-    if not typecode:
-        raise ValueError(f"Unsupported STEP topology buffer dtype: {dtype}")
-    byte_offset = int(view.get("byteOffset") or 0)
-    count = int(view.get("count") or 0)
-    item_size = int(view.get("itemSize") or array(typecode).itemsize)
-    byte_length = int(view.get("byteLength") or (count * item_size))
-    if byte_offset < 0 or byte_length < 0 or byte_offset + byte_length > len(binary_payload):
-        raise ValueError("STEP topology buffer view range is invalid")
-    values = array(typecode)
-    values.frombytes(binary_payload[byte_offset : byte_offset + byte_length])
-    if count >= 0 and len(values) > count:
-        del values[count:]
-    return values
-
-
 def _step_topology_extension(gltf: Mapping[str, Any]) -> Mapping[str, Any] | None:
     extensions = gltf.get("extensions")
     extension = extensions.get(STEP_TOPOLOGY_EXTENSION) if isinstance(extensions, Mapping) else None
@@ -181,63 +167,20 @@ def _step_topology_extension(gltf: Mapping[str, Any]) -> Mapping[str, Any] | Non
     return extension
 
 
-def _legacy_topology_manifest_path_for_glb(glb_path: Path) -> Path | None:
-    resolved = glb_path.expanduser().resolve()
-    if resolved.name != "model.glb":
-        return None
-    return resolved.parent / "topology.json"
-
-
-def _read_legacy_topology_manifest(glb_path: Path) -> dict[str, Any] | None:
-    manifest_path = _legacy_topology_manifest_path_for_glb(glb_path)
-    if manifest_path is None or not manifest_path.is_file():
-        return None
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return manifest if isinstance(manifest, dict) else None
-
-
-def _read_legacy_topology_bundle(glb_path: Path) -> SelectorBundle | None:
-    manifest = _read_legacy_topology_manifest(glb_path)
-    if manifest is None:
-        return None
-    buffers: dict[str, array] = {}
-    buffer_spec = manifest.get("buffers")
-    views = buffer_spec.get("views") if isinstance(buffer_spec, Mapping) else None
-    uri = str(buffer_spec.get("uri") or "") if isinstance(buffer_spec, Mapping) else ""
-    if isinstance(views, Mapping) and uri:
-        manifest_path = _legacy_topology_manifest_path_for_glb(glb_path)
-        bin_path = manifest_path.parent / uri if manifest_path is not None else Path(uri)
-        try:
-            binary_payload = bin_path.read_bytes()
-        except OSError:
-            binary_payload = b""
-        if binary_payload:
-            for name, view in views.items():
-                if not isinstance(view, Mapping):
-                    continue
-                try:
-                    buffers[str(name)] = _array_from_legacy_binary_view(binary_payload, view)
-                except ValueError:
-                    continue
-    return SelectorBundle(manifest=manifest, buffers=buffers)
-
-
 def read_step_topology_bundle_from_glb(glb_path: Path) -> SelectorBundle | None:
+    """The GLB's selector topology, or None when it has none in the current schema or cannot be read."""
     try:
         gltf, binary_payload = _read_glb_chunks(glb_path)
     except (OSError, ValueError, json.JSONDecodeError):
-        return _read_legacy_topology_bundle(glb_path)
+        return None
     extension = _step_topology_extension(gltf)
     if extension is None:
-        return _read_legacy_topology_bundle(glb_path)
+        return None
     try:
         manifest_bytes = _buffer_view_bytes(gltf, binary_payload, extension.get("selectorView"))
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return _read_legacy_topology_bundle(glb_path)
+        return None
     if not isinstance(manifest, dict):
         return None
     buffers: dict[str, array] = {}
@@ -254,13 +197,14 @@ def read_step_topology_bundle_from_glb(glb_path: Path) -> SelectorBundle | None:
 
 
 def read_step_topology_index_from_glb(glb_path: Path) -> dict[str, Any] | None:
+    """The GLB's topology index, or None when it has none in the current schema or cannot be read."""
     try:
         gltf, binary_offset, binary_length = _read_glb_json_and_bin_location(glb_path)
     except (OSError, ValueError, json.JSONDecodeError):
-        return _read_legacy_topology_manifest(glb_path)
+        return None
     extension = _step_topology_extension(gltf)
     if extension is None:
-        return _read_legacy_topology_manifest(glb_path)
+        return None
     try:
         manifest_offset, manifest_length = _buffer_view_range(
             gltf,

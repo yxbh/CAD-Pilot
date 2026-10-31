@@ -10,9 +10,11 @@ from common.assembly_spec import (
     assembly_spec_children,
     multiply_transforms,
 )
-from common.glb import read_step_topology_manifest_from_glb
 from common.cache import sha256_file
-from common.render import existing_part_glb_path, part_glb_path, relative_to_repo
+from common.catalog import STEP_SUFFIXES
+from common.glb_topology import read_step_topology_manifest_from_glb
+from common.part_names import root_name
+from common.render import part_glb_path, relative_to_repo
 
 
 ASSEMBLY_COMPOSITION_SCHEMA_VERSION = 1
@@ -63,6 +65,7 @@ def build_linked_assembly_composition(
         raise AssemblyCompositionError(f"Assembly topology has no occurrences: {cad_ref}")
     component_occurrences = _component_occurrences(topology_manifest)
     root_occurrence = occurrences[0]
+    stale_sources: dict[str, None] = {}
     children = [
         _linked_instance_node(
             cad_ref=cad_ref,
@@ -77,9 +80,15 @@ def build_linked_assembly_composition(
             entries_by_step_path=entries_by_step_path,
             read_assembly_spec=read_assembly_spec,
             stack=(assembly_spec.assembly_path.resolve().as_posix(),),
+            stale_sources=stale_sources,
         )
         for instance in assembly_spec_children(assembly_spec)
     ]
+    if stale_sources:
+        raise AssemblyCompositionError(
+            f"{cad_ref} places parts whose topology is missing or from an older version of the tools: "
+            f"{', '.join(stale_sources)}. Generate each again with scripts/step as given, then this assembly."
+        )
     if not children:
         raise AssemblyCompositionError(f"Assembly {cad_ref} has no component instances")
     return {
@@ -161,7 +170,13 @@ def _linked_instance_node(
     entries_by_step_path: Mapping[Path, object],
     read_assembly_spec: Callable[[Path], AssemblySpec],
     stack: tuple[str, ...],
+    stale_sources: dict[str, None],
 ) -> dict[str, Any]:
+    """The composition node for one placed instance.
+
+    A part whose topology sidecar is missing or out of date is added to ``stale_sources`` instead of failing here, so
+    the caller can name every such part at once.
+    """
     instance_source_path = Path(instance.source_path).resolve() if instance.source_path is not None else None
     source_spec = entries_by_step_path.get(instance_source_path) if instance_source_path is not None else None
     child_kind = str(getattr(source_spec, "kind", "") or "")
@@ -174,9 +189,9 @@ def _linked_instance_node(
     display_name = str(
         instance.name
         or (
-            Path(source_step_path).stem
+            root_name(Path(source_step_path).name)
             if source_step_path is not None
-            else Path(instance.path or "").stem
+            else root_name(Path(instance.path or "").name)
         )
         or instance_path[-1]
     ).strip()
@@ -215,6 +230,7 @@ def _linked_instance_node(
                 entries_by_step_path=entries_by_step_path,
                 read_assembly_spec=read_assembly_spec,
                 stack=stack,
+                stale_sources=stale_sources,
             )
             for index, child_instance in enumerate(instance.children)
         ]
@@ -282,6 +298,7 @@ def _linked_instance_node(
                 entries_by_step_path=entries_by_step_path,
                 read_assembly_spec=read_assembly_spec,
                 stack=(*stack, stack_key),
+                stale_sources=stale_sources,
             )
             for index, child_instance in enumerate(assembly_spec_children(child_spec))
         ]
@@ -314,7 +331,7 @@ def _linked_instance_node(
         occurrence_id = str(occurrence.get("id") or "").strip()
         return _linked_native_assembly_node(
             topology_path=topology_path,
-            source_topology_path=existing_part_glb_path(Path(source_step_path)) or part_glb_path(Path(source_step_path)),
+            source_topology_path=part_glb_path(Path(source_step_path)),
             source_assembly=native_source_assembly,
             source_path=source_path,
             occurrence=occurrence,
@@ -339,9 +356,11 @@ def _linked_instance_node(
             )
         if source_step_path is None:
             raise AssemblyCompositionError(f"{cad_ref} component {component_name(instance_path)} is missing STEP source")
-        source_counts = _source_topology_counts(existing_part_glb_path(Path(source_step_path)) or part_glb_path(Path(source_step_path)))
+        source_counts = _source_topology_counts(part_glb_path(Path(source_step_path)))
         occurrence_counts = _occurrence_topology_counts(occurrence)
-        if source_counts != occurrence_counts:
+        if source_counts is None:
+            stale_sources[_generate_again(source_spec, Path(source_step_path))] = None
+        elif source_counts != occurrence_counts:
             raise AssemblyCompositionError(
                 f"{cad_ref} assembly occurrence {occurrence.get('id')!r} count mismatch for "
                 f"{source_path}: source={source_counts} assembly={occurrence_counts}"
@@ -367,7 +386,7 @@ def _linked_instance_node(
 
 
 def _source_assembly_payload(step_path: Path) -> dict[str, Any] | None:
-    source_topology_path = existing_part_glb_path(step_path) or part_glb_path(step_path)
+    source_topology_path = part_glb_path(step_path)
     payload = read_step_topology_manifest_from_glb(source_topology_path)
     if payload is None:
         return None
@@ -996,7 +1015,7 @@ def _assembly_root_node(cad_ref: str, root_occurrence: dict[str, Any], children:
 def _root_display_name(cad_ref: str, root_occurrence: Mapping[str, Any]) -> str:
     display_name = str(root_occurrence.get("name") or "").strip()
     if not display_name or display_name.lower() == "root":
-        return cad_ref.rsplit("/", 1)[-1]
+        return root_name(cad_ref)
     return display_name
 
 
@@ -1075,12 +1094,19 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _source_topology_counts(topology_manifest_path: Path) -> dict[str, int]:
+def _generate_again(source_spec: object, source_step_path: Path) -> str:
+    """What scripts/step is given to generate a placed part again: its source, with its kind for a STEP file."""
+    target = str(getattr(source_spec, "source_ref", "") or relative_to_repo(source_step_path))
+    if Path(target).suffix.lower() in STEP_SUFFIXES:
+        target += f" --kind {getattr(source_spec, 'kind', None) or 'part'}"
+    return target
+
+
+def _source_topology_counts(topology_manifest_path: Path) -> dict[str, int] | None:
+    """A placed part's shape, face and edge counts from its sidecar, or None when it is missing or out of date."""
     manifest = read_step_topology_manifest_from_glb(topology_manifest_path)
     if manifest is None:
-        raise AssemblyCompositionError(
-            f"Source GLB topology is missing: {relative_to_repo(topology_manifest_path)}"
-        )
+        return None
     stats = manifest.get("stats")
     if not isinstance(stats, dict):
         raise AssemblyCompositionError(
@@ -1130,11 +1156,12 @@ def _counts_have_values(counts: Mapping[str, int]) -> bool:
 
 
 def _occurrence_display_name(row: Mapping[str, Any]) -> str:
-    name = str(row.get("name") or "").strip()
-    source_name = str(row.get("sourceName") or "").strip()
-    if name and not (name.startswith("=>[") and name.endswith("]")):
-        return name
-    return source_name or name or str(row.get("path") or row.get("id") or "component").strip()
+    # Index rows carry only names someone chose (part_names.own_label), never a writer's made-up one.
+    return (
+        str(row.get("name") or "").strip()
+        or str(row.get("sourceName") or "").strip()
+        or str(row.get("path") or row.get("id") or "component").strip()
+    )
 
 
 def _row_transform(row: Mapping[str, Any]) -> tuple[float, ...]:

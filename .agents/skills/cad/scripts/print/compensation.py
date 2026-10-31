@@ -1,6 +1,6 @@
 """X-Y hole and contour compensation per part: the value measured for its filament on the profile's
-printer, or 0 when it is unmeasured or the part is a calibration coupon, and which of the slicing
-conditions it was measured at have changed since."""
+printer, or 0 when it is unmeasured or the part is a calibration coupon, and which of the conditions
+it was measured with have changed since."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from .bambu import setting
-from .profile import COMPENSATION_SETTINGS, CONDITIONS, Measurement, PrintProfile
+from .profile import COMPENSATION_SETTINGS, CONDITIONS, NUMBER_CONDITIONS, Measurement, PrintProfile
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class Compensation:
     kind: str
     mm: float
     measurement: Measurement | None = None
-    changed: dict[str, tuple[float, float]] = field(default_factory=dict)
+    changed: dict[str, tuple[float | str, float | str]] = field(default_factory=dict)
 
     @property
     def setting(self) -> str:
@@ -35,12 +35,27 @@ class Compensation:
         }
 
 
-def conditions(settings: Mapping) -> dict[str, float]:
-    """The slicing conditions a measured compensation holds at, from full Bambu settings."""
-    return {key: float(setting(settings[key])) for key in CONDITIONS}
+def conditions(settings: Mapping, filament_preset: str) -> dict[str, float | str]:
+    """The conditions a measured compensation holds with: from a project's full Bambu settings, its
+    resolution, closing radius and process preset, and the part's filament preset."""
+    return {
+        **{key: float(setting(settings[key])) for key in NUMBER_CONDITIONS},
+        "process": setting(settings["print_settings_id"]),
+        "filament_preset": filament_preset,
+    }
 
 
-def part_compensation(profile: PrintProfile, filament: str, now: Mapping[str, float], *, calibrating: bool) -> list[Compensation]:
+def condition_text(key: str, value: float | str) -> str:
+    return f"{key} {value:g}" if isinstance(value, float) else f'{key} "{value}"'
+
+
+def _same(then: float | str, now: float | str) -> bool:
+    if isinstance(then, float) and isinstance(now, float):
+        return math.isclose(then, now, rel_tol=1e-9, abs_tol=1e-12)
+    return then == now
+
+
+def part_compensation(profile: PrintProfile, filament: str, now: Mapping[str, float | str], *, calibrating: bool) -> list[Compensation]:
     measured = {} if calibrating else profile.measured(filament)
     found = []
     for kind in COMPENSATION_SETTINGS:
@@ -48,10 +63,7 @@ def part_compensation(profile: PrintProfile, filament: str, now: Mapping[str, fl
         if measurement is None:
             found.append(Compensation(kind, 0.0))
             continue
-        changed = {
-            key: (getattr(measurement, key), now[key])
-            for key in CONDITIONS
-            if not math.isclose(getattr(measurement, key), now[key], rel_tol=1e-9, abs_tol=1e-12)
-        }
+        then = measurement.conditions
+        changed = {key: (then[key], now[key]) for key in CONDITIONS if not _same(then[key], now[key])}
         found.append(Compensation(kind, measurement.mm, measurement, changed))
     return found

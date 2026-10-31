@@ -18,6 +18,7 @@ from inspect_refs import inspect as refs_inspect
 from common import cad_ref_syntax as refs_syntax
 from common import assembly_spec
 from common import step_targets
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION
 from common.render import part_glb_path
 from common.selector_types import SelectorBundle, SelectorProfile
 from common.tests.cad_test_roots import IsolatedCadRoots
@@ -393,9 +394,10 @@ class InspectRefsTests(unittest.TestCase):
         include_index: bool = True,
         current_hash: str | None = None,
         strip_selector_keys: tuple[str, ...] = (),
+        schema_version: int = STEP_TOPOLOGY_SCHEMA_VERSION,
     ):
         resolved_step_path = step_path or self.step_path
-        topology_manifest = {**manifest, "schemaVersion": 1}
+        topology_manifest = {**manifest, "schemaVersion": schema_version}
         selector_manifest = {key: value for key, value in topology_manifest.items() if key not in strip_selector_keys}
         self._touch_glb(resolved_step_path)
         stack = contextlib.ExitStack()
@@ -570,6 +572,7 @@ class InspectRefsTests(unittest.TestCase):
         cases = {
             "no sidecar": {},
             "stale sidecar": {"current_hash": "new-step-hash"},
+            "sidecar from an earlier schema": {"schema_version": STEP_TOPOLOGY_SCHEMA_VERSION - 1},
             "unreadable sidecar": {"include_index": False},
             "sidecar without selectors": {"include_selector": False},
         }
@@ -586,6 +589,7 @@ class InspectRefsTests(unittest.TestCase):
                 target, glb_path = build.call_args.args
                 self.assertEqual(self.step_path, target.step_path)
                 self.assertEqual(Path(os.environ["CAD_PILOT_CACHE"]) / "topology", glb_path.parent)
+                self.assertTrue(glb_path.name.endswith(f".v{STEP_TOPOLOGY_SCHEMA_VERSION}.glb"), glb_path.name)
                 # The stand-in builder wrote nothing, so the result is an error, not a stale answer.
                 self.assertFalse(result["ok"])
                 self.assertIn("Could not index", result["errors"][0]["message"])

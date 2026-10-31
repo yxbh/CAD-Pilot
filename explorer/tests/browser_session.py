@@ -40,6 +40,9 @@ class _Shared:
 # there is one, then on Windows with Direct3D's software rasterizer (WARP), and last with SwiftShader, which is all
 # Playwright's Chromium would use on its own, many times slower, even beside a GPU.
 _BEFORE_SWIFTSHADER = {"darwin": [["--use-angle=metal"]], "win32": [["--use-angle=d3d11"], ["--use-angle=d3d11-warp"]]}
+# Scrolls land at once. Chromium otherwise animates a keyboard scroll over frames, which a busy runner can stall long
+# enough for an expectation about the scrolled-to content to time out.
+_SCROLLING = ["--disable-smooth-scrolling"]
 _RENDERER = """() => {
     const gl = document.createElement('canvas').getContext('webgl2');
     return gl && gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER);
@@ -48,7 +51,7 @@ _RENDERER = """() => {
 
 def _launch(playwright):
     for args in _BEFORE_SWIFTSHADER.get(sys.platform, []):
-        browser = playwright.chromium.launch(args=args)
+        browser = playwright.chromium.launch(args=args + _SCROLLING)
         try:
             page = browser.new_page()
             # A backend Chromium cannot use may still answer, with SwiftShader.
@@ -60,7 +63,7 @@ def _launch(playwright):
             pass
         with contextlib.suppress(Error):
             browser.close()
-    return playwright.chromium.launch()
+    return playwright.chromium.launch(args=_SCROLLING)
 
 
 class _Contexts:
@@ -107,6 +110,19 @@ def launch_chromium(playwright):
 class BrowserSession:
     def __init__(self, page, url, errors):
         self.page, self.url, self.errors = page, url, errors
+        # Whether the page's current document has reported a frame. The server keeps the last report across a reload,
+        # so a reloaded page counts as settled only once it has reported a frame of its own.
+        self._reported = True
+        page.on("framenavigated", self._navigated)
+        page.on("request", self._requested)
+
+    def _navigated(self, frame):
+        if frame == self.page.main_frame:
+            self._reported = False
+
+    def _requested(self, request):
+        if request.method == "POST" and request.url == self.url + "api/rendered":
+            self._reported = True
 
     def state(self):
         # Reading state has no effect, so a request on a connection the server reset is simply repeated once.
@@ -133,7 +149,13 @@ class BrowserSession:
             self.page.wait_for_timeout(10)
 
     def settled(self):
-        return self.wait(lambda state: state.get("rendered") and state["rendered"]["revision"] == state["revision"])
+        current = self.wait(lambda state: self._reported and state.get("rendered") and state["rendered"]["revision"] == state["revision"])
+        # A page can stay busy after it reports a frame: the first frame in Studio, which brings in new shaders and
+        # lighting, is one long task that the report goes out in the middle of, and in software rendering on a loaded CI
+        # runner it outlasts Playwright's 30 s. Nothing more is asked of the page until it answers again, for which it
+        # gets as long as a first load.
+        self.page.wait_for_function("() => true", timeout=120_000).dispose()
+        return current
 
     def command(self, name, data=None):
         response = self.page.request.post(self.url + "api/command", data={"name": name, "input": data or {}})

@@ -13,7 +13,6 @@ import argparse
 import json
 import math
 from pathlib import Path
-import re
 import sys
 
 import numpy as np
@@ -22,6 +21,10 @@ from scipy.spatial import cKDTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mesh as meshes  # noqa: E402
+
+# Part names match as everywhere in CAD Explorer, by the cad skill's own pattern rules.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agents" / "skills" / "cad" / "scripts"))
+from common.step_parts import label_pattern  # noqa: E402
 
 AXES = {"x": 0, "y": 1, "z": 2}
 # In-plane axes for each axis-aligned section, so outlines read in familiar drawing coordinates.
@@ -67,11 +70,6 @@ def _vector(text: str, name: str) -> np.ndarray:
     if values.shape != (3,) or not np.isfinite(values).all():
         raise meshes.MeshError(f"{name} must be three comma-separated numbers, like 10,0,2.5")
     return values
-
-
-def label_pattern(glob: str) -> re.Pattern:
-    """A part name pattern as CAD Explorer reads one everywhere: * and ? are the only wildcards, all else is literal."""
-    return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
 
 
 def occurrences(document: meshes.MeshDocument, part: str | None) -> list[Occurrence]:

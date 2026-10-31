@@ -3,14 +3,14 @@ import { explorerRoot } from "./paths.mjs";
 import { readEndpoint, writeEndpoint } from "./endpoint.mjs";
 import { actionInput, assertBuilt, defaultViewId, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
 
-// standalone.mjs [file [units=... up=...]]
+// standalone.mjs [file [units=... up=...]], in the project folder or with CAD_EXPLORER_PROJECT naming it
 const file = process.argv[2];
 const fileOptions = actionInput(process.argv.slice(3));
 const print = (line) => process.stdout.write(`${line}\n`);
 
 try {
   await assertBuilt();
-  const location = await locateView({ projectRoot: process.cwd(), viewId: process.env.CAD_EXPLORER_VIEW || defaultViewId });
+  const location = await locateView({ projectRoot: process.env.CAD_EXPLORER_PROJECT || process.cwd(), viewId: process.env.CAD_EXPLORER_VIEW || defaultViewId });
   // Reuse the setup's previous address when possible so earlier links keep working.
   const previous = await readEndpoint(location.endpoint);
   let service;
