@@ -36,8 +36,12 @@ export async function runStages(stages, { cwd, logs, github = Boolean(process.en
     console.log(`▶ ${name}`);
     const log = createWriteStream(path.join(logs, `${name.replaceAll(" ", "-")}.log`));
     return new Promise((resolve) => {
-      // Its own process group (POSIX), so stopping the stage reaches everything it started.
-      const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+      // Its own process group (POSIX), so stopping the stage reaches everything it started. Output is read as UTF-8,
+      // so Python is told to write it whatever the Windows code page.
+      const child = spawn(command, args, {
+        cwd, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      });
       const output = [];
       const collect = (chunk) => { output.push(chunk); log.write(chunk); };
       child.stdout.on("data", collect);

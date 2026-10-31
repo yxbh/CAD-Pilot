@@ -2,10 +2,12 @@
 
 import json
 import os
+import queue
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -41,12 +43,15 @@ def _wait_for(predicate, timeout=30):
 def test_failures_skip_their_dependents_and_piped_output_is_complete(tmp_path):
     command = _driver(tmp_path, [
         _stage("big", "process.stdout.write('x'.repeat(2 * 1024 * 1024) + '\\nEND-BIG\\n')"),
+        {"name": "python", "command": sys.executable, "args": ["-c", "print('Größe ✔')"]},
         _stage("fails", "console.log('boom'); process.exit(3)"),
         _stage("after", "console.log('never')", needs=["fails"]),
     ])
-    run = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    # The runner writes UTF-8 whatever the console's code page.
+    run = subprocess.run(command, capture_output=True, encoding="utf-8", timeout=60)
     assert run.returncode == 1
     assert "END-BIG" in run.stdout and len(run.stdout) > 2 * 1024 * 1024
+    assert "Größe ✔" in run.stdout
     assert "── ✖ fails failed after" in run.stdout
     assert "– after              skipped: needs fails" in run.stdout
     assert "never" not in run.stdout
@@ -66,14 +71,24 @@ def test_a_signal_stops_each_stage_tree_and_prints_what_it_wrote(tmp_path):
         _stage("slow", slow),
         _stage("quick", "console.log('done')"),
         _stage("later", "console.log('never')", needs=["slow"]),
-    ]), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    ]), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
+    lines = queue.Queue()
+    reader = threading.Thread(target=lambda: [lines.put(line) for line in runner.stdout], daemon=True)
+    reader.start()
+    seen = []
     try:
+        # Signal only once quick has finished and slow has started its grandchild and written to its log.
+        deadline = time.monotonic() + 30
+        while not any("── ✔ quick passed after" in line for line in seen):
+            seen.append(lines.get(timeout=max(0.01, deadline - time.monotonic())))
         log = tmp_path / "logs/slow.log"
         _wait_for(lambda: grandchild.exists() and log.exists() and "partial" in log.read_text(encoding="utf-8"))
         runner.send_signal(signal.SIGTERM)
-        output, _ = runner.communicate(timeout=30)
+        runner.wait(timeout=30)
+        reader.join(timeout=30)
     finally:
         runner.kill()
+    output = "".join(seen + list(lines.queue))
     assert runner.returncode == 143
     assert "── ✖ slow interrupted after" in output and "partial" in output
     assert "✔ quick passed after" in output
