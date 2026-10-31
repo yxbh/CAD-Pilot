@@ -16,7 +16,7 @@ export function sequencePath(stepPath) {
 
 const text = (value, limit) => typeof value === "string" && value.length <= limit;
 // Only * and ? are wildcards; every other character, brackets included, is literal.
-export const labelPattern = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "s");
+const labelPattern = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "s");
 
 function validateDocument(document) {
   const fail = (message) => { throw new PrototypeError("invalid_sequence", `Assembly sequence: ${message}`, 422); };
@@ -43,27 +43,38 @@ function validateDocument(document) {
   return document;
 }
 
-// Labels resolve against every node; a group label stands for all of its parts. A group holding every part (the
-// top-level assembly, or a wrapper around it) never matches: a step that moved the whole model would have nothing
-// to arrive at, and a pattern such as "Anchor *" written for parts must not catch an "Anchor v3" root.
-export function resolveSequence(document, model, file) {
-  validateDocument(document);
+// Part patterns, wherever a person names parts (sequence steps, a render's hidden parts): labels resolve against
+// every node, with * and ? as the only wildcards, and a group label stands for all of its parts. A group holding
+// every part (the top-level assembly, or a wrapper around it) never matches: a step that moved the whole model would
+// have nothing to arrive at, and a pattern such as "Anchor *" written for parts must not catch an "Anchor v3" root.
+// Returns a resolver from patterns to the part occurrences' node ids and the patterns that matched nothing.
+export function partResolver(model) {
   const children = new Map();
   for (const node of model.nodes) if (node.parentId) children.set(node.parentId, [...(children.get(node.parentId) ?? []), node]);
   const leavesOf = (node) => node.partId ? [node.id] : (children.get(node.id) ?? []).flatMap(leavesOf);
   const partCount = model.nodes.filter((node) => node.partId).length;
   const candidates = model.nodes.filter((node) => node.partId || leavesOf(node).length < partCount);
-  const steps = document.steps.map((step, index) => {
+  const resolve = (patterns) => {
     const nodeIds = [];
     const unresolved = [];
-    for (const part of step.parts) {
-      const matcher = labelPattern(part);
+    for (const pattern of patterns) {
+      const matcher = labelPattern(pattern);
       const matches = candidates.filter((node) => matcher.test(node.label));
-      if (!matches.length) unresolved.push(part);
+      if (!matches.length) unresolved.push(pattern);
       for (const id of matches.flatMap(leavesOf)) if (!nodeIds.includes(id)) nodeIds.push(id);
     }
+    return { nodeIds, unresolved };
+  };
+  return Object.assign(resolve, { partCount });
+}
+
+export function resolveSequence(document, model, file) {
+  validateDocument(document);
+  const resolve = partResolver(model);
+  const steps = document.steps.map((step, index) => {
+    const { nodeIds, unresolved } = resolve(step.parts);
     // A step moving every part has nothing to arrive at; the exporter refuses it, and so does the viewer.
-    if (nodeIds.length === partCount) {
+    if (nodeIds.length === resolve.partCount) {
       throw new PrototypeError("invalid_sequence", `Assembly sequence: step ${index + 1} moves every part (${step.parts.join(", ")}); name only the parts that arrive in that step`, 422);
     }
     return {

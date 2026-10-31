@@ -136,7 +136,9 @@ export function App({ host }: { host: ViewerHost }) {
   const busy = loading || !ready;
   const drawingActive = reviews.active;
   const activeReview = reviews.review;
-  const revision = state?.documentRevision.slice(0, 12) ?? "";
+  // The revision is the main file's own SHA-256, as the agent's summary reports it; other files in the view do not change it.
+  const sha256 = state?.source.sha256 ?? "";
+  const revision = sha256.slice(0, 12);
   const generated = state?.source.generatedAt ? new Date(state.source.generatedAt) : null;
   useEffect(() => {
     if (copyStatus.kind !== "blocked") return;
@@ -150,8 +152,8 @@ export function App({ host }: { host: ViewerHost }) {
         <div className="document-heading">
           <strong title={activeReview?.source.name || state?.modelName}>{activeReview?.source.name || state?.modelName || "Opening assembly"}</strong>
           <span>{drawingActive ? "Drawing review" : `${leaves.length} parts${triangles ? ` \u00b7 ${triangles.toLocaleString()} mesh triangles` : ""} \u00b7 mm`}<span className="version-tag">v1</span></span>
-          {!drawingActive && revision && <span className="model-revision" data-revision={state?.documentRevision}
-            title={`Revision ${state?.documentRevision}${state?.source.file ? ` from ${state.source.file}` : ""}${generated ? `, generated ${generated.toLocaleString()}` : ""}`}>
+          {!drawingActive && revision && <span className="model-revision" data-revision={sha256}
+            title={`Revision ${sha256}${state?.source.file ? ` from ${state.source.file}` : ""}${generated ? `, generated ${generated.toLocaleString()}` : ""}`}>
             rev {revision}{generated && ` \u00b7 ${generated.toDateString() === new Date().toDateString() ? generated.toLocaleTimeString() : generated.toLocaleString()}`}
           </span>}
         </div>

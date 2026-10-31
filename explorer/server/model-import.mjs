@@ -5,6 +5,7 @@ import { importDiagnostics } from "../shared/diagnostics.mjs";
 import { MESH_UNITS, MESH_UP_AXES, modelFormat } from "../shared/mesh.mjs";
 import { isInside } from "./paths.mjs";
 import { PrototypeError, topologyRevision, validateMeasuredCleanup, validateMeshGeometry, validateModel } from "./protocol.mjs";
+import { markUsed } from "./runtime-store.mjs";
 
 export const maxStepBytes = 100 * 1024 * 1024;
 export const maxMeshBytes = 300 * 1024 * 1024;
@@ -28,7 +29,15 @@ export function meshOptions({ units = "auto", up = "auto" } = {}) {
 }
 
 export async function validateModelPath(target, root) {
-  const resolved = await realpath(target);
+  let resolved;
+  try { resolved = await realpath(target); }
+  catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error?.code)) throw error;
+    const shown = isInside(root, target) ? path.relative(root, target) : target;
+    // A Windows-style path names one file with backslashes in its name on macOS and Linux.
+    const hint = path.sep === "/" && shown.includes("\\") ? " Separate folders with / here." : "";
+    throw new PrototypeError("file_not_found", `There is no file ${shown} in the project.${hint}`, 404);
+  }
   if (!isInside(root, resolved)) throw new PrototypeError("outside_project", "The file must be inside the selected project root", 403);
   const format = sourceFormat(resolved);
   const info = await stat(resolved);
@@ -109,6 +118,9 @@ export async function prepareModelSnapshot({ resolved, bytes: suppliedBytes, dis
     model.topologyRevision = topologyRevision(model);
     const measuredCleanup = model.cleanup ? validateMeasuredCleanup({ topologyRevision: model.topologyRevision, counts: model.cleanup }) : undefined;
     const modelCache = `${model.topologyRevision}.json`;
+    // An identical snapshot already in the store is reused. Refreshing its time before checking it means a prune in
+    // another process, which keeps whatever was touched after it listed the store, leaves it in place.
+    await markUsed(snapshot, path.join(modelDir, modelCache), meshGeometryFile(modelDir, model.topologyRevision));
     const verifyCache = async () => {
       const cached = await readModelCache(modelDir, modelCache, { allowStale: true });
       if (cached.topologyRevision !== model.topologyRevision) throw new PrototypeError("cache_mismatch", "Cached geometry identity does not match", 422);

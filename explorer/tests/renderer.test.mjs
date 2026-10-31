@@ -131,6 +131,21 @@ test("on Linux the renderer runs without the sandbox, and a browser that resets 
   assert.deepEqual(await profiles(tmp), []);
 });
 
+test("a browser that exits as it starts fails the start at once, with what it printed", { timeout: 30_000 }, async (t) => {
+  const tmp = await scratch(t);
+  // As a headless shell does on Linux without its system libraries: the loader prints the problem and it exits.
+  const loader = "/opt/chrome-headless-shell: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory";
+  const launch = (executable, args, options) => spawn(process.execPath, ["-e", `process.stderr.write(${JSON.stringify(`${loader}\n`)}); process.exit(127)`], options);
+  const exits = [];
+  const renderer = createHeadlessRenderer({ url: "http://127.0.0.1:1/t/", find: async () => "/chrome", launch, tmp, onExit: (error) => exits.push(error) });
+  const started = Date.now();
+  await assert.rejects(renderer.ensure(), (error) => error.code === "renderer_failed" && error.message.includes(`exit code 127: ${loader}`));
+  assert.ok(Date.now() - started < 5000, "the start failed when the browser exited, not when its command timed out");
+  assert.equal(renderer.running, false);
+  await renderer.close();
+  assert.deepEqual(await profiles(tmp), []);
+});
+
 test("each browser owns its profile: a stop racing a start keeps the new one, and orphaned profiles are swept", async (t) => {
   const tmp = await scratch(t);
   // A profile left by a viewer that was killed outright names an owner that no longer exists.
@@ -292,10 +307,45 @@ test("a load that no renderer can draw still opens, and says why it was not draw
 test("a viewer page still meshing the model it fetched gets longer before the background renderer starts", { timeout: 60_000 }, async (t) => {
   const { service, stub, report, page } = await routingFixture(t, "meshing");
   await page("viewer");
-  assert.equal((await fetch(service.url + "api/model?kind=viewer")).status, 200);
+  assert.equal((await fetch(service.url + "api/model?kind=viewer&visible=1")).status, 200);
   const confirming = service.confirmRendered();
   await delay(2500);
   assert.equal(stub.calls.ensure, 0, "a page meshing its model is not raced by the background renderer");
   assert.equal((await report("viewer")).status, 200);
   assert.equal((await confirming).shown.drawn, "viewer");
+});
+
+test("a hidden viewer page that fetched the model does not hold back the background renderer", { timeout: 60_000 }, async (t) => {
+  const { service, stub, report, page } = await routingFixture(t, "hidden");
+  await page("viewer");
+  // A hidden tab still follows the state and fetches each model, but draws nothing until it is shown.
+  assert.equal((await fetch(service.url + "api/model?kind=viewer&visible=0")).status, 200);
+  const confirming = service.confirmRendered();
+  await delay(2500);
+  assert.equal(stub.calls.ensure, 1, "the background renderer starts after the usual moment, not after the meshing allowance");
+  await page("headless");
+  assert.equal((await report("headless")).status, 200);
+  assert.equal((await confirming).shown.drawn, "headless");
+});
+
+test("once an open page has had its grace, a background renderer that cannot start or crashes ends the wait with its reason", { timeout: 30_000 }, async (t) => {
+  const missing = Object.assign(new Error("Headless rendering needs Playwright's Chromium."), { code: "renderer_missing" });
+  const absent = await routingFixture(t, "absent", { ensure: async () => { throw missing; } });
+  // A page that is connected but never draws, such as a hidden tab.
+  await absent.page("viewer");
+  const started = Date.now();
+  const confirmed = await absent.service.confirmRendered();
+  assert.ok(Date.now() - started < 10_000, "the wait ended long before the 90 s render timeout");
+  assert.equal(confirmed.note, `The model loaded, but no renderer could draw it: ${missing.message} Open ${absent.service.url} to see it.`);
+
+  const { service, stub, page } = await routingFixture(t, "crashing");
+  await page("viewer");
+  const viewing = service.execute("fit_view", {}, { rendered: true });
+  for (let waited = 0; stub.calls.ensure < 1; waited += 50) {
+    assert.ok(waited < 5000, "the background renderer was not started after the page's grace");
+    await delay(50);
+  }
+  stub.crash(Object.assign(new Error("The headless renderer stopped (exit code 127: libnss3.so is missing)"), { code: "renderer_failed" }));
+  await viewing;
+  assert.match((await service.summary()).note, /no renderer could draw it: The headless renderer stopped \(exit code 127: libnss3\.so is missing\)/);
 });

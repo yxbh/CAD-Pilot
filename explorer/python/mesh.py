@@ -285,7 +285,7 @@ def _frame(fmt: str, declared: str | None, extent: float, units: str, up: str) -
         axis, up_source, up_reason = "z", "default", "print files are Z-up"
     note = f"Read as {UNIT_NAMES[unit]} ({reason}) with {axis.upper()} up ({up_reason})."
     if source in ("size", "default") or up_source == "format":
-        note += " Open it again with units=... or up=... if the size or orientation looks wrong."
+        note += " Open it again with other units or another up axis if the size or orientation looks wrong."
     return {
         "units": unit, "unitsFrom": source, "scale": UNITS[unit],
         "up": axis, "upFrom": up_source, "sourceExtent": extent, "note": note,

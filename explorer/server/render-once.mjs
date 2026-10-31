@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import { labelPattern } from "./assembly.mjs";
+import { partResolver } from "./assembly.mjs";
 import { isInside } from "./paths.mjs";
 import { PrototypeError } from "./protocol.mjs";
 import { createExplorerServer } from "./server.mjs";
@@ -45,10 +45,12 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
     if (loaded.error) throw new PrototypeError("load_failed", loaded.error, 422);
     const run = (name, input) => service.execute(name, input);
     if (options.hide?.length) {
-      const matchers = options.hide.map(labelPattern);
-      const ids = loaded.parts.filter((part) => matchers.some((matcher) => matcher.test(part.label))).map((part) => part.id);
-      if (!ids.length) throw new PrototypeError("bad_render", `No part label matches ${options.hide.join(", ")}`);
-      await run("set_visibility", { ids, visible: false });
+      // Hidden parts are named as anywhere else: part or group labels, with * and ? wildcards.
+      const resolve = partResolver(service.getModel());
+      const { nodeIds, unresolved } = resolve(options.hide);
+      if (unresolved.length) throw new PrototypeError("bad_render", `No part or group label matches ${unresolved.join(", ")}`);
+      if (nodeIds.length === resolve.partCount) throw new PrototypeError("bad_render", `--hide ${options.hide.join(",")} would hide every part`);
+      await run("set_visibility", { ids: nodeIds, visible: false });
     }
     if (options.explode) await run("set_explode", options.explode);
     if (options.step) await run("set_step", options.step);
@@ -68,7 +70,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
     const state = service.getState();
     return {
       saved: await saveCopy(project, captured.path, target), width: captured.width, height: captured.height,
-      model: state.modelName, file: state.source.file, revision: revisionLabel(state.documentRevision), generatedAt: state.source.generatedAt,
+      model: state.modelName, file: state.source.file, revision: revisionLabel(state.source.sha256), generatedAt: state.source.generatedAt,
       camera: state.cameraPreset, ...(state.section.enabled ? { section: state.section } : {}),
     };
   } finally {

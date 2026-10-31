@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+import re
 import sys
 
 import numpy as np
@@ -68,12 +69,18 @@ def _vector(text: str, name: str) -> np.ndarray:
     return values
 
 
+def label_pattern(glob: str) -> re.Pattern:
+    """A part name pattern as CAD Explorer reads one everywhere: * and ? are the only wildcards, all else is literal."""
+    return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
+
+
 def occurrences(document: meshes.MeshDocument, part: str | None) -> list[Occurrence]:
+    matcher = None if part is None else label_pattern(part)
     found = [Occurrence(node.label, document.parts[node.part], node.matrix) for node in document.nodes
-             if part is None or part in (node.label, document.parts[node.part].label)]
+             if matcher is None or any(matcher.fullmatch(name) for name in (node.label, document.parts[node.part].label))]
     if not found:
         names = sorted({node.label for node in document.nodes})
-        raise meshes.MeshError(f"No part named {part!r}. Parts: {', '.join(names)}")
+        raise meshes.MeshError(f"No part name matches {part!r}. Parts: {', '.join(names)}")
     return found
 
 
@@ -434,27 +441,35 @@ def faults(items: list[Occurrence]) -> dict:
     return {"parts": parts, "note": f"Lists keep the first {MAX_REPORTED} of each kind; counts are complete. Open boundaries are holes or the edge of an open surface."}
 
 
+def _reading_options(parser: argparse.ArgumentParser, defaults: bool) -> None:
+    """How to read the file and which parts to measure, given before or after the measurement's name."""
+    default = (lambda value: value) if defaults else (lambda value: argparse.SUPPRESS)
+    parser.add_argument("--units", default=default("auto"), choices=["auto", *meshes.UNITS])
+    parser.add_argument("--up", default=default("auto"), choices=["auto", *meshes.UP_AXES])
+    parser.add_argument("--part", default=default(None), help="only parts whose name, as the viewer lists it, matches; * and ? are wildcards")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("file", type=Path)
-    parser.add_argument("--units", default="auto", choices=["auto", *meshes.UNITS])
-    parser.add_argument("--up", default="auto", choices=["auto", *meshes.UP_AXES])
-    parser.add_argument("--part", help="only this part (its name as the viewer lists it)")
+    _reading_options(parser, defaults=True)
+    shared = argparse.ArgumentParser(add_help=False)
+    _reading_options(shared, defaults=False)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("size", help="overall and per-part sizes, triangle counts, closed or open, area and volume")
-    cut = commands.add_parser("section", help="outline loops where a plane cuts the mesh, with circle, slot and rectangle fits")
+    commands.add_parser("size", parents=[shared], help="overall and per-part sizes, triangle counts, closed or open, area and volume")
+    cut = commands.add_parser("section", parents=[shared], help="outline loops where a plane cuts the mesh, with circle, slot and rectangle fits")
     for name in AXES:
         cut.add_argument(f"--{name}", type=float, help=f"plane at this {name.upper()} position (mm)")
     cut.add_argument("--plane", nargs=2, metavar=("POINT", "NORMAL"), help="any plane: a point and a normal, each as x,y,z")
     cut.add_argument("--points", type=int, default=0, help="include up to this many outline points per loop")
-    span = commands.add_parser("distance", help="between two points, from a point to the surface, or from this mesh to another file")
+    span = commands.add_parser("distance", parents=[shared], help="between two points, from a point to the surface, or from this mesh to another file")
     span.add_argument("--from", dest="start", help="a world point x,y,z (mm)")
     span.add_argument("--to", help="a second world point x,y,z (mm); without it, the closest surface point")
     span.add_argument("--to-file", type=Path, help="another mesh file: how far this mesh's vertices lie from its surface")
     span.add_argument("--other-units", default="auto", choices=["auto", *meshes.UNITS])
     span.add_argument("--other-up", default="auto", choices=["auto", *meshes.UP_AXES])
     span.add_argument("--other-part")
-    commands.add_parser("faults", help="where the open, over-shared and flipped edges and zero-area triangles are")
+    commands.add_parser("faults", parents=[shared], help="where the open, over-shared and flipped edges and zero-area triangles are")
     args = parser.parse_args(argv)
     try:
         document = meshes.load(args.file, args.units, args.up)
