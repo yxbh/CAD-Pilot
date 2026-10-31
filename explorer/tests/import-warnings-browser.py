@@ -349,11 +349,15 @@ def check_restored_cleanup(url, output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", required=True)
+    parser.add_argument("--url")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--restored-cleanup", action="store_true")
+    parser.add_argument("--fixtures-only", action="store_true", help="only write the rounded fixture, as OUTPUT/rounded.step")
     args = parser.parse_args()
-    if args.restored_cleanup:
+    if args.fixtures_only:
+        args.output.mkdir(parents=True, exist_ok=True)
+        rounded_fixture(args.output / "rounded.step")
+    elif args.restored_cleanup:
         check_restored_cleanup(args.url, args.output)
     else:
         run(args.url, args.output)

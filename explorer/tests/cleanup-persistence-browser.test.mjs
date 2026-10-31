@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import test from "node:test";
-import { explorerRoot, workbenchRoot, workbenchPython } from "../server/paths.mjs";
+import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { initialState } from "../server/protocol.mjs";
 import { createReference } from "../shared/references.mjs";
 import { runPython } from "./python-host.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
-const execute = promisify(execFile);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const viewKey = (id) => digest(`${workbenchRoot}\n${id}`).slice(0, 24);
 const getModel = async (service) => (await fetch(service.url + "api/model")).json();
@@ -23,16 +20,12 @@ test("fresh cleanup measurements survive an immutable legacy cache, failed loads
   const otherView = `${viewId}-other`;
   const output = path.join(explorerRoot, ".local", viewId);
   const source = path.join(output, "rounded.step");
-  const browserScript = path.join(explorerRoot, "tests", "import-warnings-browser.py");
   const logs = [];
   let service, other;
   const retainedFiles = [];
   await mkdir(output, { recursive: true });
   try {
-    await execute(workbenchPython, ["-B", "-c",
-      "import runpy, sys; runpy.run_path(sys.argv[1])['rounded_fixture'](sys.argv[2])",
-      browserScript, source,
-    ], { timeout: 30_000, cwd: path.dirname(browserScript) });
+    await runPython("import-warnings-browser.py", ["--output", output, "--fixtures-only"], { timeout: 30_000 });
     // Keep this cache independent of other tests converting the same synthetic shape.
     await writeFile(source, Buffer.concat([await readFile(source), Buffer.from(`\n/* ${viewId} */\n`)]));
     const open = (id = viewId, file) => createExplorerServer({

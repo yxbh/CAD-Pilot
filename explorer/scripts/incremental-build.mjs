@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, glob, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -22,12 +22,14 @@ async function inputDigest() {
 }
 
 function run(script, args) {
-  const result = spawnSync(process.execPath, [path.join(explorerRoot, "node_modules", script), ...args], { cwd: explorerRoot, stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`Explorer build failed: ${script} ${args.join(" ")}`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [path.join(explorerRoot, "node_modules", script), ...args], { cwd: explorerRoot, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`Explorer build failed: ${script} ${args.join(" ")}`)));
+  });
 }
 
-// Type-checks and bundles the page unless the last successful build used the same inputs.
+// Type-checks and bundles the page, side by side, unless the last successful build used the same inputs.
 export async function buildExplorer() {
   const digest = await inputDigest();
   if (await readFile(stamp, "utf8").catch(() => "") === digest) {
@@ -37,7 +39,8 @@ export async function buildExplorer() {
   await access(path.join(explorerRoot, "node_modules", ".package-lock.json")).catch(() => {
     throw new Error("Explorer packages are not installed. In the workbench, run: npm --prefix explorer install");
   });
-  run("typescript/bin/tsc", ["--noEmit"]);
-  run("vite/bin/vite.js", ["build"]);
+  const steps = await Promise.allSettled([run("typescript/bin/tsc", ["--noEmit"]), run("vite/bin/vite.js", ["build"])]);
+  const failed = steps.find((step) => step.status === "rejected");
+  if (failed) throw failed.reason;
   await writeFile(stamp, digest);
 }

@@ -2,7 +2,7 @@
 // Each <config>/skills/<name> becomes a link to .agents/skills/<name> (a junction on Windows, which needs no extra
 // rights), so the checkout stays the only copy. A link to some checkout's .agents/skills/<name> is replaced; any
 // other entry with a skill's name is left alone and reported.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,9 +22,19 @@ const names = readdirSync(skills, { withFileTypes: true })
 if (existsSync(path.join(root, ".git")) && statSync(path.join(root, ".git")).isFile()) {
   console.warn(`${root} is a linked worktree: run this from the main checkout again once you are done with it`);
 }
+// The skills folder, or the folder it links to, must be the user's own: a checkout's .agents/skills holds that
+// checkout's skill folders and its .claude/skills its tracked relative links, and neither may be changed.
+const real = existsSync(folder) ? realpathSync(folder) : folder;
+const checkout = path.dirname(path.dirname(real));
+if (path.basename(real) === "skills" && [".agents", ".claude"].includes(path.basename(path.dirname(real)))
+    && existsSync(path.join(checkout, "tools", "install-skills.mjs"))) {
+  const how = lstatSync(folder).isSymbolicLink() ? "remove that link (not the folder it points to)" : "set CLAUDE_CONFIG_DIR to your own Claude configuration folder";
+  console.error(`${folder} is ${real}, a CAD-Pilot checkout's own skills folder; ${how} and run this again to link each skill instead`);
+  process.exit(1);
+}
 mkdirSync(folder, { recursive: true });
 const isSkillLink = (target, name) => {
-  const parts = path.resolve(folder, target).split(/[\\/]+/);
+  const parts = path.resolve(real, target).split(/[\\/]+/);
   return parts.slice(-3).join("/") === `.agents/skills/${name}`;
 };
 let refused = 0;
