@@ -1731,15 +1731,23 @@ class IssuedRefsWarningTests(unittest.TestCase):
 
 class ToolErrorTests(unittest.TestCase):
     def test_a_tool_error_is_one_line_named_once(self) -> None:
-        def fails(_args):
-            raise cad_generation.StepInputError("--output must end in .dxf")
+        # A problem with the inputs, whichever part of generation finds it.
+        for error in (
+            cad_generation.StepInputError,
+            cad_generation.CadSourceError,
+            cad_generation.AssemblySpecError,
+            cad_generation.AssemblyCompositionError,
+        ):
+            with self.subTest(error.__name__):
+                def fails(_args):
+                    raise error("--output must end in .dxf")
 
-        parser = argparse.ArgumentParser(prog="scripts/dxf")
-        parser.add_argument("targets", nargs="+")
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = cad_generation.run_cli(parser, ["part.py"], fails)
-        self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
+                parser = argparse.ArgumentParser(prog="scripts/dxf")
+                parser.add_argument("targets", nargs="+")
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    status = cad_generation.run_cli(parser, ["part.py"], fails)
+                self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
 
 
 if __name__ == "__main__":

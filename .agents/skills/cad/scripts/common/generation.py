@@ -21,10 +21,11 @@ from common.assembly_composition import (
     build_native_assembly_composition,
     component_name,
 )
-from common.assembly_spec import REPO_ROOT, assembly_spec_children, read_assembly_spec
+from common.assembly_spec import REPO_ROOT, AssemblySpecError, assembly_spec_children, read_assembly_spec
 from common.catalog import (
     CAD_ROOT,
     CadSource,
+    CadSourceError,
     STEP_SUFFIXES,
     StepImportOptions,
     cad_ref_from_step_path,
@@ -656,7 +657,9 @@ def _report_selector_manifest_change(
     if issued is None:
         return
     if previous_manifest is None:
-        # The previous sidecar is missing, unreadable or from older tools, so its numbering cannot be compared.
+        # The previous sidecar is missing, unreadable or from older tools, so its numbering cannot be compared. A STEP
+        # carries the time it was written, so rebuilt bytes almost always differ: this warns whenever refs were issued
+        # and stays silent only for the very file they were issued for.
         if issued != next_manifest.get("stepHash"):
             forget(spec.step_path)
             logger.warning(
@@ -1424,7 +1427,7 @@ def run_cli(
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
         return action(args)
-    except (GeneratorImportError, StepInputError) as exc:
+    except (GeneratorImportError, StepInputError, CadSourceError, AssemblySpecError, AssemblyCompositionError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
 

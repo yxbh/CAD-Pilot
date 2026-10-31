@@ -397,12 +397,15 @@ class NativeAssemblyCompositionTests(unittest.TestCase):
                 entries_by_step_path={
                     step.resolve(): SimpleNamespace(kind="part", step_path=step, source_ref=f"parts/{name}.py")
                     for name, step in steps.items()
+                } | {
+                    # An imported STEP is generated again with its kind.
+                    steps["never"].resolve(): SimpleNamespace(kind="part", step_path=steps["never"], source_ref="imports/never.step"),
                 },
                 read_assembly_spec=lambda path: (_ for _ in ()).throw(AssertionError(path)),
             )
 
         message = str(raised.exception)
-        self.assertIn("parts/old.py, parts/never.py. Generate them again with scripts/step", message)
+        self.assertIn("parts/old.py, imports/never.step --kind part. Generate each again with scripts/step as given", message)
         self.assertNotIn("current", message)
 
     def test_linked_generated_subassembly_expands_to_descendant_leaf_nodes(self) -> None:

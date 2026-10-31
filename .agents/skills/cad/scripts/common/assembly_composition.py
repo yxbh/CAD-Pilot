@@ -11,6 +11,7 @@ from common.assembly_spec import (
     multiply_transforms,
 )
 from common.cache import sha256_file
+from common.catalog import STEP_SUFFIXES
 from common.glb_topology import read_step_topology_manifest_from_glb
 from common.part_names import root_name
 from common.render import part_glb_path, relative_to_repo
@@ -86,7 +87,7 @@ def build_linked_assembly_composition(
     if stale_sources:
         raise AssemblyCompositionError(
             f"{cad_ref} places parts whose topology is missing or from an older version of the tools: "
-            f"{', '.join(stale_sources)}. Generate them again with scripts/step, then this assembly."
+            f"{', '.join(stale_sources)}. Generate each again with scripts/step as given, then this assembly."
         )
     if not children:
         raise AssemblyCompositionError(f"Assembly {cad_ref} has no component instances")
@@ -188,9 +189,9 @@ def _linked_instance_node(
     display_name = str(
         instance.name
         or (
-            Path(source_step_path).stem
+            root_name(Path(source_step_path).name)
             if source_step_path is not None
-            else Path(instance.path or "").stem
+            else root_name(Path(instance.path or "").name)
         )
         or instance_path[-1]
     ).strip()
@@ -358,7 +359,7 @@ def _linked_instance_node(
         source_counts = _source_topology_counts(part_glb_path(Path(source_step_path)))
         occurrence_counts = _occurrence_topology_counts(occurrence)
         if source_counts is None:
-            stale_sources[str(getattr(source_spec, "source_ref", "") or relative_to_repo(Path(source_step_path)))] = None
+            stale_sources[_generate_again(source_spec, Path(source_step_path))] = None
         elif source_counts != occurrence_counts:
             raise AssemblyCompositionError(
                 f"{cad_ref} assembly occurrence {occurrence.get('id')!r} count mismatch for "
@@ -1091,6 +1092,14 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AssemblyCompositionError(f"Expected JSON object: {relative_to_repo(path)}")
     return payload
+
+
+def _generate_again(source_spec: object, source_step_path: Path) -> str:
+    """What scripts/step is given to generate a placed part again: its source, with its kind for a STEP file."""
+    target = str(getattr(source_spec, "source_ref", "") or relative_to_repo(source_step_path))
+    if Path(target).suffix.lower() in STEP_SUFFIXES:
+        target += f" --kind {getattr(source_spec, 'kind', None) or 'part'}"
+    return target
 
 
 def _source_topology_counts(topology_manifest_path: Path) -> dict[str, int] | None:
