@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # uv.lock and explorer/package-lock.json stay local, so each run resolves dependencies afresh.
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
       - uses: actions/setup-node@v7
