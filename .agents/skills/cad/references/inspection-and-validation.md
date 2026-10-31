@@ -95,7 +95,7 @@ Use lower plane limits and compact facts for normal validation. Use topology enu
 python scripts/inspect parts path/to/model.step --format text
 ```
 
-Each part has its name and the path of groups someone labelled, size, bounding-box centre, the placement origin of its local frame, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. `scripts/step` writes a part nobody labelled under its group's name, `kit 1`, `kit 2`, and warns about it then; in a STEP from elsewhere, a part with no name is listed the same way and marked unlabelled. Part names are what `hygiene --parts`, `clearance` and `gen_poses()` match, with `*` and `?` as wildcards and a labelled group's name covering its parts; the file's own name is not a group.
+Each part has its name and the path of groups someone labelled, size, bounding-box centre, the placement origin of its local frame, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. `scripts/step` writes a part nobody labelled under its group's name, `kit 1`, `kit 2`, and warns about it then; in a STEP from elsewhere, a part with no name is listed the same way and marked unlabelled. Part names are what `hygiene --parts`, `clearance`, `gen_poses()` and CAD Explorer's assembly steps match, with `*` and `?` as wildcards and a labelled group's name covering its parts; the file's own name is not a group, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` written for an anchor's parts cannot catch an `Anchor v3` root.
 
 ## Geometry hygiene
 

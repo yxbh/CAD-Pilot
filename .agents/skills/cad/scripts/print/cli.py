@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-from common.paths import relative_path
+from common.paths import command_line_path
 
 from .bambu import BambuStudio, BambuStudioError
 from .bambu3mf import write_project
@@ -24,13 +24,11 @@ from .slicing import SliceReport, project_contents, slice_project
 
 
 def _path(value: str) -> Path:
-    """A command-line path: relative with either separator, as the other cad tools read them, or absolute here."""
-    relative = relative_path(value)
-    path = (Path(*relative.parts) if relative is not None else Path(value)).expanduser()
-    if relative is None and not path.is_absolute():
-        # A drive or root that is not absolute here (C:\x on macOS, \x on Windows) names no single place.
-        raise argparse.ArgumentTypeError(f"{value!r} must be relative to the current folder or absolute on this system")
-    return path.resolve()
+    """A command-line path, read as the other cad tools read them."""
+    try:
+        return command_line_path(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _emit(args: argparse.Namespace, lines: list[str], data: dict) -> None:

@@ -30,7 +30,7 @@ def _select(step_parts, patterns: list[str] | None):
         return list(step_parts.parts)
     selected, missing = match_parts(patterns, step_parts.parts)
     if missing:
-        raise CadRefError(f"No part is named {', '.join(repr(name) for name in missing)}; see `inspect parts`.")
+        raise CadRefError(f"No part is named {', '.join(missing)}; see `inspect parts`.")
     return selected
 
 

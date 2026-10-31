@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 from common.step_parts import StepPart, StepParts, match_parts
 
-OVERLAP_TOLERANCE_MM3 = 1e-3  # shared volume below this is contact; CAD Explorer's assembly check is to import it
+OVERLAP_TOLERANCE_MM3 = 1e-3  # shared volume below this is contact, here and in CAD Explorer's assembly check
 DEFAULT_HORIZON = 5.0
 AS_ASSEMBLED = "as assembled"
 
@@ -195,7 +195,8 @@ def _solids(shape) -> list:
     return [solids.FindKey(i) for i in range(1, solids.Extent() + 1)]
 
 
-def _overlap(a, b) -> float:
+def shared_volume(a, b) -> float:
+    """Exact volume two placed parts' native shapes share, over all their solids; a failed boolean raises."""
     from build123d import Solid
 
     from common.geometry import overlap_volume
@@ -232,7 +233,7 @@ def check_clearance(pose_set: PoseSet, *, horizon: float = DEFAULT_HORIZON) -> l
                 result.pose = pose_name
                 result.points = ([round(v, 3) for v in closest.point_a], [round(v, 3) for v in closest.point_b])
             if closest.distance <= 1e-9:
-                volume = _overlap(shape_a, shape_b)
+                volume = shared_volume(shape_a, shape_b)
                 if volume > OVERLAP_TOLERANCE_MM3:
                     result.overlap_poses.append(pose_name)
                     if volume > result.overlap:

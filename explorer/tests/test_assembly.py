@@ -3,9 +3,7 @@
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
-import sys
 import textwrap
 
 import pytest
@@ -14,6 +12,11 @@ PYTHON_DIR = Path(__file__).resolve().parents[1] / "python"
 spec = importlib.util.spec_from_file_location("prototype_assembly", PYTHON_DIR / "assembly.py")
 assembly = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(assembly)
+
+from common.generator_module import load_generator  # noqa: E402  (the exporter put the cad skill on the path)
+from common.geometry import GeometryError  # noqa: E402
+from common.step_export import export_build123d_step_scene  # noqa: E402
+from common.step_parts import load_step_parts  # noqa: E402
 
 # A 40 mm block with a 10 mm blind hole, a flush 9.8 mm peg inside a labelled group, and a lid on top.
 SOURCE = textwrap.dedent('''
@@ -41,14 +44,37 @@ SOURCE = textwrap.dedent('''
 ''')
 
 
-def _document(tmp_path, steps, peg_radius=4.9, check=True):
+@pytest.fixture(autouse=True)
+def design_root(tmp_path, monkeypatch):
+    # The exporter runs from the design root, as the cad tools do.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CAD_PILOT_CACHE", str(tmp_path / "cache"))
+    return tmp_path
+
+
+def _write(tmp_path, steps, peg_radius=4.9, source_text=SOURCE):
     source = tmp_path / "source" / "design.py"
     source.parent.mkdir(exist_ok=True)
-    source.write_text(SOURCE.format(peg_radius=peg_radius, steps=repr(steps)), encoding="utf-8")
+    source.write_text(source_text.format(peg_radius=peg_radius, steps=repr(steps)), encoding="utf-8")
     step = tmp_path / "outputs" / "design.step"
     step.parent.mkdir(exist_ok=True)
-    step.write_text("ISO-10303-21; stand-in bytes for the identity hash; END-ISO-10303-21;", encoding="utf-8")
+    export_build123d_step_scene(load_generator(source).gen_step(), step)
+    return source, step
+
+
+def _document(tmp_path, steps, peg_radius=4.9, check=True):
+    source, step = _write(tmp_path, steps, peg_radius)
     return assembly.build_document(source, step, check, 1.0), step
+
+
+def _parts(tmp_path, root):
+    step = tmp_path / "parts.step"
+    export_build123d_step_scene(root, step)
+    return load_step_parts(step, step.name).parts
+
+
+def _occurrences(parts):
+    return [part.name for part in parts]
 
 
 def _statuses(document):
@@ -105,31 +131,45 @@ def test_sequence_errors_name_the_step(tmp_path, steps, message):
 
 def test_command_writes_beside_the_step_and_summarizes(tmp_path, capsys):
     # The lid is not in a step, so it counts as already placed and blocks lifting the peg out.
-    steps = [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20)}]
-    _, step = _document(tmp_path, steps, check=False)
-    assert assembly.main([str(tmp_path / "source" / "design.py"), "--step", str(step), "--check", "--sample-mm", "2"]) == 0
+    source, step = _write(tmp_path, [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20)}])
+    # Paths are read as the cad tools read them: relative to the design root, with either separator.
+    assert assembly.main(["source\\design.py", "--step", "outputs\\design.step", "--check", "--sample-mm", "2"]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["check"][0]["status"] == "blocked" and "lid" in summary["check"][0]["detail"]
     assert json.loads(step.with_name("design.assembly.json").read_text(encoding="utf-8"))["steps"][0]["title"] == "Peg"
-    assert assembly.main([str(tmp_path / "source" / "design.py"), "--step", str(tmp_path / "missing.step")]) == 2
+    assert assembly.main([str(source), "--step", str(tmp_path / "missing.step")]) == 2
+
+
+def test_a_generator_without_gen_assembly_or_with_a_missing_import_is_a_plain_error(tmp_path, capsys):
+    source, step = _write(tmp_path, [])
+    source.write_text("def gen_step():\n    pass\n", encoding="utf-8")
+    assert assembly.main([str(source), "--step", str(step)]) == 2
+    assert "does not define gen_assembly()" in capsys.readouterr().err
+    source.write_text("import no_such_module_here\n\ndef gen_assembly():\n    return {}\n", encoding="utf-8")
+    assert assembly.main([str(source), "--step", str(step)]) == 2
+    assert "imports 'no_such_module_here'" in capsys.readouterr().err
+
+
+def test_a_project_module_beside_the_generator_is_importable(tmp_path):
+    # The cad tools' loader: the generator's folder and the design root are importable, read afresh each time.
+    source, step = _write(tmp_path, [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20)}])
+    (tmp_path / "sequence_steps.py").write_text("STEPS = [{'title': 'Lid', 'parts': ['lid'], 'from': (0, 0, 30)}]\n", encoding="utf-8")
+    source.write_text("from sequence_steps import STEPS\n\ndef gen_assembly():\n    return {'steps': STEPS}\n", encoding="utf-8")
+    assert [item["parts"] for item in assembly.build_document(source, step, False, 1.0)["steps"]] == [["lid"]]
 
 
 def test_a_failed_overlap_boolean_is_an_error_not_clear(tmp_path, monkeypatch):
-    class FailedCommon:
-        def __init__(self, *shapes):
-            pass
+    def failed(*shapes):
+        raise GeometryError("intersection boolean did not complete")
 
-        def IsDone(self):
-            return False
-
-    monkeypatch.setattr(assembly, "BRepAlgoAPI_Common", FailedCommon)
+    monkeypatch.setattr(assembly, "shared_volume", failed)
     document, _ = _document(tmp_path, [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20)},
                                        {"title": "Lid", "parts": ["lid"], "from": (0, 0, 30)}])
     assert [step["check"]["status"] for step in document["steps"]] == ["error", "error"]
     assert "intersection" in document["steps"][0]["check"]["detail"]
 
 
-def test_a_path_that_reaches_a_part_after_a_gap_is_blocked():
+def test_a_path_that_reaches_a_part_after_a_gap_is_blocked(tmp_path):
     from build123d import Box, Compound, Pos
 
     # The box touches nothing where it is installed; its path meets the wall only after 46 mm.
@@ -140,60 +180,24 @@ def test_a_path_that_reaches_a_part_after_a_gap_is_blocked():
     # A plate thinner than a 10 mm sample spacing, between grid samples, is found from its interval's midpoint.
     plate = Pos(-35, 0, 0) * Box(0.2, 40, 40)
     plate.label = "plate"
-    leaves, groups = assembly.labelled_parts(Compound(children=[lone, wall, plate]))
-    out = assembly.normalize_steps({"steps": [{"title": "Out", "parts": ["lone"], "from": (100, 0, 0)}]}, groups)
-    result = assembly.check_steps(out, leaves, 0.5)[0]
+    parts = _parts(tmp_path, Compound(children=[lone, wall, plate]))
+    out = assembly.normalize_steps({"steps": [{"title": "Out", "parts": ["lone"], "from": (100, 0, 0)}]}, parts)
+    result = assembly.check_steps(out, parts, 0.5)[0]
     assert (result["status"], result["contacts"][0]["blocker"]) == ("blocked", "wall")
     assert 46 <= result["contacts"][0]["atMm"] <= 48
-    back = assembly.normalize_steps({"steps": [{"title": "Back", "parts": ["lone"], "from": (-100, 0, 0)}]}, groups)
-    assert assembly.check_steps(back, leaves, 10.0)[0]["contacts"][0]["blocker"] == "plate"
+    back = assembly.normalize_steps({"steps": [{"title": "Back", "parts": ["lone"], "from": (-100, 0, 0)}]}, parts)
+    assert assembly.check_steps(back, parts, 10.0)[0]["contacts"][0]["blocker"] == "plate"
 
 
 def test_check_shapes_must_be_shapes(tmp_path):
-    source = SOURCE.replace("stand_in = Pos(0, 0, 500) * Sphere(1)", "stand_in = 'squeezed'").replace(
+    source_text = SOURCE.replace("stand_in = Pos(0, 0, 500) * Sphere(1)", "stand_in = 'squeezed'").replace(
         'stand_in.label = "far_away_stand_in"', "")
-    (tmp_path / "source").mkdir()
-    (tmp_path / "source" / "design.py").write_text(source.format(
-        peg_radius=4.9, steps=repr([{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20), "stand_in": True}])), encoding="utf-8")
-    step = tmp_path / "design.step"
-    step.write_text("ISO-10303-21; END-ISO-10303-21;", encoding="utf-8")
+    source, step = _write(tmp_path, [{"title": "Peg", "parts": ["peg"], "from": (0, 0, 20), "stand_in": True}], source_text=source_text)
     with pytest.raises(assembly.SequenceError, match="build123d shapes"):
-        assembly.build_document(tmp_path / "source" / "design.py", step, False, 1.0)
+        assembly.build_document(source, step, False, 1.0)
 
 
-def test_an_edit_of_the_same_length_within_a_second_is_read(tmp_path, monkeypatch):
-    # A cached .pyc is matched on whole-second mtime and size, so loading must not reuse one.
-    monkeypatch.setattr(sys, "dont_write_bytecode", False)
-    source = tmp_path / "design.py"
-    for value in ("first", "later"):
-        source.write_text(f"def gen_step():\n    return {value!r}\n\ndef gen_assembly():\n    return {{}}\n", encoding="utf-8")
-        os.utime(source, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
-        assert assembly._load_source(source).gen_step() == value
-
-
-@pytest.mark.parametrize("future", ["", "from __future__ import annotations\n"])
-def test_designs_load_as_their_own_module(tmp_path, future):
-    # The loader's own __future__ imports stay out of the design, and dataclasses can find the design's module.
-    source = tmp_path / "design.py"
-    source.write_text(future + textwrap.dedent('''
-        from dataclasses import dataclass
-
-        @dataclass
-        class Params:
-            width: float = 10.0
-
-        def gen_step():
-            return Params().width
-
-        def gen_assembly():
-            return {"steps": []}
-    '''), encoding="utf-8")
-    module = assembly._load_source(source)
-    assert module.gen_step() == 10.0
-    assert ("annotations" in module.__dict__) == bool(future)
-
-
-def test_a_wildcard_never_matches_the_whole_assembly():
+def test_a_wildcard_never_matches_the_whole_assembly(tmp_path):
     from build123d import Box, Compound, Pos
 
     # "TMAT anchor *" was written for the anchor's parts; the top-level group "TMAT anchor v3" also fits it.
@@ -207,22 +211,30 @@ def test_a_wildcard_never_matches_the_whole_assembly():
     anchor.label = "anchor"
     root = Compound(children=[base, anchor])
     root.label = "TMAT anchor v3"
-    leaves, groups = assembly.labelled_parts(root)
-    assert assembly.match_parts(["TMAT anchor *"], groups) == ([("TMAT anchor plate", 0), ("TMAT anchor bolt", 0)], [])
-    assert assembly.match_parts(["anchor"], groups) == ([("TMAT anchor plate", 0), ("TMAT anchor bolt", 0)], []), "a real subgroup still matches"
-    assert assembly.match_parts(["TMAT anchor v?"], groups) == ([], ["TMAT anchor v? (it matches only the whole assembly)"])
-    steps = assembly.normalize_steps({"steps": [{"title": "Anchor", "parts": ["TMAT anchor *"], "from": (0, 0, -30)}]}, groups)
+    parts = _parts(tmp_path, root)
+    steps = assembly.normalize_steps({"steps": [{"title": "Anchor", "parts": ["TMAT anchor *"], "from": (0, 0, -30)}]}, parts)
+    assert _occurrences(steps[0]["leaves"]) == ["TMAT anchor plate", "TMAT anchor bolt"]
     # Moving every part would leave nothing to collide with and so report clear; the anchor now meets the base.
-    assert assembly.check_steps(steps, leaves, 1.0)[0]["status"] == "blocked"
+    assert assembly.check_steps(steps, parts, 1.0)[0]["status"] == "blocked"
     with pytest.raises(assembly.SequenceError, match="matches only the whole assembly"):
-        assembly.normalize_steps({"steps": [{"title": "All", "parts": ["TMAT*v3"], "from": (0, 0, 30)}]}, groups)
-    # A single-part model can still name its only part.
-    lone = Box(4, 4, 4)
-    lone.label = "lone"
-    assert assembly.match_parts(["lone"], assembly.labelled_parts(Compound(children=[lone]))[1]) == ([("lone", 0)], [])
+        assembly.normalize_steps({"steps": [{"title": "All", "parts": ["TMAT*v3"], "from": (0, 0, 30)}]}, parts)
 
 
-def test_groups_count_occurrences_and_no_step_moves_every_part():
+def test_unlabelled_parts_are_named_as_the_step_names_them(tmp_path):
+    from build123d import Box, Compound, Pos
+
+    # The STEP writer names an unlabelled part after its group, and CAD Explorer and `inspect parts` read that name.
+    plate = Box(20, 20, 2)
+    plate.label = "plate"
+    bolt = Pos(0, 0, 5) * Box(2, 2, 8)
+    kit = Compound(children=[plate, bolt])
+    kit.label = "kit"
+    parts = _parts(tmp_path, kit)
+    steps = assembly.normalize_steps({"steps": [{"title": "Bolt", "parts": ["kit 2"], "from": (0, 0, 30)}]}, parts)
+    assert _occurrences(steps[0]["leaves"]) == ["kit 2"]
+
+
+def test_groups_count_occurrences_and_no_step_moves_every_part(tmp_path):
     from build123d import Box, Compound, Pos
 
     plate = Box(20, 20, 2)
@@ -233,15 +245,14 @@ def test_groups_count_occurrences_and_no_step_moves_every_part():
     bracket.label = "Bracket"
     loose = Pos(30, 0, 0) * Box(2, 2, 8)
     loose.label = "bolt"
-    leaves, groups = assembly.labelled_parts(Compound(children=[bracket, loose]))
+    parts = _parts(tmp_path, Compound(children=[bracket, loose]))
     # Bracket holds two of the three occurrences: it is not the whole assembly, and moving it leaves the loose bolt
     # placed, exactly as the viewer resolves it.
-    assert assembly.match_parts(["Bracket"], groups) == ([("plate", 0), ("bolt", 0)], [])
-    steps = assembly.normalize_steps({"steps": [{"title": "Bracket", "parts": ["Bracket"], "from": (30, 0, 0)}]}, groups)
-    assert steps[0]["leaves"] == [("plate", 0), ("bolt", 0)]
-    result = assembly.check_steps(steps, leaves, 1.0)[0]
+    steps = assembly.normalize_steps({"steps": [{"title": "Bracket", "parts": ["Bracket"], "from": (30, 0, 0)}]}, parts)
+    assert _occurrences(steps[0]["leaves"]) == ["plate", "bolt"]
+    result = assembly.check_steps(steps, parts, 1.0)[0]
     assert (result["status"], result["contacts"][0]["blocker"]) == ("blocked", "bolt"), "the loose bolt stays in the way"
     # A wildcard or shared prefix that resolves to every part would leave nothing to check against.
     for pattern in (["*"], ["plate", "b*"]):
         with pytest.raises(assembly.SequenceError, match="moves every part"):
-            assembly.normalize_steps({"steps": [{"title": "All", "parts": pattern, "from": (0, 0, 30)}]}, groups)
+            assembly.normalize_steps({"steps": [{"title": "All", "parts": pattern, "from": (0, 0, 30)}]}, parts)

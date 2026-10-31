@@ -1,10 +1,10 @@
 """A STEP file's parts as native shapes, with the names checks and refs use.
 
 Names follow ``part_names``: a part's label, or a fallback after its group.
-Patterns match like CAD Explorer's assembly steps: ``*`` and ``?`` are the only
-wildcards, and the name of a group someone labelled covers every part in it.
-This module is the matcher's home; CAD Explorer's assembly sequences are to
-import it rather than keep their own copy.
+Patterns match as CAD Explorer resolves its assembly steps: ``*`` and ``?``
+are the only wildcards, and the name of a group someone labelled covers every
+part in it. This module is the matcher's home; CAD Explorer's sequence writer
+uses it too.
 """
 
 from __future__ import annotations
@@ -97,14 +97,21 @@ def label_pattern(glob: str) -> re.Pattern[str]:
 
 
 def match_parts(patterns: list[str], parts: tuple[StepPart, ...]) -> tuple[list[StepPart], list[str]]:
-    """The parts that patterns name, in STEP order, and the patterns that name nothing."""
+    """The parts that patterns name, in STEP order, and the patterns that name nothing.
+
+    A group holding every part (the top-level assembly, or a wrapper around it) never matches, as in CAD Explorer:
+    a pattern such as ``Anchor *`` written for parts must not catch an ``Anchor v3`` root. A pattern that names
+    only such a group is reported with that reason.
+    """
+    whole = set.intersection(*(set(part.groups) for part in parts)) if parts else set()
     matched: set[str] = set()
     missing: list[str] = []
     for pattern in patterns:
         matcher = label_pattern(pattern)
-        hits = [part for part in parts if any(matcher.fullmatch(name) for name in (*part.groups, part.name))]
+        hits = [part for part in parts if matcher.fullmatch(part.name)
+                or any(matcher.fullmatch(group) for group in part.groups if group not in whole)]
         if not hits:
-            missing.append(pattern)
+            missing.append(f"{pattern} (it matches only the whole assembly)" if any(map(matcher.fullmatch, whole)) else pattern)
         matched.update(part.occurrence_id for part in hits)
     return [part for part in parts if part.occurrence_id in matched], missing
 

@@ -4,40 +4,48 @@ Run from the design root with the workbench interpreter, after generating the ST
 
     python <workbench>/explorer/python/assembly.py source/model.py --step outputs/model.step [--check]
 
-The source defines ``gen_step()`` (the labelled assembly) and ``gen_assembly()``, which returns
-``{"steps": [...]}``. Each step names parts by label (``*`` and ``?`` wildcards, matching CAD
-Explorer, so other characters such as brackets are literal; a group label covers its parts) and gives the offset in millimetres they arrive from, relative to where they
-sit when assembled. A step may also name a part from an earlier step to carry it along, and may
-supply ``check_shapes`` that stand in for listed parts during the check only, such as a
-deflected-finger illustration of a snap part.
+The source defines ``gen_assembly()`` beside ``gen_step()``; it returns ``{"steps": [...]}``. Each
+step names parts of the generated STEP as ``inspect parts`` lists them and CAD Explorer shows them
+(``*`` and ``?`` are the only wildcards, so other characters such as brackets are literal; a
+labelled group covers its parts) and gives the offset in millimetres they arrive from, relative to
+where they sit when assembled. A step may also name a part from an earlier step to carry it along,
+and may supply ``check_shapes`` that stand in for listed parts during the check only, such as a
+deflected-finger illustration of a snap part. The generator loads as the cad tools load it, and
+parts are matched by the cad skill's own matcher.
 
 The file is presentation data written as ``<step stem>.assembly.json``; it never changes the
-STEP. ``--check`` sweeps each step's parts in a straight line from their installed placement
-towards their start offset and measures exact B-rep overlap with the parts already placed. It
-is a rigid, sampled geometric check: it does not model flexing, threads, gravity, tool access
-or friction, and features thinner than the sample spacing can be stepped over.
+STEP. ``--check`` sweeps each step's parts of that STEP in a straight line from their installed
+placement towards their start offset and measures exact B-rep overlap with the parts already
+placed. It is a rigid, sampled geometric check: it does not model flexing, threads, gravity, tool
+access or friction, and features thinner than the sample spacing can be stepped over.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import math
 import os
 from pathlib import Path
-import re
 import sys
 
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
-from OCP.BRepGProp import BRepGProp
-from OCP.GProp import GProp_GProps
+from OCP.Bnd import Bnd_Box
+from OCP.BRepBndLib import BRepBndLib
+from OCP.TopLoc import TopLoc_Location
+from OCP.gp import gp_Trsf, gp_Vec
+
+# The cad skill owns loading generators, naming a STEP's parts and matching patterns to them.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agents" / "skills" / "cad" / "scripts"))
+
+from common.clearance import OVERLAP_TOLERANCE_MM3, shared_volume  # noqa: E402
+from common.generator_module import GeneratorImportError, MissingGeneratorError, call_generator, load_generator  # noqa: E402
+from common.paths import command_line_path  # noqa: E402
+from common.step_parts import StepPart, load_step_parts, match_parts  # noqa: E402
 
 FORMAT = "cad-explorer-assembly"
 VERSION = 1
 MAX_STEPS = 200
-OVERLAP_TOLERANCE_MM3 = 1e-3
 LIMITS = ("Rigid straight-line sweep with exact B-rep overlap at sampled positions. It does not model flexing parts, "
           "threads, gravity, tool access or friction, and can step over features thinner than the sample spacing.")
 
@@ -46,85 +54,15 @@ class SequenceError(ValueError):
     """The generator, its sequence or the STEP path cannot produce a sequence file."""
 
 
-def _load_source(path: Path):
-    if path.suffix != ".py" or not path.is_file():
-        raise SequenceError(f"Generator source not found: {path}")
-    sys.path.insert(0, str(path.parent.resolve()))
-    spec = importlib.util.spec_from_file_location(f"cad_explorer_sequence_{path.stem}", path)
-    module = importlib.util.module_from_spec(spec)
-    # Registered like an import, so code that looks its module up while it runs (dataclasses do) finds it.
-    sys.modules[spec.name] = module
-    # Compile the source itself: a cached .pyc is checked only against the source's whole-second mtime and its
-    # size, so an edit of the same length within a second would otherwise run the old code. dont_inherit keeps
-    # this file's own __future__ imports out of the design's code.
+def _sequence_source(source: Path) -> object:
+    """``gen_assembly()``'s result, with the generator loaded as the cad tools load it."""
+    if source.suffix != ".py" or not source.is_file():
+        raise SequenceError(f"Generator source not found: {source}")
     try:
-        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
-    except BaseException:
-        sys.modules.pop(spec.name, None)
-        raise
-    for name in ("gen_step", "gen_assembly"):
-        if not callable(getattr(module, name, None)):
-            raise SequenceError(f"{path} must define {name}()")
-    return module
-
-
-# A part occurrence: its label and its index among the parts sharing that label, as CAD Explorer moves occurrences.
-Occurrence = tuple[str, int]
-
-
-def labelled_parts(shape) -> tuple[dict[str, list], dict[str, list[Occurrence]]]:
-    """World-placed leaf shapes by label (one per occurrence), and every label (leaf or group) mapped to the part
-    occurrences under it."""
-    leaves: dict[str, list] = {}
-    groups: dict[str, list[Occurrence]] = {}
-
-    def visit(node, ancestors):
-        children = list(getattr(node, "children", None) or ())
-        label = getattr(node, "label", "") or ""
-        if children:
-            for child in children:
-                visit(child, ancestors + ([label] if label else []))
-            return
-        if not label:
-            raise SequenceError("Every assembly part needs a label so sequence steps can name it")
-        placed = leaves.setdefault(label, [])
-        placed.append(node.located(node.global_location))
-        for name in ancestors + [label]:
-            groups.setdefault(name, []).append((label, len(placed) - 1))
-
-    visit(shape, [])
-    return leaves, groups
-
-
-def label_pattern(glob: str) -> re.Pattern:
-    """Only ``*`` and ``?`` are wildcards, exactly as CAD Explorer resolves the same file."""
-    return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
-
-
-def match_parts(patterns: list[str], groups: dict[str, list[Occurrence]]) -> tuple[list[Occurrence], list[str]]:
-    """Part occurrences named by the patterns, and the patterns that name nothing.
-
-    A group holding every part (the top-level assembly, or a wrapper around it) never matches, exactly as in CAD
-    Explorer: a step moving the whole model has nothing to arrive at, so its check would be clear by default, and a
-    pattern such as ``Anchor *`` written for parts must not catch an ``Anchor v3`` root.
-    """
-    every = every_occurrence(groups)
-    # Occurrences, not labels: a group of a plate and a bolt beside a loose bolt is not the whole assembly.
-    whole = {name for name, members in groups.items() if set(members) == every and {label for label, _ in members} != {name}}
-    matched: list[Occurrence] = []
-    missing: list[str] = []
-    for pattern in patterns:
-        matcher = label_pattern(pattern)
-        names = [name for name in groups if name not in whole and matcher.fullmatch(name)]
-        if not names:
-            missing.append(f"{pattern} (it matches only the whole assembly)" if any(matcher.fullmatch(name) for name in whole) else pattern)
-        for name in names:
-            matched.extend(occurrence for occurrence in groups[name] if occurrence not in matched)
-    return matched, missing
-
-
-def every_occurrence(groups: dict[str, list[Occurrence]]) -> set[Occurrence]:
-    return {occurrence for members in groups.values() for occurrence in members}
+        module = load_generator(source)
+        return call_generator(module, "gen_assembly", script_path=source)
+    except (GeneratorImportError, MissingGeneratorError) as error:
+        raise SequenceError(str(error)) from error
 
 
 def _vector(value, field: str) -> list[float]:
@@ -137,7 +75,7 @@ def _vector(value, field: str) -> list[float]:
     return vector
 
 
-def normalize_steps(raw, groups: dict[str, list[str]]) -> list[dict]:
+def normalize_steps(raw, parts: tuple[StepPart, ...]) -> list[dict]:
     from build123d import Shape
 
     steps = raw.get("steps") if isinstance(raw, dict) else None
@@ -150,33 +88,40 @@ def normalize_steps(raw, groups: dict[str, list[str]]) -> list[dict]:
         unknown = set(step) - {"title", "note", "parts", "from", "check_shapes"}
         if unknown:
             raise SequenceError(f"Step {index} has unsupported field(s): {', '.join(sorted(unknown))}")
-        parts = step.get("parts")
-        if not isinstance(parts, list) or not parts or not all(isinstance(part, str) and part for part in parts):
-            raise SequenceError(f"Step {index} needs a list of part labels")
-        leaves, missing = match_parts(parts, groups)
+        names = step.get("parts")
+        if not isinstance(names, list) or not names or not all(isinstance(name, str) and name for name in names):
+            raise SequenceError(f"Step {index} needs a list of part names")
+        leaves, missing = match_parts(names, parts)
         if missing:
             raise SequenceError(f"Step {index} names unknown part(s): {', '.join(missing)}")
         # A step moving every part has nothing to arrive at, and its check would be clear by default.
-        if set(leaves) == every_occurrence(groups):
-            raise SequenceError(f"Step {index} moves every part ({', '.join(parts)}); name only the parts that arrive in that step")
+        if len(leaves) == len(parts):
+            raise SequenceError(f"Step {index} moves every part ({', '.join(names)}); name only the parts that arrive in that step")
         note = step.get("note", "")
         if not isinstance(note, str):
             raise SequenceError(f"Step {index} note must be text")
         check_shapes = step.get("check_shapes") or {}
-        if not isinstance(check_shapes, dict) or any(name not in {label for label, _ in leaves} for name in check_shapes):
+        if not isinstance(check_shapes, dict) or any(name not in {part.name for part in leaves} for name in check_shapes):
             raise SequenceError(f"Step {index} check_shapes must replace parts named in that step")
         if not all(isinstance(shape, Shape) and shape.wrapped is not None for shape in check_shapes.values()):
             raise SequenceError(f"Step {index} check_shapes values must be build123d shapes")
         result.append({
-            "title": step["title"].strip(), "note": note.strip(), "parts": parts, "leaves": leaves,
+            "title": step["title"].strip(), "note": note.strip(), "parts": names, "leaves": leaves,
             "from": _vector(step.get("from"), f"Step {index} from"), "check_shapes": check_shapes,
         })
     return result
 
 
 def _box(shape):
-    box = shape.bounding_box()
-    return [box.min.X, box.min.Y, box.min.Z], [box.max.X, box.max.Y, box.max.Z]
+    box = Bnd_Box()
+    BRepBndLib.AddOptimal_s(shape, box, False, False)
+    return list(box.CornerMin().Coord()), list(box.CornerMax().Coord())
+
+
+def _shifted(shape, shift: list[float]):
+    trsf = gp_Trsf()
+    trsf.SetTranslation(gp_Vec(*shift))
+    return shape.Moved(TopLoc_Location(trsf))
 
 
 def _meeting_interval(moving, placed, direction, length, gap=0.01):
@@ -213,42 +158,24 @@ def _samples(intervals, sample_mm: float) -> list[float]:
     return sorted(distances)
 
 
-def _overlap(a, b) -> float:
-    """Exact shared volume. A failed boolean is an error, never an empty and therefore clear result."""
-    common = BRepAlgoAPI_Common(a.wrapped, b.wrapped)
-    # OCCT marks a boolean done only when it finished without errors.
-    failed = not common.IsDone()
-    volume = 0.0
-    if not failed:
-        properties = GProp_GProps()
-        BRepGProp.VolumeProperties_s(common.Shape(), properties)
-        volume = properties.Mass()
-        failed = volume < -OVERLAP_TOLERANCE_MM3  # an inside-out result is not a measurement
-    if failed:
-        raise RuntimeError(f"the B-rep intersection of {a.label or 'a part'} and {b.label or 'a part'} failed")
-    return max(volume, 0.0)
-
-
-def check_steps(steps: list[dict], leaves: dict[str, list], sample_mm: float) -> list[dict]:
-    from build123d import Location
-
+def check_steps(steps: list[dict], parts: tuple[StepPart, ...], sample_mm: float) -> list[dict]:
     first_step = {}
     for index, step in enumerate(steps):
-        for occurrence in step["leaves"]:
-            first_step.setdefault(occurrence, index)
+        for part in step["leaves"]:
+            first_step.setdefault(part.occurrence_id, index)
     results = []
     for index, step in enumerate(steps):
-        moving = set(step["leaves"])
-        placed = [(name, shape, _box(shape)) for name, shapes in leaves.items() for number, shape in enumerate(shapes)
-                  if (name, number) not in moving and first_step.get((name, number), -1) < index]
+        moving = {part.occurrence_id for part in step["leaves"]}
+        placed = [(part.name, part.placed, _box(part.placed)) for part in parts
+                  if part.occurrence_id not in moving and first_step.get(part.occurrence_id, -1) < index]
         movers = []
         substitutes = []
-        for name, number in step["leaves"]:
-            replacement = step["check_shapes"].get(name)
-            if replacement is not None and not any(item.startswith(f"{name} checked as") for item in substitutes):
-                substitutes.append(f"{name} checked as {getattr(replacement, 'label', '') or 'a supplied stand-in'}")
-            shape = replacement if replacement is not None else leaves[name][number]
-            movers.append((name, shape, _box(shape)))
+        for part in step["leaves"]:
+            replacement = step["check_shapes"].get(part.name)
+            if replacement is not None and not any(item.startswith(f"{part.name} checked as") for item in substitutes):
+                substitutes.append(f"{part.name} checked as {getattr(replacement, 'label', '') or 'a supplied stand-in'}")
+            shape = replacement.wrapped if replacement is not None else part.placed
+            movers.append((part.name, shape, _box(shape)))
         length = math.hypot(*step["from"])
         direction = [value / length for value in step["from"]] if length else [0.0, 0.0, 0.0]
         result = {"status": "clear", "clearsAt": None, "contacts": []}
@@ -273,7 +200,7 @@ def check_steps(steps: list[dict], leaves: dict[str, list], sample_mm: float) ->
                 for (name, shape, _), (blocker, other, _) in near:
                     if name in blocked:
                         continue
-                    volume = _overlap(shape.moved(Location(tuple(shift))), other)
+                    volume = shared_volume(_shifted(shape, shift), other)
                     if volume > OVERLAP_TOLERANCE_MM3:
                         blocked.add(name)
                         result["contacts"].append({"part": name, "blocker": blocker, "atMm": round(distance, 3), "overlapMm3": round(volume, 4)})
@@ -303,10 +230,13 @@ def build_document(source: Path, step_path: Path, check: bool, sample_mm: float)
         raise SequenceError(f"Generate the STEP first; not found: {step_path}")
     if not math.isfinite(sample_mm) or not 0.05 <= sample_mm <= 10:
         raise SequenceError("Sample spacing must be 0.05 to 10 mm")
-    module = _load_source(source)
-    leaves, groups = labelled_parts(module.gen_step())
-    steps = normalize_steps(module.gen_assembly(), groups)
-    results = check_steps(steps, leaves, sample_mm) if check else [None] * len(steps)
+    raw = _sequence_source(source)
+    try:
+        parts = load_step_parts(step_path, step_path.name).parts
+    except Exception as error:  # OCCT read failures surface as many exception types.
+        raise SequenceError(f"Could not read the STEP file {step_path}: {error}") from error
+    steps = normalize_steps(raw, parts)
+    results = check_steps(steps, parts, sample_mm) if check else [None] * len(steps)
     document = {
         "format": FORMAT, "version": VERSION, "units": "mm",
         "source": _relative_source(source, step_path),
@@ -334,10 +264,25 @@ def sequence_path(step_path: Path) -> Path:
     return step_path.with_name(f"{step_path.stem}.assembly.json")
 
 
+def _shown(path: Path) -> str:
+    """A path as the cad tools report it: from the design root when it is inside it."""
+    try:
+        return path.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _path(value: str) -> Path:
+    try:
+        return command_line_path(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Write a CAD Explorer assembly-sequence file beside a generated STEP.")
-    parser.add_argument("source", type=Path, help="Generator defining gen_step() and gen_assembly()")
-    parser.add_argument("--step", type=Path, required=True, help="The STEP generated from that source")
+    parser.add_argument("source", type=_path, help="Generator defining gen_assembly() beside gen_step()")
+    parser.add_argument("--step", type=_path, required=True, help="The STEP generated from that source")
     parser.add_argument("--check", action="store_true", help="Run the rigid interference sweep for every step")
     parser.add_argument("--sample-mm", type=float, default=0.5, help="Sweep sample spacing (default 0.5 mm)")
     args = parser.parse_args(argv)
@@ -348,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     output = sequence_path(args.step)
     output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    summary = {"file": output.as_posix(), "steps": len(document["steps"])}
+    summary = {"file": _shown(output), "steps": len(document["steps"])}
     if args.check:
         summary["check"] = [{"step": index, "title": step["title"], "status": step["check"]["status"], "detail": step["check"]["detail"]}
                             for index, step in enumerate(document["steps"], 1)]
