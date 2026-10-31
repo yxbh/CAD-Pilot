@@ -1,6 +1,7 @@
 """The workbench's pytest-xdist scheduling and duration records (conftest.py), run on stand-in tests."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,8 @@ STAND_INS = textwrap.dedent(
 
     # A log for each worker: on Windows two processes appending to one file can overwrite each other's lines.
     WORKER = os.environ["PYTEST_XDIST_WORKER"]
+    # The pauses let the scheduler spread the tests across workers; a test of anything else sets STAND_IN_PAUSE to 0.
+    PAUSE = float(os.environ.get("STAND_IN_PAUSE", "1"))
     LOG = Path(__file__).with_name(f"log-{WORKER}.txt")
 
 
@@ -32,13 +35,13 @@ STAND_INS = textwrap.dedent(
             note("setup")
 
         def test_a(self):
-            time.sleep(0.2)
+            time.sleep(0.2 * PAUSE)
 
         def test_b(self):
-            time.sleep(0.2)
+            time.sleep(0.2 * PAUSE)
 
         def test_c(self):
-            time.sleep(0.2)
+            time.sleep(0.2 * PAUSE)
 
 
     class Independent(unittest.TestCase):
@@ -47,7 +50,7 @@ STAND_INS = textwrap.dedent(
 
     def independent(self):
         note("independent")
-        time.sleep(0.5)
+        time.sleep(0.5 * PAUSE)
 
 
     for name in "abcdef":
@@ -85,14 +88,14 @@ CRASH = textwrap.dedent(
 )
 
 
-def _pytest(folder, files, *args, paths=None):
+def _pytest(folder, files, *args, paths=None, env=None):
     shutil.copy(ROOT / "conftest.py", folder / "conftest.py")
     for name, text in files.items():
         (folder / name).write_text(text, encoding="utf-8")
     # A hang fails here, by its timeout, rather than holding the suite.
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(folder), *(paths or [str(folder)]), *args],
-        cwd=folder, capture_output=True, text=True, timeout=120,
+        cwd=folder, env=env, capture_output=True, text=True, timeout=120,
     )
 
 
@@ -114,7 +117,7 @@ def test_a_crashed_worker_reports_its_test_once_and_the_rest_still_run(tmp_path)
 
 
 def test_an_explicit_distribution_mode_keeps_xdists_own(tmp_path):
-    run = _pytest(tmp_path, {"test_stand_ins.py": STAND_INS}, "-n", "2", "--dist", "each")
+    run = _pytest(tmp_path, {"test_stand_ins.py": STAND_INS}, "-n", "2", "--dist", "each", env={**os.environ, "STAND_IN_PAUSE": "0"})
     assert run.returncode == 0, run.stdout + run.stderr
     assert "18 passed" in run.stdout, "each test runs on every worker"
 
