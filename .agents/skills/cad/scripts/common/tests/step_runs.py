@@ -10,6 +10,7 @@ names the model it is about by that source path.
 from __future__ import annotations
 
 import collections
+import math
 import os
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from common.solid_check import TIME_SCALE_VARIABLE
 
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[2]
-# Three to a run keeps most of what sharing saves (eight mesh fixtures: 15% more CPU than in two runs, in 40% of the time).
+# Up to three to a run keeps most of what sharing saves, while a fixture's models are generated a few at a time.
 MODELS_PER_RUN = 3
 # Other tests share the CPU, so the kernel checks get four times their default budgets.
 STRETCHED_BUDGETS = {**os.environ, TIME_SCALE_VARIABLE: "4"}
@@ -50,6 +51,9 @@ def generate(project: Path, names: list[str], *options: str) -> subprocess.Compl
 def generate_by_options(project: Path, options: dict[str, tuple[str, ...]]) -> dict[str, subprocess.CompletedProcess]:
     """Each model's run: models with the same options share runs of up to MODELS_PER_RUN, all the runs at the same time.
 
+    A set of options is dealt out across its runs in turn, so neighbouring models, often variants of one heavy design,
+    land in different runs.
+
     A model that fails stops its run, so the models of a failed run are run again one at a time: each then has a run of
     its own, and only the failing model's tests fail.
     """
@@ -63,7 +67,10 @@ def generate_by_options(project: Path, options: dict[str, tuple[str, ...]]) -> d
             return dict.fromkeys(names, run)
         return {name: generate(project, [name], *model_options) for name in names}
 
-    shares = [(names[start:start + MODELS_PER_RUN], model_options) for model_options, names in groups.items() for start in range(0, len(names), MODELS_PER_RUN)]
+    shares = []
+    for model_options, names in groups.items():
+        count = math.ceil(len(names) / MODELS_PER_RUN)
+        shares += [(names[first::count], model_options) for first in range(count)]
     with ThreadPoolExecutor() as pool:
         shares_run = [pool.submit(runs, names, model_options) for names, model_options in shares]
     return {name: run for share in shares_run for name, run in share.result().items()}
