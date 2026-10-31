@@ -16,12 +16,14 @@ STAND_INS = textwrap.dedent(
     import unittest
     from pathlib import Path
 
-    LOG = Path(__file__).with_name("log.txt")
+    # A log for each worker: on Windows two processes appending to one file can overwrite each other's lines.
+    WORKER = os.environ["PYTEST_XDIST_WORKER"]
+    LOG = Path(__file__).with_name(f"log-{WORKER}.txt")
 
 
     def note(text):
         with LOG.open("a") as log:
-            log.write(f"{text} {os.environ['PYTEST_XDIST_WORKER']}\\n")
+            log.write(f"{text} {WORKER}\\n")
 
 
     class Shared(unittest.TestCase):
@@ -97,7 +99,7 @@ def _pytest(folder, files, *args, paths=None):
 def test_a_shared_class_fixture_is_built_once_and_independent_tests_spread(tmp_path):
     run = _pytest(tmp_path, {"test_stand_ins.py": STAND_INS}, "-n", "2")
     assert run.returncode == 0, run.stdout + run.stderr
-    log = (tmp_path / "log.txt").read_text().splitlines()
+    log = [line for worker in sorted(tmp_path.glob("log-*.txt")) for line in worker.read_text().splitlines()]
     assert sum(line.startswith("setup ") for line in log) == 1, log
     assert len({line.split()[1] for line in log if line.startswith("independent ")}) == 2, log
 
