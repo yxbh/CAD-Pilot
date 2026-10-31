@@ -36,7 +36,7 @@ test("references are occurrence-specific, readable and not @cad inspector identi
   const second = createReference(model, model.nodes[1].id, "f1");
   assert.notEqual(first, second);
   const parsed = parseReference(formatSelection(model, model.nodes[0].id, "f1"));
-  assert.deepEqual(parsed, { topologyRevision: model.topologyRevision, nodeId: model.nodes[0].id, faceId: "f1", edgeId: null });
+  assert.deepEqual(parsed, { topologyRevision: model.topologyRevision, nodeId: model.nodes[0].id, faceId: "f1", edgeId: null, point: null });
   assert.throws(() => parseReference("@cad[fixture#f1]"), /exactly one/);
   assert.throws(() => parseReference(first + "\n" + second), /exactly one/);
   assert.throws(() => parseReference(first.replace("/f1", "/f1junk")), /format/);

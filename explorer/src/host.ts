@@ -1,9 +1,10 @@
-import type { EdgeSelection, FaceSelection, Model, ViewState } from "./model.ts";
+import type { EdgeSelection, FaceSelection, Model, PointSelection, ViewState } from "./model.ts";
 import type { CameraState } from "../shared/view-settings.mjs";
 export type { CameraState } from "../shared/view-settings.mjs";
 import type { Review } from "./drawing/types.ts";
 import type { DrawingState } from "../shared/drawing.mjs";
-import { createReference } from "../shared/references.mjs";
+import { createReference, type ReferencePoint } from "../shared/references.mjs";
+import { attachMeshGeometry, meshViews } from "../shared/mesh.mjs";
 import { copyPreparedReference, createClipboardWriter, type NativeCopyResult } from "./clipboard.ts";
 import { post, request } from "./api.ts";
 
@@ -14,6 +15,7 @@ export type RenderReport = {
   selectedEdge: EdgeSelection | null; highlightedSegments: number; selectedEdgeScreen: number[] | null;
   selectedFaceScreen: number[] | null; bounds: { min: number[]; max: number[] } | null;
   pixels: [number, number];
+  selectedPoint: PointSelection | null; selectedPointScreen: number[] | null; faultMarks: number; sectionOutlineSegments: number; ghostParts: number; meshTriangles: number; pickingTrees: number;
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
   camera: CameraState; appearance: ViewState["appearance"]; materialFinish: ViewState["materialFinish"];
@@ -40,8 +42,8 @@ export interface ViewerHost {
   reportRenderError(message: string, webgl: boolean): Promise<unknown>;
   captureResult(result: object): Promise<unknown>;
   captureImage(): Promise<{ path: string }>;
-  upload(file: File): Promise<unknown>;
-  copyReference(model: Model, id: string, faceId?: string, edgeId?: string): Promise<NativeCopyResult>;
+  upload(file: File, add?: boolean): Promise<unknown>;
+  copyReference(model: Model, id: string, faceId?: string, edgeId?: string, point?: ReferencePoint): Promise<NativeCopyResult>;
   cancelPendingCopy(): void;
   copyImage(image: Promise<Blob>): Promise<void>;
   listReviews(): Promise<ReviewSummary[]>;
@@ -61,15 +63,44 @@ export async function blobDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+// Mesh parts arrive as one binary geometry file per mesh, fetched once and reused while the mesh stays in view,
+// so restyling or moving files does not download their geometry again.
+function meshLoader() {
+  const files = new Map<string, Promise<ArrayBuffer>>();
+  const fetchGeometry = async (revision: string) => {
+    const response = await fetch(`api/geometry/${revision}`);
+    if (!response.ok) throw new Error(`Mesh geometry request failed: ${response.status}`);
+    return response.arrayBuffer();
+  };
+  return async (kind: RendererKind): Promise<Model> => {
+    // The server gives a viewer page time to mesh a model it has fetched before drawing it in the background.
+    const model = await request<Model>(`model?kind=${kind}`);
+    const revisionOf = (documentId?: string) => model.documents?.find((document) => document.id === documentId)?.topologyRevision ?? model.topologyRevision;
+    const wanted = new Set(model.parts.filter((part) => part.buffers).map((part) => revisionOf(part.documentId)));
+    for (const revision of files.keys()) if (!wanted.has(revision)) files.delete(revision);
+    for (const revision of wanted) {
+      if (files.has(revision)) continue;
+      const pending = fetchGeometry(revision);
+      files.set(revision, pending);
+      pending.catch(() => { if (files.get(revision) === pending) files.delete(revision); });
+    }
+    const loaded = new Map(await Promise.all([...wanted].map(async (revision) => [revision, await files.get(revision)!] as const)));
+    for (const part of model.parts) {
+      if (part.buffers) attachMeshGeometry(part, meshViews(part, loaded.get(revisionOf(part.documentId))!));
+    }
+    return model;
+  };
+}
+
 export function createDesktopHost(kind: RendererKind = "viewer"): ViewerHost {
   const client = crypto.randomUUID();
+  const loadModel = meshLoader();
   const clipboard = createClipboardWriter();
   let copySequence = 0;
   let prepareQueue: Promise<unknown> = Promise.resolve();
   return {
     getState: () => request("state"),
-    // The server gives a viewer page time to mesh a model it has fetched before drawing it in the background.
-    loadModel: () => request(`model?kind=${kind}`),
+    loadModel: () => loadModel(kind),
     command: (name, input) => post("command", { name, input }),
     subscribe(callbacks) {
       const events = new EventSource(`api/events?client=${client}&kind=${kind}`);
@@ -88,12 +119,14 @@ export function createDesktopHost(kind: RendererKind = "viewer"): ViewerHost {
     captureResult: (result) => post("capture-result", result),
     // The Capture button saves what this page shows; agents' captures come from the background renderer.
     captureImage: () => post("capture", { client }),
-    upload: (file) => request("upload", {
-      method: "POST", headers: { "x-file-name": encodeURIComponent(file.name), "x-file-modified": String(file.lastModified) }, body: file,
+    upload: (file, add = false) => request("upload", {
+      method: "POST", headers: {
+        "x-file-name": encodeURIComponent(file.name), "x-file-modified": String(file.lastModified), ...(add ? { "x-explorer-add": "1" } : {}),
+      }, body: file,
     }),
-    copyReference(model, id, faceId, edgeId) {
+    copyReference(model, id, faceId, edgeId, point) {
       const sequence = ++copySequence;
-      const reference = createReference(model, id, faceId ?? null, edgeId ?? null);
+      const reference = createReference(model, id, faceId ?? null, edgeId ?? null, point ?? null);
       const preparation = prepareQueue.then(() => post<{ text: string; title: string }>("clipboard-reference", { reference }));
       prepareQueue = preparation.catch(() => undefined);
       return copyPreparedReference(preparation, (text) => sequence === copySequence

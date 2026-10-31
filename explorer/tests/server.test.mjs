@@ -35,7 +35,7 @@ test("file actions cannot read outside the configured root or execute source", a
   try {
     const source = path.join(root, "generator.py");
     await writeFile(source, "raise RuntimeError('must not run')\n");
-    await assert.rejects(service.execute("load_file", { file: source }), /Choose a .step/);
+    await assert.rejects(service.execute("load_file", { file: source }), /Choose a STEP, STL/);
     await assert.rejects(service.execute("load_file", { file: import.meta.filename }), /inside the selected project root/);
     const upload = await fetch(service.url + "api/upload", {
       method: "POST", headers: { "x-file-name": "generator.py" }, body: "print('not allowed')",

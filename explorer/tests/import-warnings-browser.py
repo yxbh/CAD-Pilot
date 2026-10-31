@@ -71,7 +71,7 @@ def run(url, output):
 
             wait(lambda current: not current["loading"] and current["documentRevision"], 120)
             settled()
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             expect(canvas).to_be_visible()
             canvas.evaluate("canvas => window.warningCanvas = canvas")
             slider = page.get_by_role("slider", name="Explode amount")
@@ -183,7 +183,7 @@ def run(url, output):
             rounded = output / "Rounded fixture.step"
             rounded_fixture(rounded)
             with page.expect_file_chooser() as chooser:
-                page.get_by_role("button", name="Open STEP", exact=True).click()
+                page.get_by_role("button", name="Open a STEP or mesh file", exact=True).click()
             chooser.value.set_files(rounded)
             wait(lambda current: current["modelName"] == rounded.name and not current["loading"])
             settled()

@@ -32,7 +32,7 @@ def run(url, output):
                     page.wait_for_timeout(50)
 
             ready = wait_state(lambda current: not current["loading"] and len(current["parts"]) > 1, timeout=120)
-            canvas = page.locator('canvas[aria-label="Interactive STEP assembly"]')
+            canvas = page.locator('canvas[aria-label="Interactive model"]')
             bounds = canvas.bounding_box()
             point = {"x": bounds["width"] * 0.5, "y": bounds["height"] * 0.5}
 

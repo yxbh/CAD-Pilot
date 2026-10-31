@@ -3,27 +3,32 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMMANDS } from "../shared/commands.mjs";
 import { inspectAcross } from "../server/inspection.mjs";
-import { call, defaultViewId, foreignCheckout, locateView, openViewer, runningViewer, sendCommand, stopViewer } from "../server/launcher.mjs";
+import { actionInput, call, defaultViewId, foreignCheckout, locateView, openViewer, runningViewer, sendCommand, stopViewer } from "../server/launcher.mjs";
 import { workbenchRuntimeRoot } from "../server/paths.mjs";
 import { PrototypeError } from "../server/protocol.mjs";
 import { projectOutput, renderOnce, saveCopy } from "../server/render-once.mjs";
 import { pruneRuntime } from "../server/runtime-store.mjs";
 import { revisionLabel } from "../server/summary.mjs";
 
+export { actionInput };
+
 export const USAGE = `Usage: node <workbench>/explorer/scripts/explorer.mjs <command> [arguments] [--view <name>]
 Run from the design project's root folder. Results are printed as JSON.
 
-  open [file.step]      Start or reuse this project's viewer, load the STEP, confirm it was drawn and print its URL
+  open [file] [units=m] [up=y]
+                        Start or reuse this project's viewer, load the file, confirm it was drawn and print its URL.
+                        STEP, STL, OBJ, 3MF, PLY and GLB open directly; units and up say how to read a mesh file
   state [--full]        Summarize the shown model (file, revision, generated time) and view; --full adds every detail
   actions               List the view actions accepted by "do"
   do <action> [input]   Run a view action. Give its input as key=value pairs, which survive any shell,
                         e.g. do set_section enabled=true axis=y position=10, or as one JSON object. --full as for state
   capture [out.png]     Save an image of the current view, drawn in the background; no viewer page needs to be open.
                         --size 1600x1000 and --background "#ffffff" change this image only
-  render <file.step> <out.png>
-                        Render a STEP to a PNG without opening or changing a viewer: --size WxH, --view iso|top|...|AZ:EL,
+  render <file> <out.png>
+                        Render a STEP or mesh file to a PNG without opening or changing a viewer: --size WxH, --view iso|top|...|AZ:EL,
                         --projection, --appearance inspect|studio, --finish, --outlines on|off, --background "#rrggbb",
-                        --section x[:position][:flipped], --explode amount[:direction], --step N[:buildup], --hide "label,label"
+                        --section x[:position][:flipped], --explode amount[:direction], --step N[:buildup], --hide "label,label",
+                        and for a mesh --units mm|cm|m|in|ft|um and --up z|y
   inspect <reference>   Resolve a copied cadproto:v2 reference (the viewer need not be running)
   prune [--dry-run] [--all] [--copilot]
                         Remove old snapshots, model caches and captures that no saved setup shows (--all: regardless
@@ -35,7 +40,7 @@ Run from the design project's root folder. Results are printed as JSON.
 // Actions that need a Copilot chat composer or are owned by the page itself are not offered here.
 const UNAVAILABLE = new Set(["add_reference_to_chat", "save_camera"]);
 const actionNames = () => Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas && !UNAVAILABLE.has(name));
-const valued = new Set(["--view", "--size", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide"]);
+const valued = new Set(["--view", "--size", "--units", "--up", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide"]);
 const switches = new Set(["--full", "--dry-run", "--all", "--copilot"]);
 
 function parseArguments(argv) {
@@ -61,24 +66,6 @@ function parseArguments(argv) {
   return { command, args: positional.slice(1), viewId, flags };
 }
 
-// key=value pairs avoid shell-specific JSON quoting (Windows PowerShell strips embedded quotes). Values that parse
-// as JSON (numbers, booleans, arrays) keep that type; anything else is a string.
-export function actionInput(args) {
-  if (args.length === 1 && args[0].trim().startsWith("{")) {
-    try { return JSON.parse(args[0]); }
-    catch { throw new PrototypeError("bad_arguments", "Action input must be key=value pairs or one JSON object"); }
-  }
-  const input = {};
-  for (const pair of args) {
-    const split = pair.indexOf("=");
-    if (split < 1) throw new PrototypeError("bad_arguments", `Expected key=value, got "${pair}"`);
-    const value = pair.slice(split + 1);
-    try { input[pair.slice(0, split)] = JSON.parse(value); }
-    catch { input[pair.slice(0, split)] = value; }
-  }
-  return input;
-}
-
 const number = (text, flag) => {
   const value = Number(text);
   if (text === "" || !Number.isFinite(value)) throw new PrototypeError("bad_arguments", `${flag} needs a number, got "${text}"`);
@@ -94,7 +81,10 @@ function imageSize(text) {
 
 // Render flags are a shell-friendly spelling of the same view actions `do` runs.
 export function renderOptions(flags) {
-  const options = { ...imageSize(flags.size), background: flags.background, view: flags.view, projection: flags.projection, appearance: flags.appearance, finish: flags.finish };
+  const options = {
+    ...imageSize(flags.size), background: flags.background, view: flags.view, projection: flags.projection, appearance: flags.appearance, finish: flags.finish,
+    units: flags.units, up: flags.up,
+  };
   if (flags.outlines !== undefined) {
     if (!["on", "off"].includes(flags.outlines)) throw new PrototypeError("bad_arguments", "--outlines takes on or off");
     options.outlines = flags.outlines === "on";
@@ -132,7 +122,7 @@ export async function referenceFrom(text) {
 
 async function viewer(location) {
   const running = await runningViewer(location);
-  if (!running) throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file.step>", 409);
+  if (!running) throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file>", 409);
   if (foreignCheckout(running.record)) {
     throw new PrototypeError("other_checkout", `This project's viewer was started from another workbench (${running.record.explorerRoot ?? "an earlier version"}). Run open from this workbench to restart it here.`, 409);
   }
@@ -162,10 +152,10 @@ export async function run(argv, { cwd = process.cwd(), inspect } = {}) {
     return { ...result, freedMB: megabytes(result.freedBytes), keptMB: megabytes(result.keptBytes) };
   }
   if (command === "render") {
-    if (args.length !== 2) throw new PrototypeError("bad_arguments", "render needs a STEP file and a .png output inside the project");
+    if (args.length !== 2) throw new PrototypeError("bad_arguments", "render needs a model file and a .png output inside the project");
     return renderOnce({ project: location.project, file: args[0], output: args[1], runtimeRoot: location.runtimeRoot, options: renderOptions(flags) });
   }
-  if (command === "open") return openViewer(location, args[0]);
+  if (command === "open") return openViewer(location, args[0], actionInput(args.slice(1)));
   if (command === "stop") return stopViewer(location);
   const { record } = await viewer(location);
   const detail = flags.full ? "full" : "summary";

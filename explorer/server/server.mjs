@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup, validateModel } from "./protocol.mjs";
+import { changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -14,7 +15,9 @@ import { atomicJson } from "./storage.mjs";
 import { inspectionFor, REFERENCE_FORMATS } from "./inspection.mjs";
 import { explorerRoot, workbenchRoot, workbenchPython, runtimeRoot as defaultRuntimeRoot, canonicalProjectRoot, isInside } from "./paths.mjs";
 import { acquireViewOwner } from "./view-owner.mjs";
-import { maxStepBytes, prepareModelSnapshot, validateStepPath } from "./model-import.mjs";
+import { maxSourceBytes, meshGeometryFile, meshOptions, prepareModelSnapshot, readModelCache, sourceFormat, StaleCacheError, validateModelPath } from "./model-import.mjs";
+import { composeView, documentEntry, LAYOUTS, MAIN_DOCUMENT, MAX_DOCUMENTS, nextDocumentId, updateDocumentEntry } from "./documents.mjs";
+import { arrangeView } from "../shared/arrangement.mjs";
 import { readSequence, sequencePath } from "./assembly.mjs";
 import { defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, sameSection, sectionSupport, validateSection } from "../shared/section.mjs";
 import { displayedWorldBounds } from "../shared/placement.mjs";
@@ -31,6 +34,18 @@ const publicError = (error) => error instanceof Error ? error.message : String(e
 const viewerGraceMs = 1500;
 const viewerLoadGraceMs = 15_000;
 const renderTimeoutMs = 90_000;
+const viewIdentity = (view) => ({ documentRevision: view.source.sha256, topologyRevision: view.topologyRevision, modelName: view.source.name });
+
+// After the files in a view change, keep only selections, hidden parts and the fixed part that still exist.
+function followView(next, view) {
+  const leaves = new Set(view.nodes.filter((node) => node.partId).map((node) => node.id));
+  const keep = (selection) => selection && leaves.has(selection.nodeId) ? selection : null;
+  return pruneSectionSelection(reconcileSectionWithDisplay({
+    ...next, hiddenIds: next.hiddenIds.filter((id) => leaves.has(id)), selectedIds: next.selectedIds.filter((id) => leaves.has(id)),
+    selectedFace: keep(next.selectedFace), selectedEdge: keep(next.selectedEdge), selectedPoint: keep(next.selectedPoint),
+    fixedId: leaves.has(next.fixedId) ? next.fixedId : "",
+  }, view), view);
+}
 
 async function readOptionalJson(file) {
   try { return JSON.parse(await readFile(file, "utf8")); }
@@ -78,7 +93,7 @@ export const viewKeyFor = (project, viewId) => hash(`${project}\n${viewId}`).sli
 // renderer starts the background page that draws views when no visible tab does (null leaves rendering to open pages).
 // A transient service (a one-shot render) saves no setup and keeps its captures in a private temporary folder.
 export async function createExplorerServer({
-  projectRoot = workbenchRoot, viewId = "default", file, runtimeRoot = defaultRuntimeRoot,
+  projectRoot = workbenchRoot, viewId = "default", file, fileOptions = {}, runtimeRoot = defaultRuntimeRoot,
   addReferenceToChat, log = (message) => process.stderr.write(`${message}\n`),
   referenceFormat = "copilot-ref", port = 0, token, onShutdown, renderer = createHeadlessRenderer, transient = false,
 } = {}) {
@@ -94,7 +109,7 @@ export async function createExplorerServer({
   const releaseOwner = transient ? async () => {} : await acquireViewOwner(runtimeRoot, viewKey);
   try {
     return await startOwnedService({
-      project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token, onShutdown, renderer, transient,
+      project, viewKey, file, fileOptions, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token, onShutdown, renderer, transient,
     });
   } catch (error) {
     await releaseOwner();
@@ -103,7 +118,7 @@ export async function createExplorerServer({
 }
 
 async function startOwnedService({
-  project, viewKey, file, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token: requestedToken, onShutdown, renderer, transient,
+  project, viewKey, file, fileOptions, runtimeRoot, inspection, addReferenceToChat, log, releaseOwner, referenceFormat, port, token: requestedToken, onShutdown, renderer, transient,
 }) {
   const { inspectReference, prepareClipboardReference } = inspection;
   const viewDir = path.join(runtimeRoot, "views");
@@ -115,7 +130,11 @@ async function startOwnedService({
   const stateFile = path.join(viewDir, `${viewKey}.json`);
   const reviews = new ReviewStore(path.join(runtimeRoot, "reviews", viewKey));
   const saved = transient ? null : await readOptionalJson(stateFile);
-  let measuredCleanup = saved?.measuredCleanup === undefined ? undefined : validateMeasuredCleanup(saved.measuredCleanup);
+  // The main file's record keeps its historical top-level fields; added files are listed under references.
+  const savedDocument = (record, id) => ({
+    id, model: null, modelCache: record?.modelCache ?? "", inputFile: record?.inputFile ?? "", inputName: record?.inputName ?? "",
+    measuredCleanup: record?.measuredCleanup === undefined ? undefined : validateMeasuredCleanup(record.measuredCleanup),
+  });
   const savedSection = saved?.state?.section;
   if (savedSection !== undefined) {
     try { validateSection(savedSection); }
@@ -123,11 +142,13 @@ async function startOwnedService({
   }
   let state = { ...initialState(), ...saved?.state };
   delete state.autoAdd;
+  // The files in the view, main first; the model composed from them that the page fetches; and that model arranged
+  // as state places the files, which commands are checked against. A failed explicit startup import must not
+  // discard the last saved snapshot.
+  let documents = [savedDocument(saved, MAIN_DOCUMENT),
+    ...(Array.isArray(saved?.references) ? saved.references : []).map((record) => savedDocument(record, record.id))];
+  let view = null;
   let model = null;
-  // A failed explicit startup import must not discard the last saved snapshot.
-  let modelCache = saved?.modelCache ?? "";
-  let inputFile = saved?.inputFile ?? "";
-  let inputName = saved?.inputName ?? "";
   let closed = false;
   let closing;
   let initialization;
@@ -158,17 +179,18 @@ async function startOwnedService({
   const send = (res, name, data) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
   const emit = (name, data) => { for (const res of clients.keys()) send(res, name, data); };
   const viewerCount = () => [...clients.values()].filter((client) => client.kind === "viewer").length;
-  const saveView = (next, snapshot = { modelCache, inputFile, inputName, measuredCleanup }) => transient ? Promise.resolve() : atomicJson(stateFile, {
-    state: next, modelCache: snapshot.modelCache, inputFile: snapshot.inputFile,
-    inputName: snapshot.inputName, measuredCleanup: snapshot.measuredCleanup,
+  const record = ({ modelCache, inputFile, inputName, measuredCleanup }) => ({ modelCache, inputFile, inputName, measuredCleanup });
+  const saveView = (next, files = documents) => transient ? Promise.resolve() : atomicJson(stateFile, {
+    state: next, ...record(files[0]), references: files.slice(1).map((file) => ({ id: file.id, ...record(file) })),
   });
-  const commit = async (patch, imported) => {
+  const commit = async (patch, loaded) => {
     const next = { ...state, ...patch, revision: state.revision + 1 };
-    await saveView(next, imported);
-    if (imported) {
-      ({ model, modelCache, inputFile, inputName, measuredCleanup } = imported);
+    await saveView(next, loaded?.documents);
+    if (loaded) {
+      ({ documents, view } = loaded);
       lastRendered = lastHeadless = null;
     }
+    model = view && arrangeView(view, next.documents, next.layout);
     state = next;
     emit("state", state);
     return state;
@@ -190,16 +212,19 @@ async function startOwnedService({
     },
     // False until the startup model (requested file, saved setup or demo) has been loaded or has failed.
     initialized,
-    parts: model?.nodes.filter((node) => node.partId).map(({ id, label, partId }) => ({ id, label, partId })) || [],
-    selectedReferences: model ? state.selectedIds.map((id) => ({
-      id,
-      reference: createReference(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
-      text: formatSelection(model, id, state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null),
-    })) : [],
+    parts: model?.nodes.filter((node) => node.partId).map(({ id, label, partId, documentId }) => ({ id, label, partId, ...(documentId ? { document: documentId } : {}) })) || [],
+    selectedReferences: model ? state.selectedIds.map((id) => {
+      const selection = [
+        state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null, state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null,
+        state.selectedPoint?.nodeId === id ? state.selectedPoint : null,
+      ];
+      return { id, reference: createReference(model, id, ...selection), text: formatSelection(model, id, ...selection) };
+    }) : [],
     limitations: [
       "Snapshot loading; no file watcher",
       "Explosion and assembly steps are visual offsets, not a disassembly simulation; sequence check results come from the sequence file",
       "Section caps are display-derived and do not modify or measure the STEP",
+      ...(model?.parts.some((part) => part.buffers) ? ["Mesh files are shown as they are: triangles, not CAD faces or edges, and nothing is repaired. Measure them with python/measure.py"] : []),
     ],
   });
   async function summary() {
@@ -226,7 +251,7 @@ async function startOwnedService({
       child.once("error", (error) => { clearTimeout(timer); children.delete(child); reject(error); });
       child.once("close", (code) => {
         clearTimeout(timer); children.delete(child);
-        if (expired) reject(new PrototypeError("conversion_timeout", "STEP conversion exceeded two minutes", 408));
+        if (expired) reject(new PrototypeError("conversion_timeout", "Reading the file took longer than two minutes", 408));
         else if (code !== 0) reject(new PrototypeError("conversion_failed", stderr.trim() || `Python exited with ${code}`, 422));
         else resolve();
       });
@@ -251,32 +276,121 @@ async function startOwnedService({
     return target;
   }
 
-  async function loadFile(target, displayName, internal = false) {
+  async function loadFile(target, displayName, internal = false, options = {}) {
     if (closed) throw new PrototypeError("closed", "Prototype has closed", 410);
     const root = internal ? await realpath(runtimeRoot) : project;
-    const resolved = await validateStepPath(target, root);
+    const resolved = await validateModelPath(target, root);
     const info = await stat(resolved);
     const source = { file: internal ? "" : path.relative(project, resolved).split(path.sep).join("/"), generatedAt: info.mtime.toISOString(), size: info.size };
-    return loadSnapshot({ resolved, displayName, sequenceRoot: root }, source);
+    return loadSnapshot({ resolved, displayName, sequenceRoot: root }, source, options);
   }
 
-  async function loadSnapshot(snapshot, source) {
+  // Storage retention may have removed a saved setup's model once the setup went unused; say so plainly.
+  const readSaved = (cacheName, name) => readModelCache(modelDir, cacheName).catch((error) => {
+    if (error?.code !== "ENOENT") throw error;
+    throw new PrototypeError("snapshot_removed", `${name} was removed from Explorer's storage after its setup went unused. Open the file again.`, 410);
+  });
+
+  async function importDocument(id, snapshot, options) {
+    const imported = await prepareModelSnapshot({ ...snapshot, uploadDir, modelDir, python, options });
+    await markUsed(imported.inputFile, path.join(modelDir, imported.modelCache));
+    return { ...imported, id };
+  }
+
+  // A saved file's entry with its saved style and placement, or the defaults when those no longer validate.
+  function entryFor(document) {
+    const entry = documentEntry(document.id, document);
+    try { return updateDocumentEntry(entry, state.documents?.find((saved) => saved.id === document.id) ?? {}); }
+    catch (error) {
+      log(`Explorer reset the placement of ${entry.name}: ${publicError(error)}`);
+      return entry;
+    }
+  }
+
+  // Added files come back from their caches, whichever way the view starts; one that is gone leaves the rest.
+  async function restoreAddedFiles() {
+    const restored = [];
+    for (const document of documents.slice(1)) {
+      if (document.model) { restored.push(document); continue; }
+      try {
+        const loaded = await readSaved(document.modelCache, document.inputName || document.id);
+        Object.assign(loaded, importDiagnostics(loaded));
+        if (document.measuredCleanup?.topologyRevision === loaded.topologyRevision) loaded.cleanup = { ...document.measuredCleanup.counts };
+        loaded.source = { ...loaded.source, name: document.inputName || loaded.source.name };
+        await markUsed(document.inputFile, path.join(modelDir, document.modelCache));
+        restored.push({ ...document, model: loaded });
+      } catch (error) { log(`Explorer left ${document.inputName || document.id} out of the view: ${publicError(error)}`); }
+    }
+    return restored;
+  }
+
+  async function loadSnapshot(snapshot, source, options = {}) {
     if (closed) throw new PrototypeError("closed", "Prototype has closed", 410);
+    meshOptions(options);
     await commit({ loading: true, error: "" });
     try {
-      const imported = await prepareModelSnapshot({ ...snapshot, uploadDir, modelDir, python });
-      await markUsed(imported.inputFile, path.join(modelDir, imported.modelCache));
+      const imported = await importDocument(MAIN_DOCUMENT, snapshot, options);
+      // Files added beside the main one stay, also when the viewer starts with a file, so regenerating and opening
+      // the design again keeps its comparison.
+      const added = await restoreAddedFiles();
+      const loaded = [imported, ...added];
+      const entries = [documentEntry(MAIN_DOCUMENT, imported), ...added.map(entryFor)];
+      const layout = added.length && LAYOUTS.includes(state.layout) ? state.layout : "overlay";
+      const composed = composeView(loaded, entries);
       const assembly = snapshot.resolved ? await loadSequence(snapshot.resolved, imported.model, snapshot.sequenceRoot) : null;
-      await commit(loadedView(state, model, imported.model, {
-        assembly, documentRevision: imported.model.source.sha256, topologyRevision: imported.model.topologyRevision,
-        modelName: imported.inputName, source, loading: false, error: "",
-      }), imported);
+      // A mesh has triangles, not CAD faces or edges, so it opens picking points.
+      const mode = imported.model.kind === "mesh" && ["face", "edge"].includes(state.selectionMode) ? { selectionMode: "point" } : {};
+      await commit(loadedView(state, model, arrangeView(composed, entries, layout), {
+        assembly, ...viewIdentity(composed), documents: entries, layout, ...mode, source, loading: false, error: "",
+      }), { documents: loaded, view: composed });
       schedulePrune();
       return state;
     } catch (error) {
       await commit({ loading: false, error: publicError(error) });
       throw error;
     }
+  }
+
+  async function addFile(snapshot, input) {
+    if (!model || state.loading) throw new PrototypeError("not_ready", "Wait for the current file to finish loading", 409);
+    if (documents.length >= MAX_DOCUMENTS) throw new PrototypeError("too_many_files", `A view shows at most ${MAX_DOCUMENTS} files`, 409);
+    const options = meshOptions(input);
+    const settings = updateDocumentEntry({ style: "ghost", offset: [0, 0, 0], rotate: [0, 0, 0] }, { style: input.style });
+    await commit({ loading: true, error: "" });
+    try {
+      const id = nextDocumentId(state.documents);
+      const added = await importDocument(id, snapshot, options);
+      await showFiles([...documents, added], [...state.documents, documentEntry(id, added, settings)], state.layout,
+        { loading: false, fitNonce: state.fitNonce + 1, camera: null, cameraPinned: false });
+      schedulePrune();
+      return state;
+    } catch (error) {
+      await commit({ loading: false, error: publicError(error) });
+      throw error;
+    }
+  }
+
+  async function arrangeFiles(name, input) {
+    if (!model || state.loading) throw new PrototypeError("not_ready", "Wait for the current file to finish loading", 409);
+    if (name === "set_layout") {
+      if (!LAYOUTS.includes(input.mode)) throw new PrototypeError("bad_layout", "Choose overlay or side");
+      return showFiles(documents, state.documents, input.mode, { fitNonce: state.fitNonce + 1, camera: null, cameraPinned: false });
+    }
+    const index = state.documents.findIndex((entry) => entry.id === input.id);
+    if (index < 0) throw new PrototypeError("unknown_file", `This view has no file "${String(input.id)}"; state lists its documents`);
+    if (name === "remove_file") {
+      if (index === 0) throw new PrototypeError("main_file", "The main file stays in the view; open another with load_file", 409);
+      return showFiles(documents.filter((_, item) => item !== index), state.documents.filter((_, item) => item !== index), state.layout);
+    }
+    return showFiles(documents, state.documents.map((entry, item) => item === index ? updateDocumentEntry(entry, input) : entry), state.layout);
+  }
+
+  // Arranging files keeps the composed model and its identity; only adding or removing one composes it again.
+  async function showFiles(loaded, entries, layout, patch = {}) {
+    const composed = loaded === documents ? view : composeView(loaded, entries);
+    const next = followView({ ...state, ...patch, documents: entries, layout, viewKept: null }, arrangeView(composed, entries, layout));
+    await commit({ ...next, ...viewIdentity(composed) }, loaded === documents ? undefined : { documents: loaded, view: composed });
+    return state;
   }
 
   // A broken sequence file must not prevent viewing the STEP; its problem is reported in state instead.
@@ -406,10 +520,12 @@ async function startOwnedService({
       if (state.activeReviewId && !definition.duringReview) {
         throw new PrototypeError("review_active", "Return to the model before changing its view. Drawing reviews stay bound to their captured pose.", 409);
       }
-      if (name === "load_file") {
-        if (typeof input.file !== "string" || !input.file) throw new PrototypeError("bad_file", "Supply a project-relative STEP path");
-        return loadFile(path.resolve(project, input.file), path.basename(input.file));
+      if (name === "load_file" || name === "add_file") {
+        if (typeof input.file !== "string" || !input.file) throw new PrototypeError("bad_file", "Supply a project-relative file path");
+        if (name === "load_file") return loadFile(path.resolve(project, input.file), path.basename(input.file), false, input);
+        return addFile({ resolved: await validateModelPath(path.resolve(project, input.file), project), displayName: path.basename(input.file) }, input);
       }
+      if (["set_file", "remove_file", "set_layout"].includes(name)) return arrangeFiles(name, input);
       if (name === "load_demo") return loadFile(await demoFile(), "Demo assembly.step", true);
       const next = changeView(state, model, name, input);
       await commit(next);
@@ -497,9 +613,20 @@ async function startOwnedService({
       const route = url.pathname.slice(prefix.length);
       if (route === "api/state" && req.method === "GET") return respond(200, url.searchParams.get("detail") === "summary" ? await summary() : getState());
       if (route === "api/model" && req.method === "GET") {
-        if (!model) throw new PrototypeError("not_ready", "Model is not ready", 409);
-        if (url.searchParams.get("kind") === "viewer") viewerFetch = { topologyRevision: model.topologyRevision };
-        return respond(200, model);
+        if (!view) throw new PrototypeError("not_ready", "Model is not ready", 409);
+        if (url.searchParams.get("kind") === "viewer") viewerFetch = { topologyRevision: view.topologyRevision };
+        return respond(200, view);
+      }
+      // Mesh geometry is served as its cached binary file, only for meshes in the current view.
+      const geometryRoute = /^api\/geometry\/([a-f0-9]{64})$/.exec(route);
+      if (geometryRoute && req.method === "GET") {
+        if (!documents.some((document) => document.model?.kind === "mesh" && document.model.topologyRevision === geometryRoute[1])) {
+          throw new PrototypeError("not_found", "No mesh with that identity is in the view", 404);
+        }
+        const file = meshGeometryFile(modelDir, geometryRoute[1]);
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": (await stat(file)).size, "cache-control": "no-store" });
+        createReadStream(file).on("error", () => res.destroy()).pipe(res);
+        return;
       }
       if (route === "api/events" && req.method === "GET") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
@@ -522,13 +649,15 @@ async function startOwnedService({
       if (route === "api/confirm" && req.method === "POST") return respond(200, await confirmRendered());
       if (route === "api/upload" && req.method === "POST") {
         const filename = decodeURIComponent(String(req.headers["x-file-name"] || ""));
-        if (![".step", ".stp"].includes(path.extname(filename).toLowerCase())) throw new PrototypeError("not_step", "Choose a STEP file");
         const modified = Number(req.headers["x-file-modified"]);
-        const bytes = await body(req, maxStepBytes);
+        const bytes = await body(req, maxSourceBytes(sourceFormat(filename)));
+        const adding = req.headers["x-explorer-add"] === "1";
         const loaded = await enqueue(() => {
-          if (state.activeReviewId) throw new PrototypeError("review_active", "Return to the model before opening another STEP", 409);
+          if (state.activeReviewId) throw new PrototypeError("review_active", "Return to the model before opening another file", 409);
+          const snapshot = { bytes, displayName: path.basename(filename) };
+          if (adding) return addFile(snapshot, {});
           const generatedAt = Number.isFinite(modified) && modified > 0 ? new Date(modified).toISOString() : "";
-          return loadSnapshot({ bytes, displayName: path.basename(filename) }, { file: "", generatedAt, size: bytes.length });
+          return loadSnapshot(snapshot, { file: "", generatedAt, size: bytes.length });
         });
         return respond(200, loaded);
       }
@@ -674,43 +803,42 @@ async function startOwnedService({
 
   async function initialize() {
     try {
-      if (file) await execute("load_file", { file });
+      if (file) await execute("load_file", { ...fileOptions, file });
       else if (saved?.modelCache && /^[a-f0-9]{64}\.json$/.test(saved.modelCache)) {
-        const cached = JSON.parse(await readFile(path.join(modelDir, saved.modelCache), "utf8").catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-          throw new PrototypeError("snapshot_removed", `${saved.inputName || "The saved model"} was removed from Explorer's storage after its setup went unused. Open the STEP again.`, 410);
-        }));
-        if (cached.schemaVersion !== 1) {
-          validateModel(cached);
-          if (`${cached.topologyRevision}.json` !== saved.modelCache) throw new PrototypeError("cache_mismatch", "Saved geometry identity does not match its cache filename", 422);
-        }
-        if (cached.schemaVersion === 1 || cached.parts.some((part) => part.edges === undefined)) {
-          if (!/^[a-f0-9]{64}$/.test(cached.source?.sha256 || "")) throw new PrototypeError("invalid_snapshot", "Saved STEP snapshot identity is invalid", 422);
+        let cached;
+        try { cached = await readSaved(saved.modelCache, saved.inputName || "The saved model"); }
+        catch (error) {
+          if (!(error instanceof StaleCacheError)) throw error;
+          if (!/^[a-f0-9]{64}$/.test(error.sha256 || "")) throw new PrototypeError("invalid_snapshot", "Saved STEP snapshot identity is invalid", 422);
           log("Rebuilding the saved prototype snapshot for exact CAD face and edge selection. Old selections are cleared; previous reference snapshots are retained.");
-          await loadFile(path.join(uploadDir, `${cached.source.sha256}.step`), saved.inputName || state.modelName || cached.source.name, true);
-        } else {
-          model = cached;
-          Object.assign(model, importDiagnostics(model));
+          await loadFile(path.join(uploadDir, `${error.sha256}.step`), saved.inputName || state.modelName, true);
+        }
+        if (cached) {
+          const main = documents[0];
+          Object.assign(cached, importDiagnostics(cached));
           // Normalize historical warning strings before adding newly measured counts.
-          if (measuredCleanup?.topologyRevision === model.topologyRevision) {
-            model.cleanup = { ...measuredCleanup.counts };
-          } else if (measuredCleanup) {
+          if (main.measuredCleanup?.topologyRevision === cached.topologyRevision) {
+            cached.cleanup = { ...main.measuredCleanup.counts };
+          } else if (main.measuredCleanup) {
             log("Discarding saved cleanup counts for a different topology revision.");
-            measuredCleanup = undefined;
+            main.measuredCleanup = undefined;
           }
-          modelCache = saved.modelCache;
-          inputFile = saved.inputFile;
-          inputName = saved.inputName || state.modelName || model.source.name;
-          model.source = { ...model.source, name: inputName };
-          await markUsed(inputFile, path.join(modelDir, modelCache));
-          let section = savedSection ?? defaultSection(displayedWorldBounds(model, state) ?? model.bounds);
-          const support = sectionSupport(model);
+          main.inputName = saved.inputName || state.modelName || cached.source.name;
+          cached.source = { ...cached.source, name: main.inputName };
+          await markUsed(main.inputFile, path.join(modelDir, main.modelCache));
+          const restored = [{ ...main, model: cached }, ...await restoreAddedFiles()];
+          const entries = restored.map(entryFor);
+          const layout = LAYOUTS.includes(state.layout) ? state.layout : "overlay";
+          const composed = composeView(restored, entries);
+          const arranged = arrangeView(composed, entries, layout);
+          let section = savedSection ?? defaultSection(displayedWorldBounds(arranged, state) ?? arranged.bounds);
+          const support = sectionSupport(arranged);
           if (section.enabled && !support.supported) {
             log(`Section view was turned off: ${support.message}`);
             section = { ...section, enabled: false };
           }
-          const restored = pruneSectionSelection(reconcileSectionWithDisplay({ ...state, section }, model), model);
-          await commit({ ...restored, loading: false, error: "", modelName: inputName, topologyRevision: model.topologyRevision, viewKept: null });
+          const next = followView({ ...state, section, documents: entries, layout }, arranged);
+          await commit({ ...next, loading: false, error: "", ...viewIdentity(composed), viewKept: null }, { documents: restored, view: composed });
         }
       } else await execute("load_demo");
     } catch (error) {

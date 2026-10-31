@@ -94,7 +94,7 @@ def run(url, output):
                 expect(page.locator(".message.error")).to_have_count(0)
 
             settled()
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             expect(canvas).to_be_visible()
             canvas.evaluate("canvas => window.oldRenderCanvas = canvas")
             route, old, _ = hold("request")

@@ -1,7 +1,7 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { Matrix4, Vector3 } from "three";
-import { center, mergeBounds, type Model, type Placement, type ViewState } from "./model.ts";
+import { mergeBounds, sceneOrigin, type Model, type Placement, type ViewState } from "./model.ts";
 import type { RenderReport } from "./host.ts";
 import type { CameraController } from "./camera.ts";
 import type { GeometryResources } from "./resources.ts";
@@ -23,7 +23,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
   onRendered: (report: RenderReport) => Promise<unknown>;
   onError: (message: string) => void;
 }) {
-  const { size, invalidate, gl } = useThree();
+  const { size, invalidate, gl, scene } = useThree();
   const lastReported = useRef(-1);
   const reportLifetime = useRef({ active: false });
   const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements });
@@ -59,7 +59,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
     const camera = controller.camera;
     const visible = current.placements.filter((part) => !current.state.hiddenIds.includes(part.node.id));
     camera.updateMatrixWorld();
-    const origin = center(current.model.bounds);
+    const origin = sceneOrigin(current.model);
     const projected = visible.flatMap(({ bounds }) => Array.from({ length: 8 }, (_, corner) => {
       const point = [0, 1, 2].map((axis) => ((corner & (1 << axis) ? bounds.max : bounds.min)[axis]) - origin[axis]);
       const screen = new Vector3(...point as [number, number, number]).project(camera);
@@ -81,6 +81,24 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
     // Report only the retained portion of a partially cut native edge.
     const clippedEdge = selectedEdge && edgePlacement && current.state.section.enabled
       ? clipCadEdges([selectedEdge], edgePlacement.matrix, current.state.section).positions : null;
+    const pointPlacement = visible.find((item) => item.node.id === current.state.selectedPoint?.nodeId);
+    let selectedPointScreen: number[] | null = null;
+    if (pointPlacement && current.state.selectedPoint) {
+      const point = new Vector3(...current.state.selectedPoint.point as [number, number, number]).applyMatrix4(new Matrix4().fromArray(pointPlacement.matrix));
+      point.sub(new Vector3(...origin)).project(camera);
+      selectedPointScreen = [(point.x + 1) * size.width / 2, (1 - point.y) * size.height / 2];
+    }
+    // Counted from what is mounted for drawing, not from the manifest, so a dropped overlay or surface shows up.
+    let faultMarks = 0, sectionOutlineSegments = 0, meshTriangles = 0, pickingTrees = 0;
+    scene.traverseVisible((object) => {
+      const geometry = (object as { geometry?: { index?: { count: number } | null; instanceCount?: number; boundsTree?: unknown; getAttribute?: (name: string) => { count: number } } }).geometry;
+      if (object.userData.meshFault) faultMarks += object.type === "Points" ? geometry?.getAttribute?.("position").count ?? 0 : geometry?.instanceCount ?? 0;
+      if (object.userData.sectionOutline) sectionOutlineSegments += geometry?.instanceCount ?? 0;
+      if (object.userData.meshSurface) {
+        meshTriangles += (geometry?.index?.count ?? 0) / 3;
+        if (geometry?.boundsTree) pickingTrees++;
+      }
+    });
     const report: RenderReport = {
       revision: current.state.revision,
       modelHash: current.model.source.sha256,
@@ -97,6 +115,9 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
         ? edgeScreenPoint(clippedEdge ?? selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
       bounds: mergeBounds(visible.map((part) => part.bounds)),
       pixels: [gl.domElement.width, gl.domElement.height],
+      selectedPoint: current.state.selectedPoint, selectedPointScreen,
+      faultMarks, sectionOutlineSegments, meshTriangles, pickingTrees,
+      ghostParts: visible.filter((part) => part.node.ghost).length,
       positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
       renderer: "React Three Fiber / WebGL2",
       inFrame,

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { prepareModelSnapshot, validateStepPath } from "../server/model-import.mjs";
+import { prepareModelSnapshot, validateModelPath } from "../server/model-import.mjs";
 import { PrototypeError } from "../server/protocol.mjs";
 import { inspectionModel } from "./inspection-fixtures.mjs";
 
@@ -16,7 +16,7 @@ async function fixture(t) {
   const source = path.join(root, "source.step");
   const bytes = "Synthetic source for the mocked converter; not a CAD fixture.";
   await writeFile(source, bytes);
-  const resolved = await validateStepPath(source, await realpath(root));
+  const resolved = await validateModelPath(source, await realpath(root));
   const sha = createHash("sha256").update(bytes).digest("hex");
   const model = { ...inspectionModel(sha), cleanup: { degenerateEdges: 10, zeroAreaTriangles: 2 } };
   return { resolved, uploadDir, modelDir, model, sourceText: bytes, displayName: "Chosen name.step" };

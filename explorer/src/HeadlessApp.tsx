@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Scene from "./Scene.tsx";
+import { useArrangedModel } from "./useArrangedModel.ts";
 import { newestState, type Model, type ViewState } from "./model.ts";
 import { blobDataUrl, type CaptureRequest, type RenderReport, type ViewCapture, type ViewerHost } from "./host.ts";
 import { composeReviewImage } from "./drawing/render.ts";
@@ -22,7 +23,7 @@ class RendererBoundary extends React.Component<{ onError: (message: string) => v
 // loads and captures never depend on a visible tab. The server starts it in a headless browser when needed.
 export function HeadlessApp({ host }: { host: ViewerHost }) {
   const [state, setState] = useState<ViewState | null>(null);
-  const [model, setModel] = useState<Model | null>(null);
+  const [composed, setModel] = useState<Model | null>(null);
   const [surface, setSurface] = useState<{ width: number; height: number; background: string | null }>({ ...defaultSize, background: null });
   const latest = useRef<ViewState | null>(null);
   // The surface React has committed: a capture is drawn only once its own size and backdrop are in place.
@@ -110,6 +111,8 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     lastReport.current = report;
     return host.reportRendered(report);
   }, [host]);
+  // Files in a view are placed as the viewer page places them.
+  const model = useArrangedModel(composed, state);
   const ready = model && state && model.topologyRevision === state.topologyRevision;
   return (
     <main className="headless-renderer" style={{ width: surface.width, height: surface.height }}>

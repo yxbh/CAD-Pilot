@@ -23,7 +23,7 @@ test("native edge references preserve face argument order and reject ambiguous o
   const id = model.nodes[0].id;
   const reference = createReference(model, id, null, "e1");
   assert.deepEqual(parseReference(formatSelection(model, id, null, "e1")), {
-    topologyRevision: model.topologyRevision, nodeId: id, faceId: null, edgeId: "e1",
+    topologyRevision: model.topologyRevision, nodeId: id, faceId: null, edgeId: "e1", point: null,
   });
   assert.match(formatSelection(model, id, null, "e1"), /Edge e1 \(line, 1.13 mm\)/);
   assert.notEqual(reference, createReference(model, model.nodes[1].id, null, "e1"));
@@ -35,7 +35,7 @@ test("native edge references preserve face argument order and reject ambiguous o
     assert.throws(() => parseReference(reference.replace("/e1", `/${bad}`)), /format/);
   }
   for (const operation of [referenceEntity, createReference, formatSelection]) {
-    assert.throws(() => operation(model, id, "f1", "e1"), /not both/);
+    assert.throws(() => operation(model, id, "f1", "e1"), /not more than one/);
     assert.throws(() => operation(model, id, null, "e99"), /edge is not present/);
   }
   const legacy = inspectionModel("a".repeat(64));
@@ -47,7 +47,7 @@ test("native edge references preserve face argument order and reject ambiguous o
   assert.equal(referenceEntity(legacy, id, "f1").edge, null);
   assert.throws(() => createReference(legacy, id, null, "e1"), /edge is not present/);
   assert.equal(nativeReferenceTitle("Module/Cover", null, "e1"), "Module · Cover · Edge e1");
-  assert.throws(() => nativeReferenceTitle("Part", "f1", "e1"), /not both/);
+  assert.throws(() => nativeReferenceTitle("Part", "f1", "e1"), /not more than one/);
 });
 
 test("edge selection is exact, mutually exclusive and cleared with hidden or replaced targets", () => {

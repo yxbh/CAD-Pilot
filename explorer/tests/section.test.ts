@@ -98,7 +98,7 @@ test("cut outlines are derived without mutating source triangle buffers", () => 
   const positions = [...geometry.getAttribute("position").array] as number[];
   const part = {
     id: "box", positions, indices: Array.from({ length: positions.length / 3 }, (_, index) => index),
-  } as Part;
+  } as unknown as Part;
   const before = JSON.stringify({ positions: part.positions, indices: part.indices });
   const segments = sectionOutlineSegments(part, identity, { enabled: true, axis: "x", position: 0, flipped: false });
   assert.ok(segments.length >= 24);
