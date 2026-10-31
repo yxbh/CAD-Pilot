@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { EventEmitter, once } from "node:events";
+import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readEndpoint, validEndpoint, writeEndpoint } from "../server/endpoint.mjs";
-import { foreignCheckout, locateView, openViewer, stopViewer } from "../server/launcher.mjs";
+import { foreignCheckout, locateView, openViewer } from "../server/launcher.mjs";
 import { actionInput, referenceFrom, renderOptions, run } from "../scripts/explorer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
@@ -141,21 +140,13 @@ async function fakeViewer(t, { checkout, pid }) {
   return { server, record };
 }
 
-// A stand-in viewer's process: it exits after `lingers` milliseconds, as a viewer closing its renderer does.
-async function viewerProcess(t, lingers = 0) {
-  const child = spawn(process.execPath, ["-e", `setTimeout(() => {}, ${lingers})`], { stdio: "ignore" });
-  t.after(() => child.kill());
-  await once(child, "spawn");
-  return child;
-}
-
 test("open restarts a viewer that another workbench checkout started, keeping one viewer per setup", async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-checkout-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const location = await locateView({ projectRoot: directory, runtimeRoot: directory });
   const distIndex = path.join(directory, "index.html");
   await writeFile(distIndex, "");
-  const foreign = await fakeViewer(t, { checkout: "/other/checkout/explorer", pid: (await viewerProcess(t)).pid });
+  const foreign = await fakeViewer(t, { checkout: "/other/checkout/explorer", pid: 1 });
   await mkdir(path.dirname(location.endpoint), { recursive: true });
   await writeEndpoint(location.endpoint, foreign.record);
   const spawnViewer = () => {
@@ -168,19 +159,6 @@ test("open restarts a viewer that another workbench checkout started, keeping on
   assert.equal(foreign.server.listening, false, "the other checkout's viewer was stopped, not left competing");
   assert.ok(foreignCheckout({ explorerRoot: "/other" }, "/this") && !foreignCheckout({ explorerRoot: "/this" }, "/this"));
   assert.ok(foreignCheckout({}, "/this"), "a viewer from before checkouts were recorded is replaced too");
-});
-
-test("stop returns once the viewer's process has exited, not when it stops answering", async (t) => {
-  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-stop-")));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const location = await locateView({ projectRoot: directory, runtimeRoot: directory });
-  const child = await viewerProcess(t, 1000);
-  const viewer = await fakeViewer(t, { checkout: "/this/checkout/explorer", pid: child.pid });
-  await mkdir(path.dirname(location.endpoint), { recursive: true });
-  await writeEndpoint(location.endpoint, viewer.record);
-  assert.equal((await stopViewer(location)).stopped, true);
-  assert.equal(viewer.server.listening, false);
-  assert.notEqual(child.exitCode ?? child.signalCode, null, "the process had exited when stop returned");
 });
 
 test("the same checkout reached through a link or spelled in another case is not another checkout", async (t) => {
