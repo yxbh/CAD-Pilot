@@ -60,7 +60,7 @@ python scripts/dxf ...
 python scripts/print ...
 ```
 
-Use the active project Python interpreter. If only the repo-local virtualenv is available, invoke that interpreter while keeping the root model above explicit.
+Run the tools from the design root. A generator can import modules beside it, at the design root and in the root's `src/` folder without changing `sys.path`. Use the design project's own Python environment when it has one that includes build123d, so the generator finds the project's other dependencies; otherwise use the workbench's. Give the interpreter as an absolute path: a path with `..` in it makes Python print a `sys.prefix` warning on every run.
 
 Use `python scripts/<tool> --help` for the complete current command interface; reference docs show recommended workflows, not every flag.
 
@@ -72,7 +72,7 @@ Use `python scripts/<tool> --help` for the complete current command interface; r
 4. **Plan before coding.** Define parameters, labels, source paths, expected bounding boxes, and any mating/positioning datums before editing.
 5. **Edit source, not generated artifacts.** Prefer build123d Python with `gen_step()` for STEP generation.
 6. **Generate explicit targets.** Use `scripts/step` for STEP/STP generation and sidecars. Use `--kind part` or `--kind assembly` only for direct STEP/STP imports. Do not run directory-wide generation.
-7. **Check the saved geometry.** Choose checks from the requested dimensions, fits and topology: `scripts/inspect refs --facts --planes --positioning`, then targeted `refs --detail` (which reports hole radii and circle centres), `measure`, `mate`, `frame` or `diff`, and a short Python check on the saved STEP for what those commands cannot measure, such as minimum clearance or overlap volume. See `references/inspection-and-validation.md`.
+7. **Check the saved geometry.** Choose checks from the requested dimensions, fits and topology: `scripts/inspect refs --facts --planes --positioning` and `parts`, then targeted `refs --detail` (which reports hole radii and circle centres), `measure`, `mate`, `frame` or `diff`; `hygiene` for parts that should be one smooth, welded body; `clearance`, with the generator's `gen_poses()` for moving parts, for gaps and interference; and a short Python check on the saved STEP only for what those commands cannot measure, such as mass properties. See `references/inspection-and-validation.md`.
 8. **Show the model.** Use the visual-review skill to open the generated STEP in the maintained CAD Explorer, or to reload it after regenerating. See `references/rendering-and-explorer.md`.
 9. **Review it yourself.** After creating or visibly changing geometry, capture the model in a separate review setup of the Explorer, so the user's camera stays put, from the one or two views that expose the changed features. Look at the images and turn any concern into a measurement. Capture again only after a repair changes visible geometry. See `references/rendering-and-explorer.md`.
 10. **Repair and rerun.** If a check fails, change the smallest responsible source section, regenerate, and rerun the failed and affected checks. Never shrink, drop or approximate a specified feature to make a build or check succeed; report the limitation or ask for a design decision.
@@ -95,7 +95,7 @@ Load these files only when their trigger applies:
 
 - `references/natural-language-specs.md` — converting prose, reference images and technical drawings into a CAD brief, and when to ask.
 - `references/step-generation.md` — STEP generation, direct STEP/STP targets, part-vs-assembly behavior, and post-generation inspection.
-- `references/inspection-and-validation.md` — choosing checks, `@cad[...]` refs, facts, planes, topology, measurements, Python checks on the saved STEP, mating, diff, frame, and reporting checks.
+- `references/inspection-and-validation.md` — choosing checks, `@cad[...]` refs, facts, planes, topology, part listings, geometry hygiene, clearance across poses, measurements, Python checks on the saved STEP, mating, diff, frame, and reporting checks.
 - `references/positioning.md` — part-local datums, assembly transforms, build123d joints, mirrored parts, what CLI `mate` and `measure` do and do not show, and positioning reports.
 - `references/rendering-and-explorer.md` — showing models in the maintained CAD Explorer, self-review captures, images for the user, and reporting visual review.
 - `references/dxf.md` — secondary DXF workflow.

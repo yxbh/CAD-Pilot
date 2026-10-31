@@ -44,7 +44,7 @@ The project template is a proposed convention, not a mandatory structure. Use it
 
 To use the starter, copy the contents of `templates/project/` into a new, empty design folder separate from the workbench, including its `.gitignore`. Do not copy it over existing work. Replace the sample brief before designing; the plate is a tooling test, not an approved product. Copying the template does not initialize Git, assign a Git identity, or register shared skills.
 
-Invoke the cad skill's tools with the workbench's Python interpreter, while keeping the current directory at the design root. Start the following example at the workbench root. It uses a sibling design folder, `../first-part`; substitute the relative path to your design. Capture the workbench location before switching folders:
+Invoke the cad skill's tools with the workbench's Python interpreter, while keeping the current directory at the design root. A design project with its own Python environment that includes build123d, such as a uv project, runs them with its own interpreter instead (`uv run python <workbench>/.agents/skills/cad/scripts/step ...`), so generators can import the project's dependencies; generators can import the project's own modules from its root and `src/` folder either way. Pass the interpreter as an absolute path: Python warns about `sys.prefix` on every run when the path contains `..`. Start the following example at the workbench root. It uses a sibling design folder, `../first-part`; substitute the relative path to your design. Capture the workbench location before switching folders:
 
 ```powershell
 $Workbench = $PWD.Path

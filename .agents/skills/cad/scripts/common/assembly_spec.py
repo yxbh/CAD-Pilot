@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import importlib.util
 import math
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from common.catalog import find_source_by_cad_ref
+from common.generator_module import GeneratorImportError, call_generator, load_generator
 from common.metadata import parse_generator_metadata
 from common.paths import relative_path
 
@@ -211,38 +210,16 @@ def _run_assembly_generator(assembly_path: Path) -> object:
             f"{_display_path(assembly_path)} must define a gen_step() assembly return"
         )
 
-    module_name = (
-        "_cad_assembly_"
-        + _display_path(assembly_path).replace("/", "_").replace("\\", "_").replace("-", "_").replace(".", "_")
-    )
-    module_spec = importlib.util.spec_from_file_location(module_name, assembly_path)
-    if module_spec is None or module_spec.loader is None:
-        raise AssemblySpecError(f"Failed to load assembly generator: {_display_path(assembly_path)}")
-
-    module = importlib.util.module_from_spec(module_spec)
-    original_sys_path = list(sys.path)
-    search_paths = [
-        str(REPO_ROOT),
-        str(CAD_ROOT),
-        str(assembly_path.parent),
-    ]
-    for candidate in reversed(search_paths):
-        if candidate not in sys.path:
-            sys.path.insert(0, candidate)
-
     try:
-        sys.modules[module_name] = module
-        module_spec.loader.exec_module(module)
-    except Exception as exc:
-        raise AssemblySpecError(f"{_display_path(assembly_path)} failed while loading") from exc
-    finally:
-        sys.path[:] = original_sys_path
-
-    gen_step = getattr(module, "gen_step", None)
-    if not callable(gen_step):
-        raise AssemblySpecError(f"{_display_path(assembly_path)} does not define a callable gen_step()")
-    try:
-        envelope = gen_step()
+        module = load_generator(assembly_path, display_path=_display_path(assembly_path))
+        envelope = call_generator(
+            module,
+            "gen_step",
+            script_path=assembly_path,
+            display_path=_display_path(assembly_path),
+        )
+    except GeneratorImportError:
+        raise
     except Exception as exc:
         raise AssemblySpecError(f"{_display_path(assembly_path)} gen_step() failed") from exc
     if isinstance(envelope, list):

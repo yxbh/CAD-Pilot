@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
-import importlib.util
 import json
 import shutil
 import sys
@@ -38,6 +37,8 @@ from common.catalog import (
     source_from_path,
 )
 from common.cli_logging import CliLogger
+from common.generator_module import call_generator, load_generator
+from common.issued_refs import forget, mark, refs_issued_for
 from common.paths import relative_path
 from common.solid_check import KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
@@ -475,36 +476,6 @@ def _selector_options_for_part(spec: EntrySpec) -> SelectorOptions:
     )
 
 
-def _load_generator_module(script_path: Path) -> object:
-    resolved_script_path = script_path.resolve()
-    module_name = (
-        "_cad_tool_"
-        + _display_path(resolved_script_path).replace("/", "_").replace("\\", "_").replace("-", "_").replace(".", "_")
-    )
-    module_spec = importlib.util.spec_from_file_location(module_name, resolved_script_path)
-    if module_spec is None or module_spec.loader is None:
-        raise RuntimeError(f"Failed to load generator module from {_display_path(resolved_script_path)}")
-
-    module = importlib.util.module_from_spec(module_spec)
-    original_sys_path = list(sys.path)
-    search_paths = [
-        str(REPO_ROOT),
-        str(CAD_ROOT),
-        str(resolved_script_path.parent),
-    ]
-    for candidate in reversed(search_paths):
-        if candidate not in sys.path:
-            sys.path.insert(0, candidate)
-
-    try:
-        sys.modules[module_name] = module
-        module_spec.loader.exec_module(module)
-    finally:
-        sys.path[:] = original_sys_path
-
-    return module
-
-
 def _normalize_step_payload(
     result: object,
     *,
@@ -565,7 +536,18 @@ def _write_part_step_payload(
         )
     scene = export_build123d_step_scene(shape, output_path)
     logger.debug(f"wrote STEP: {_display_path(output_path)}")
+    if scene.unlabelled_parts:
+        _warn_unlabelled_parts(script_path, scene.unlabelled_parts, logger=logger)
     return scene
+
+
+def _warn_unlabelled_parts(script_path: Path, names: Sequence[str], *, logger: CliLogger) -> None:
+    shown = ", ".join(repr(name) for name in names[:4]) + (", ..." if len(names) > 4 else "")
+    count = f"{len(names)} part{'' if len(names) == 1 else 's'}"
+    logger.warning(
+        f"{count} in {_display_path(script_path)} had no label and {'was' if len(names) == 1 else 'were'} named {shown}. "
+        "Set .label on each part: .solids(), a Solid's .fillet() and Part(...) return unlabelled shapes."
+    )
 
 
 def _write_assembly_step_payload(envelope: dict[str, object], *, output_path: Path, script_path: Path) -> LoadedStepScene:
@@ -614,12 +596,14 @@ def run_script_generator(
         raise ValueError(f"{spec.source_ref} is not a generated Python CAD source")
     generated_scene: LoadedStepScene | None = None
     with logger.timed(f"load generator {spec.source_ref}"):
-        module = _load_generator_module(spec.script_path)
-    generator = getattr(module, generator_name, None)
-    if not callable(generator):
-        raise RuntimeError(f"{_display_path(spec.script_path)} does not define callable {generator_name}()")
+        module = load_generator(spec.script_path, display_path=_display_path(spec.script_path))
     with logger.timed(f"run {generator_name} {spec.source_ref}"):
-        raw_payload = generator()
+        raw_payload = call_generator(
+            module,
+            generator_name,
+            script_path=spec.script_path,
+            display_path=_display_path(spec.script_path),
+        )
 
     if generator_name == "gen_step":
         envelope = _normalize_step_payload(raw_payload, script_path=spec.script_path)
@@ -687,17 +671,23 @@ def _report_selector_manifest_change(
     *,
     logger: CliLogger,
 ) -> None:
-    change = selector_manifest_diff(previous_manifest, next_manifest)
-    if not bool(change.get("hasPrevious")):
+    # Only a build someone took face or edge refs from is worth a word.
+    if spec.step_path is None or previous_manifest is None:
         return
+    if not refs_issued_for(spec.step_path, str(previous_manifest.get("stepHash") or "")):
+        return
+    change = selector_manifest_diff(previous_manifest, next_manifest)
     if bool(change.get("topologyChanged")):
+        forget(spec.step_path)
         logger.warning(
-            f"{spec.cad_ref} selector topology changed; re-resolve @cad refs before using old face or edge selectors."
+            f"{spec.cad_ref} has new face and edge numbering; @cad refs taken from the previous build no longer name "
+            "the same geometry. Re-resolve them with scripts/inspect."
         )
         return
+    mark(spec.step_path, str(next_manifest.get("stepHash") or ""))
     if bool(change.get("geometryChanged")):
         logger.info(
-            f"notice: {spec.cad_ref} selector geometry changed; re-check cached geometry facts from older refs."
+            f"notice: {spec.cad_ref} kept its face and edge numbering but its geometry moved; re-check facts from older refs."
         )
 
 
@@ -735,7 +725,7 @@ def _script_step_material_colors(spec: EntrySpec) -> dict[str, ColorRGBA]:
     if spec.script_path is None:
         return {}
     try:
-        module = _load_generator_module(spec.script_path)
+        module = load_generator(spec.script_path, display_path=_display_path(spec.script_path))
     except Exception:
         return {}
     raw_materials = getattr(module, "URDF_MATERIALS", {})

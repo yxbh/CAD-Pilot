@@ -22,7 +22,6 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(inspect_dir))
     from inspect_refs.inspect import (
         CadRefError,
-        cad_path_from_target,
         cad_ref_error_payload,
         diff_entry_targets,
         entry_target_from_target,
@@ -34,7 +33,6 @@ if __package__ in {None, ""}:
 else:
     from .inspect import (
         CadRefError,
-        cad_path_from_target,
         cad_ref_error_payload,
         diff_entry_targets,
         entry_target_from_target,
@@ -45,6 +43,9 @@ else:
     )
 
 from common.cli_logging import CliLogger
+from common.issued_refs import note_refs_issued
+
+REF_COMMANDS = {"refs", "hygiene"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
             "examples:\n"
             "  inspect refs '@cad[STEP/foo#f9]' --detail --facts\n"
             "  inspect measure --from '@cad[STEP/foo#f1]' --to '@cad[STEP/foo#f2]' --axis z\n"
+            "  inspect parts outputs/foo.step --format text\n"
+            "  inspect hygiene outputs/foo.step --round 0.8 --format text\n"
+            "  inspect clearance outputs/foo.step --poses source/foo.py --format text\n"
         ),
     )
     parser.add_argument(
@@ -114,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include full face/edge selector lists for whole-entry refs. Expensive on large topology GLBs.",
     )
     _add_output_arguments(refs_parser)
-    refs_parser.set_defaults(handler=run_refs)
+    refs_parser.set_defaults(handler=run_command, compute=_refs, format_text=_format_refs_text)
 
     diff_parser = subparsers.add_parser(
         "diff",
@@ -129,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_plane_report_arguments(diff_parser)
     _add_output_arguments(diff_parser)
-    diff_parser.set_defaults(handler=run_diff)
+    diff_parser.set_defaults(handler=run_command, compute=_diff, format_text=_format_diff_text)
 
     frame_parser = subparsers.add_parser(
         "frame",
@@ -137,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     frame_parser.add_argument("target", help="Single @cad[...] target. Selector optional only for single-root entries.")
     _add_output_arguments(frame_parser)
-    frame_parser.set_defaults(handler=run_frame)
+    frame_parser.set_defaults(handler=run_command, compute=_frame, format_text=_format_frame_text)
 
     measure_parser = subparsers.add_parser(
         "measure",
@@ -147,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     measure_parser.add_argument("--to", dest="to_target", required=True, help="Target @cad[...] selector.")
     measure_parser.add_argument("--axis", choices=("x", "y", "z"), help="Axis to measure along. Inferred when possible.")
     _add_output_arguments(measure_parser)
-    measure_parser.set_defaults(handler=run_measure)
+    measure_parser.set_defaults(handler=run_command, compute=_measure, format_text=_format_measure_text)
 
     mate_parser = subparsers.add_parser(
         "mate",
@@ -159,7 +163,46 @@ def build_parser() -> argparse.ArgumentParser:
     mate_parser.add_argument("--offset", type=float, default=0.0, help="Offset in mm. For flush, applies along target normal when axis-aligned.")
     mate_parser.add_argument("--axis", choices=("x", "y", "z"), help="Axis to use for flush or one-axis center mating.")
     _add_output_arguments(mate_parser)
-    mate_parser.set_defaults(handler=run_mate)
+    mate_parser.set_defaults(handler=run_command, compute=_mate, format_text=_format_mate_text)
+
+    parts_parser = subparsers.add_parser(
+        "parts",
+        help="List a STEP's parts with names, sizes, positions and occurrence refs.",
+    )
+    parts_parser.add_argument("target", help="STEP path or @cad[...] entry.")
+    _add_output_arguments(parts_parser)
+    parts_parser.set_defaults(handler=run_command, compute=_parts, format_text=_format_parts)
+
+    hygiene_parser = subparsers.add_parser(
+        "hygiene",
+        help="Check each part for split faces, slivers, extra solids, open or invalid geometry and sharp edges.",
+        description=(
+            "Per-part geometry hygiene with @cad refs for each finding. Exit status 1 when anything is found. "
+            "Sharp convex edges are reported against --round, the project's comfort radius; without it they are only counted."
+        ),
+    )
+    hygiene_parser.add_argument("target", help="STEP path or @cad[...] entry.")
+    hygiene_parser.add_argument("--round", type=float, metavar="MM", help="Comfort radius: report convex edges sharper than this.")
+    hygiene_parser.add_argument("--sliver", type=float, metavar="MM", help="Report faces thinner and edges shorter than this. Default: 0.05")
+    hygiene_parser.add_argument("--parts", nargs="+", metavar="NAME", help="Only these parts (names or * ? patterns; a group covers its parts).")
+    _add_output_arguments(hygiene_parser)
+    hygiene_parser.set_defaults(handler=run_command, compute=_hygiene, format_text=_format_hygiene)
+
+    clearance_parser = subparsers.add_parser(
+        "clearance",
+        help="Minimum distance and overlap between parts, as assembled and in the generator's gen_poses().",
+        description=(
+            "Exact minimum distance and overlap volume between pairs of parts, as assembled and in every pose the "
+            "generator's gen_poses() declares. Exit status 1 when parts overlap or come closer than the minimum gap."
+        ),
+    )
+    clearance_parser.add_argument("target", help="STEP path or @cad[...] entry.")
+    clearance_parser.add_argument("--poses", type=Path, metavar="GENERATOR", help="Python source whose gen_poses() declares poses.")
+    clearance_parser.add_argument("--parts", nargs="+", metavar="NAME", help="Check pairs among these parts only (when gen_poses() names no pairs).")
+    clearance_parser.add_argument("--min-gap", type=float, metavar="MM", help="Required clearance; overrides gen_poses()'s min_gap.")
+    clearance_parser.add_argument("--horizon", type=float, metavar="MM", help="Measure pairs whose boxes come within this distance. Default: 5")
+    _add_output_arguments(clearance_parser)
+    clearance_parser.set_defaults(handler=run_command, compute=_clearance, format_text=_format_clearance)
 
     worker_parser = subparsers.add_parser(
         "worker",
@@ -223,101 +266,108 @@ def _add_plane_report_arguments(
     )
 
 
-def run_refs(args: argparse.Namespace) -> int:
+def _refs(args: argparse.Namespace) -> dict[str, object]:
+    return inspect_cad_refs(
+        _read_input_text(args),
+        detail=bool(args.detail),
+        include_topology=bool(args.topology),
+        facts=bool(args.facts),
+        positioning=bool(args.positioning),
+        planes=bool(args.planes),
+        plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
+        plane_min_area_ratio=float(args.plane_min_area_ratio),
+        plane_limit=int(args.plane_limit),
+    )
+
+
+def _diff(args: argparse.Namespace) -> dict[str, object]:
+    return diff_entry_targets(
+        args.left,
+        args.right,
+        planes=bool(args.planes),
+        plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
+        plane_min_area_ratio=float(args.plane_min_area_ratio),
+        plane_limit=int(args.plane_limit),
+    )
+
+
+def _frame(args: argparse.Namespace) -> dict[str, object]:
+    return inspect_target_frame(args.target)
+
+
+def _measure(args: argparse.Namespace) -> dict[str, object]:
+    return measure_targets(args.from_target, args.to_target, axis=args.axis)
+
+
+def _mate(args: argparse.Namespace) -> dict[str, object]:
+    return mate_targets(args.moving, args.target, mode=args.mode, offset=float(args.offset), axis=args.axis)
+
+
+def _parts(args: argparse.Namespace) -> dict[str, object]:
+    from inspect_refs.parts import list_parts
+
+    return list_parts(args.target)
+
+
+def _hygiene(args: argparse.Namespace) -> dict[str, object]:
+    from inspect_refs.checks import hygiene_report
+
+    return hygiene_report(args.target, round_radius=args.round, sliver=args.sliver, part_patterns=args.parts)
+
+
+def _clearance(args: argparse.Namespace) -> dict[str, object]:
+    from inspect_refs.checks import clearance_report
+
+    return clearance_report(
+        args.target,
+        poses_source=args.poses,
+        part_patterns=args.parts,
+        min_gap=args.min_gap,
+        horizon=args.horizon,
+    )
+
+
+def _format_parts(result: dict[str, object], *, quiet: bool, verbose: bool) -> str:
+    from inspect_refs.parts import format_parts_text
+
+    return format_parts_text(result, quiet=quiet, verbose=verbose) if result.get("ok") else _format_errors(result)
+
+
+def _format_hygiene(result: dict[str, object], *, quiet: bool, verbose: bool) -> str:
+    from inspect_refs.checks import format_hygiene_text
+
+    return format_hygiene_text(result, quiet=quiet, verbose=verbose) if result.get("ok") else _format_errors(result)
+
+
+def _format_clearance(result: dict[str, object], *, quiet: bool, verbose: bool) -> str:
+    from inspect_refs.checks import format_clearance_text
+
+    return format_clearance_text(result, quiet=quiet, verbose=verbose) if result.get("ok") else _format_errors(result)
+
+
+def _exit_code(result: dict[str, object]) -> int:
+    """0 when the command worked and found nothing, 1 when a check found something, 2 on any error.
+
+    A check that could not run on part of the model is an error, not a finding.
+    """
+    if not bool(result.get("ok")) or result.get("errors"):
+        return 2
+    return 1 if result.get("clean") is False else 0
+
+
+def _computed(args: argparse.Namespace) -> dict[str, object]:
     try:
-        text = _read_input_text(args)
-        result = inspect_cad_refs(
-            text,
-            detail=bool(args.detail),
-            include_topology=bool(args.topology),
-            facts=bool(args.facts),
-            positioning=bool(args.positioning),
-            planes=bool(args.planes),
-            plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
-            plane_min_area_ratio=float(args.plane_min_area_ratio),
-            plane_limit=int(args.plane_limit),
-        )
-    except CadRefError as exc:
-        result = {
-            "ok": False,
-            "tokens": [],
-            "errors": [cad_ref_error_payload(exc)],
-        }
-
-    _emit_result(args, result, _format_refs_text)
-    return 0 if bool(result.get("ok")) else 2
+        return args.compute(args)
+    except Exception as exc:  # every failure is reported as data with exit status 2, never as a traceback
+        return {"ok": False, "errors": [_exception_error_payload(exc)]}
 
 
-def run_diff(args: argparse.Namespace) -> int:
-    try:
-        result = diff_entry_targets(
-            args.left,
-            args.right,
-            planes=bool(args.planes),
-            plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
-            plane_min_area_ratio=float(args.plane_min_area_ratio),
-            plane_limit=int(args.plane_limit),
-        )
-    except CadRefError as exc:
-        result = {
-            "ok": False,
-            "left": {"cadPath": _safe_cad_path(args.left)},
-            "right": {"cadPath": _safe_cad_path(args.right)},
-            "errors": [cad_ref_error_payload(exc)],
-        }
-
-    _emit_result(args, result, _format_diff_text)
-    return 0 if bool(result.get("ok")) else 2
-
-
-def run_frame(args: argparse.Namespace) -> int:
-    try:
-        result = inspect_target_frame(args.target)
-    except CadRefError as exc:
-        result = {
-            "ok": False,
-            "target": args.target,
-            "errors": [cad_ref_error_payload(exc)],
-        }
-
-    _emit_result(args, result, _format_frame_text)
-    return 0 if bool(result.get("ok")) else 2
-
-
-def run_measure(args: argparse.Namespace) -> int:
-    try:
-        result = measure_targets(args.from_target, args.to_target, axis=args.axis)
-    except CadRefError as exc:
-        result = {
-            "ok": False,
-            "from": args.from_target,
-            "to": args.to_target,
-            "errors": [cad_ref_error_payload(exc)],
-        }
-
-    _emit_result(args, result, _format_measure_text)
-    return 0 if bool(result.get("ok")) else 2
-
-
-def run_mate(args: argparse.Namespace) -> int:
-    try:
-        result = mate_targets(
-            args.moving,
-            args.target,
-            mode=args.mode,
-            offset=float(args.offset),
-            axis=args.axis,
-        )
-    except CadRefError as exc:
-        result = {
-            "ok": False,
-            "moving": args.moving,
-            "target": args.target,
-            "errors": [cad_ref_error_payload(exc)],
-        }
-
-    _emit_result(args, result, _format_mate_text)
-    return 0 if bool(result.get("ok")) else 2
+def run_command(args: argparse.Namespace) -> int:
+    result = _computed(args)
+    _emit_result(args, result, args.format_text)
+    if args.command in REF_COMMANDS:
+        note_refs_issued(result)
+    return _exit_code(result)
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -380,51 +430,12 @@ def inspect_command_result(argv: Sequence[str]) -> tuple[int, dict[str, object]]
             args = parser.parse_args(command_argv)
     except SystemExit as exc:
         return _system_exit_result(exc, stderr=stderr.getvalue())
-
-    try:
-        if args.command == "refs":
-            if not args.inputs and not args.input_file:
-                raise CadRefError("No input text provided.")
-            text = _read_input_text(args)
-            result = inspect_cad_refs(
-                text,
-                detail=bool(args.detail),
-                include_topology=bool(args.topology),
-                facts=bool(args.facts),
-                positioning=bool(args.positioning),
-                planes=bool(args.planes),
-                plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
-                plane_min_area_ratio=float(args.plane_min_area_ratio),
-                plane_limit=int(args.plane_limit),
-            )
-        elif args.command == "diff":
-            result = diff_entry_targets(
-                args.left,
-                args.right,
-                planes=bool(args.planes),
-                plane_coordinate_tolerance=float(args.plane_coordinate_tolerance),
-                plane_min_area_ratio=float(args.plane_min_area_ratio),
-                plane_limit=int(args.plane_limit),
-            )
-        elif args.command == "frame":
-            result = inspect_target_frame(args.target)
-        elif args.command == "measure":
-            result = measure_targets(args.from_target, args.to_target, axis=args.axis)
-        elif args.command == "mate":
-            result = mate_targets(
-                args.moving,
-                args.target,
-                mode=args.mode,
-                offset=float(args.offset),
-                axis=args.axis,
-            )
-        else:
-            raise CadRefError(f"Unsupported inspect command: {args.command}")
-    except CadRefError as exc:
-        result = {"ok": False, "errors": [cad_ref_error_payload(exc)]}
-    except Exception as exc:
-        result = {"ok": False, "errors": [_exception_error_payload(exc)]}
-    return (0 if bool(result.get("ok")) else 2), result
+    if args.command == "refs" and not args.inputs and not args.input_file:
+        return 2, {"ok": False, "errors": [{"message": "No input text provided."}]}
+    result = _computed(args)
+    if args.command in REF_COMMANDS:
+        note_refs_issued(result)
+    return _exit_code(result), result
 
 
 def _system_exit_result(exc: SystemExit, *, stderr: str = "") -> tuple[int, dict[str, object]]:
@@ -560,24 +571,13 @@ def _read_input_text(args: argparse.Namespace) -> str:
     return text
 
 
-def _safe_cad_path(target: str) -> str:
-    try:
-        return cad_path_from_target(target)
-    except CadRefError:
-        return str(target)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command_label = str(getattr(args, "command", "inspect") or "inspect")
     logger = CliLogger("scripts/inspect", verbose=bool(getattr(args, "verbose", False)))
-    try:
-        with logger.timed(command_label):
-            return int(args.handler(args))
-    except CadRefError as exc:
-        _emit_result(args, {"ok": False, "errors": [cad_ref_error_payload(exc)]}, _format_errors)
-        return 2
+    with logger.timed(command_label):
+        return int(args.handler(args))
 
 
 if __name__ == "__main__":

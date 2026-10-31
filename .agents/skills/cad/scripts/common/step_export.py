@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from common.atomic_replace import replacing
+from common.part_names import tree_names
 from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc, step_file_hash
 
 
@@ -146,7 +147,7 @@ def create_bin_xcaf_doc() -> Any:
     return doc
 
 
-def _create_bin_xcaf_doc(to_export: Any) -> Any:
+def _create_bin_xcaf_doc(to_export: Any, occurrence_names: dict[int, str]) -> Any:
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.TopLoc import TopLoc_Location
     from build123d.exporters3d import (
@@ -254,7 +255,8 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
                     child_definition,
                     child_location,
                 )
-                set_label_name(child_component, getattr(child, "label", None))
+                # A placed part carries its fallback name, so unlabelled copies still share one definition.
+                set_label_name(child_component, occurrence_names.get(id(child)))
                 if not getattr(child, "children", None):
                     set_label_color(child_component, getattr(child, "color", None))
             return definition_label
@@ -379,9 +381,21 @@ def export_xcaf_doc_step_scene(
 
 
 def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStepScene:
-    doc = _create_bin_xcaf_doc(to_export)
-    return export_xcaf_doc_step_scene(
-        doc,
-        output_path,
-        label=getattr(to_export, "label", None),
+    """Write a build123d shape or labelled assembly tree; unlabelled placed parts get fallback names.
+
+    Fallback names go on occurrences only: definitions and the root keep the
+    user's own labels, so identical unlabelled copies share one definition
+    and an unlabelled root is not mistaken for a group someone named. The
+    scene's ``unlabelled_parts`` lists the names given, so the caller can say
+    which parts need a label.
+    """
+    names, unlabelled = tree_names(
+        to_export,
+        root_name=Path(output_path).stem,
+        children=lambda node: list(getattr(node, "children", None) or ()),
+        label=lambda node: getattr(node, "label", None),
     )
+    doc = _create_bin_xcaf_doc(to_export, names)
+    scene = export_xcaf_doc_step_scene(doc, output_path, label=getattr(to_export, "label", None))
+    scene.unlabelled_parts = tuple(unlabelled)
+    return scene
