@@ -261,6 +261,19 @@ def test_a_thin_place_reads_as_its_thinnest_part(tmp_path):
     assert on_taper.thickness_mm == pytest.approx(0.6, abs=0.05) and on_taper.model_xyz_mm[0] > 14
 
 
+def test_a_large_thin_place_is_measured_at_a_bounded_number_of_points(monkeypatch):
+    # A lattice of 2 mm cells with 0.6 mm webs is one thin place with some 3700 points along its middle; its
+    # one 0.4 mm web, shallower on the raster, still has points of its own among those measured.
+    measured = []
+    chords = orientation._chords
+    monkeypatch.setattr(orientation, "_chords", lambda segments, points, *rest, **named: measured.append(len(points)) or chords(segments, points, *rest, **named))
+    cells = [[(x, y), (x + 1.4, y), (x + 1.4, y + 1.4), (x, y + 1.4)] for x in np.arange(20) * 2 + 0.6 for y in np.arange(20) * 2 + 0.6]
+    for hole in cells[200:220]:  # the column to the right of x = 20 starts 0.2 mm sooner
+        hole[0], hole[3] = (hole[0][0] - 0.2, hole[0][1]), (hole[3][0] - 0.2, hole[3][1])
+    (place,) = _layer([(0, 0), (40.6, 0), (40.6, 40.6), (0, 40.6)], *cells, turn=13, shift=(0.02, 0.03))
+    assert place[0] == pytest.approx(0.4, abs=0.01) and sum(measured) < 400
+
+
 def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
     # One STEP body, and one STL, holding two boxes: neither is an assembly of parts, but both print as two pieces.
     two = Compound([Pos(10, 10, 5) * Box(20, 20, 10), Pos(50, 10, 5) * Box(20, 20, 10)])

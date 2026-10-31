@@ -53,9 +53,13 @@ OPEN_WALL_SHARE = 0.5
 # Each thin place is measured across the layer outline itself, on lines at this many headings through
 # points along its middle, one in each square this share of the limit across, so its thickness does not
 # depend on where the raster's pixels fall and a short thin feature on a thicker wall has points of its
-# own. Points are measured CHORD_BATCH at a time, which bounds the memory it takes.
+# own. Up to CHORD_POINTS of those at each raster depth are measured in each place, scattered through it,
+# which bounds the work on a large place while a part of it thinner by more than about a raster pitch,
+# shallower on the raster, keeps points of its own. Points are measured CHORD_BATCH at a time, which
+# bounds the memory it takes.
 CHORD_HEADINGS = 36
 CHORD_SPACING = 0.5
+CHORD_POINTS = 32
 CHORD_BATCH = 4096
 # A point's shortest chord counts only where it crosses the material about square-on: where the point is
 # at least cos(TIP_DEG / 2) times as far from the outline as from the chord's nearer end. Across a wall
@@ -460,14 +464,19 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     if not len(places):
         return []
 
-    # In each square of a grid CHORD_SPACING of the limit across, each place's deepest peak pixel there,
-    # grouped by place.
+    # In each square of a grid CHORD_SPACING of the limit across, each place's deepest peak pixel there;
+    # of those, up to CHORD_POINTS at each depth in each place, taken in an order (Fibonacci hashing of
+    # their squares) that scatters them through it.
     side = max(1, round(CHORD_SPACING * limit_px))
     along = np.flatnonzero(peak.ravel()[pixels] & large[label])
     square = (rows[along] // side) * (thin.shape[1] // side + 1) + cols[along] // side
     order = np.lexsort((-depth[along], square, label[along]))
     along, square = along[order], square[order]
-    sample = along[np.diff(label[along], prepend=-1).astype(bool) | np.diff(square, prepend=-1).astype(bool)]
+    first = np.diff(label[along], prepend=-1).astype(bool) | np.diff(square, prepend=-1).astype(bool)
+    along, square = along[first], square[first]
+    along = along[np.lexsort(((square * 0x9E3779B1) & 0xFFFFFFFF, depth[along], label[along]))]
+    starts = np.flatnonzero(np.diff(label[along], prepend=-1).astype(bool) | (np.diff(depth[along], prepend=-1) != 0))
+    sample = along[_within(np.diff(starts, append=len(along))) < CHORD_POINTS]
     owner = np.searchsorted(places, label[sample])
     taken = np.bincount(owner, minlength=len(places))
     points = np.column_stack([origin[0] + (cols[sample] + 0.5) * pitch, origin[1] + (rows[sample] + 0.5) * pitch])
