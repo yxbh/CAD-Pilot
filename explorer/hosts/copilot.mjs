@@ -48,7 +48,7 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
   });
   const inspectionTool = (name) => ({
     name,
-    description: "Resolve a cadproto:v2 reference to its exact cached STEP occurrence, CAD face or CAD edge and original placement. These are not the cad skill's @cad inspector ordinals.",
+    description: "Resolve a cadproto:v2 reference to its exact cached occurrence (STEP or mesh), CAD face, CAD edge or picked point and original placement. These are not the cad skill's @cad inspector ordinals.",
     parameters: objectSchema({ reference: { type: "string", maxLength: 16384 } }, ["reference"]),
     handler: async ({ reference }) => {
       try { return { textResultForLlm: JSON.stringify(await inspect(reference)), resultType: "success" }; }
@@ -60,10 +60,10 @@ export async function startCopilotExplorer({ joinSession, createCanvas, CanvasEr
     canvases: [createCanvas({
       id: "cad-explorer",
       displayName: "CAD Explorer",
-      description: "Local STEP assemblies with exact face and edge references, visual section cutaways, exploded views, assembly steps, Studio appearance and saved drawing reviews.",
+      description: "Local STEP assemblies with exact face and edge references, and STL, OBJ, 3MF, PLY or GLB meshes as they are, alone or beside other files, with point references and fault overlays; visual section cutaways, exploded views, assembly steps, Studio appearance and saved drawing reviews.",
       inputSchema: objectSchema({
         projectRoot: { type: "string", description: "Authorized CAD project root; defaults to this workbench checkout." },
-        file: { type: "string", description: "STEP path inside that root. Omit to restore this setup or load the demo." },
+        file: { type: "string", description: "STEP or mesh file path inside that root. Omit to restore this setup or load the demo. To read a mesh in other units or with Y up, follow with load_file." },
         viewId: { type: "string", minLength: 1, maxLength: 80, description: "Remembered setup identity, default 'default'. Reuse its existing panel rather than opening a linked copy." },
       }),
       actions: Object.entries(COMMANDS).filter(([, definition]) => definition.canvas).map(action),

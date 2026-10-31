@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { Model, ViewState } from "./model.ts";
+import type { Model, PointSelection, ViewState } from "./model.ts";
 import type { ViewerHost } from "./host.ts";
+import { roundPoint } from "../shared/references.mjs";
 
 type CopyStatus = { kind: "idle" | "pending" | "copied" | "blocked"; message: string; text: string };
 type RunCommand = (name: string, input?: object, onFailure?: (failure: Error) => void) => Promise<unknown>;
@@ -33,10 +34,10 @@ export function useSelection({ host, model, state, latest, run, onError }: {
     setPendingAutoCopy(null);
   }
 
-  function copySelection(id: string, faceId?: string, edgeId?: string) {
+  function copySelection(id: string, faceId?: string, edgeId?: string, point?: Pick<PointSelection, "triangle" | "point">) {
     if (!model) return;
     const sequence = ++copySequence.current;
-    const result = host.copyReference(model, id, faceId, edgeId);
+    const result = host.copyReference(model, id, faceId, edgeId, point);
     setCopyStatus({ kind: "pending", message: "Copying reference...", text: "" });
     void result.then(({ prepared, result: outcome }) => {
       if (sequence !== copySequence.current) return;
@@ -51,7 +52,7 @@ export function useSelection({ host, model, state, latest, run, onError }: {
     return result;
   }
 
-  function select(id: string, faceId?: string, edgeId?: string) {
+  function select(id: string, faceId?: string, edgeId?: string, picked?: Pick<PointSelection, "triangle" | "point">) {
     if (latest.current?.activeReviewId) return;
     copySequence.current++;
     host.cancelPendingCopy();
@@ -63,12 +64,16 @@ export function useSelection({ host, model, state, latest, run, onError }: {
     }
     try {
       // Copy starts in the user's gesture, independently of the queued state command.
-      const copied = (pendingAutoCopy ?? latest.current?.autoCopy ?? true) ? copySelection(id, faceId, edgeId) : undefined;
+      // The server keeps picked points to the micrometre, so the copied reference matches the saved selection.
+      const point = picked && { triangle: picked.triangle, point: roundPoint(picked.point) };
+      const copied = (pendingAutoCopy ?? latest.current?.autoCopy ?? true) ? copySelection(id, faceId, edgeId, point) : undefined;
       const sequence = copySequence.current;
-      void run(edgeId ? "select_edge" : faceId ? "select_face" : "select_parts", edgeId
-        ? { id, edgeId, topologyRevision: model.topologyRevision } : faceId
-        ? { id, faceId, topologyRevision: model.topologyRevision }
-        : { ids: [id], topologyRevision: model.topologyRevision }, (failure) => {
+      const topologyRevision = model.topologyRevision;
+      void run(edgeId ? "select_edge" : faceId ? "select_face" : point ? "select_point" : "select_parts", edgeId
+        ? { id, edgeId, topologyRevision } : faceId
+        ? { id, faceId, topologyRevision } : point
+        ? { id, ...point, topologyRevision }
+        : { ids: [id], topologyRevision }, (failure) => {
           if (!copied) return;
           void copied.then(({ result }) => {
             if (sequence === copySequence.current && result.ok) onError(`Reference copied, but the selection could not be saved: ${failure.message}`);

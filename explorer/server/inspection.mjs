@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import path from "node:path";
 import { createReference, describeSelection, parseReference, referenceEntity } from "../shared/references.mjs";
 import { multiply } from "../shared/matrix.mjs";
 import { nativeFileReference, nativeReferenceTitle } from "../shared/native-reference.mjs";
+import { pointOnTriangle, pointTolerance } from "../shared/mesh.mjs";
+import { meshGeometryFile } from "./model-import.mjs";
 import { PrototypeError, validateModel } from "./protocol.mjs";
 import { atomicJson } from "./storage.mjs";
 import { workbenchRoot as checkout } from "./paths.mjs";
@@ -14,7 +16,8 @@ export const REFERENCE_FORMATS = Object.freeze(["copilot-ref", "text"]);
 const message = (error) => error instanceof Error ? error.message : String(error);
 
 const modelLimit = 160 * 1024 * 1024;
-const sourceLimit = 100 * 1024 * 1024;
+const sourceLimits = { step: 100 * 1024 * 1024, mesh: 300 * 1024 * 1024 };
+const geometryLimit = 1024 * 1024 * 1024;
 const shortLabel = (value) => {
   const text = String(value);
   // Copy a truncated label so a V8 substring cannot keep the original, potentially huge label alive.
@@ -27,6 +30,12 @@ const shortLabel = (value) => {
  * Mesh arrays and STEP bytes are not retained. The 160 MiB JSON / 100 MiB STEP input limits still apply, and oversized fact entries inspect without being retained.
  * cacheLimits can lower/disable either LRU; cacheStats exposes deterministic local counters. These bounds and synthetic timings do not certify large assemblies or total process memory.
  */
+const meshFacts = (cached, part) => ({
+  format: cached.format, frame: cached.frame, vertexCount: part.vertexCount, triangleCount: part.triangleCount,
+  closed: part.closed, faults: part.faults, area: part.area, volume: part.volume,
+  note: "A mesh reference: triangles as read from the file, not CAD faces. Measure it with explorer/python/measure.py using the same units and up options.",
+});
+
 // Services and hosts sharing a runtime share one bounded inspection cache.
 const shared = new Map();
 export function inspectionFor(runtimeRoot, workbenchRoot = checkout) {
@@ -72,20 +81,21 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       const value = {
         topologyRevision: model.topologyRevision,
         source: { name: shortLabel(model.source.name), sha256: model.source.sha256 },
-        parts: model.parts.map(({ id, bounds, faces, edges }) => ({
+        kind: model.kind ?? "step", format: model.source.format ?? "step", frame: model.frame, geometry: model.geometry,
+        parts: model.parts.map(({ id, bounds, faces, edges, buffers, vertexCount, triangleCount, closed, faults, area, volume }) => ({
           id, bounds, faces,
           edges: edges?.map(({ id, curveType, length, center, bounds }) => ({ id, curveType, length, center, bounds })),
+          ...(buffers ? { buffers, vertexCount, triangleCount, closed, faults, area, volume } : {}),
         })),
         nodes: model.nodes.map(({ id, label, parentId, partId, matrix }) => ({ id, label: shortLabel(label), parentId, partId, matrix })),
       };
       return { value, bytes: Math.max(4096, Buffer.byteLength(JSON.stringify(value)) * 8) };
     },
   });
-  const sources = createVerifiedFileCache({
-    maxEntries: cacheLimits.sourceMaxEntries ?? 64,
-    maxBytes: cacheLimits.sourceMaxBytes ?? 256 * 1024,
-    io,
-    check: (info) => { if (info.size > sourceLimit) throw new FileChangedError(); },
+  // Streamed digests of a file, retained by file identity: source snapshots, and mesh geometry before a point is read from it.
+  const digests = (limit, maxEntries) => createVerifiedFileCache({
+    maxEntries, maxBytes: cacheLimits.sourceMaxBytes ?? 256 * 1024, io,
+    check: (info) => { if (info.size > limit) throw new FileChangedError(); },
     load: async (handle) => {
       counts.sourceHashes++;
       const digest = createHash("sha256");
@@ -93,12 +103,42 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       for await (const chunk of handle.createReadStream({ autoClose: false })) {
         bytes += chunk.length;
         counts.sourceBytesRead += chunk.length;
-        if (bytes > sourceLimit) throw new FileChangedError();
+        if (bytes > limit) throw new FileChangedError();
         digest.update(chunk);
       }
       return { value: digest.digest("hex"), bytes: 4096 };
     },
   });
+  const sources = Object.fromEntries(Object.entries(sourceLimits).map(([kind, limit]) => [kind, digests(limit, cacheLimits.sourceMaxEntries ?? 64)]));
+  const geometries = digests(geometryLimit, cacheLimits.sourceMaxEntries ?? 64);
+
+  // The picked triangle's corners, read straight from the mesh's verified geometry file.
+  async function meshTriangle(cached, part, triangle) {
+    const file = meshGeometryFile(path.join(runtimeRoot, "models"), cached.topologyRevision);
+    let record;
+    try { record = await geometries.get(cached.topologyRevision, file); }
+    catch (error) { throw modelError(error); }
+    if (record.value !== cached.geometry.sha256) throw new PrototypeError("stale_reference", "Cached mesh geometry does not match this reference. Reopen the file and pick the point again.", 409);
+    const handle = await open(file, "r");
+    try {
+      const read = async (offset, length) => {
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, offset);
+        if (bytesRead !== length) throw new PrototypeError("stale_reference", "Cached mesh geometry is truncated", 409);
+        return buffer;
+      };
+      const indices = await read(part.buffers.indices.offset + triangle * 12, 12);
+      const corners = [];
+      for (let slot = 0; slot < 3; slot++) {
+        const vertex = indices.readUInt32LE(slot * 4);
+        if (vertex >= part.vertexCount) throw new PrototypeError("stale_reference", "Cached mesh geometry is inconsistent", 409);
+        const position = await read(part.buffers.positions.offset + vertex * 12, 12);
+        corners.push([0, 1, 2].map((axis) => position.readFloatLE(axis * 4)));
+      }
+      await geometries.verify(record).catch((error) => { throw modelError(error); });
+      return corners;
+    } finally { await handle.close(); }
+  }
 
   function modelError(error) {
     if (error?.code === "ENOENT") return new PrototypeError("reference_unavailable", "This exact snapshot is no longer cached. Reopen the STEP and select the geometry again.", 404);
@@ -124,7 +164,7 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     const cached = modelRecord.value;
     if (cached.topologyRevision !== reference.topologyRevision) throw new PrototypeError("stale_reference", "Cached topology identity does not match this reference", 409);
     let entity;
-    try { entity = referenceEntity(cached, reference.nodeId, reference.faceId, reference.edgeId); }
+    try { entity = referenceEntity(cached, reference.nodeId, reference.faceId, reference.edgeId, reference.point); }
     catch (error) { throw new PrototypeError("invalid_reference", message(error)); }
     const ancestors = [];
     for (let node = entity.node; node; node = cached.nodes.find((item) => item.id === node.parentId)) {
@@ -147,11 +187,39 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
         },
       };
     }
-    let snapshotPath = path.join(runtimeRoot, "inputs", `${cached.source.sha256}.step`);
+    let point = null;
+    if (entity.point) {
+      const { triangle, point: local } = entity.point;
+      point = { triangle, local, world: transformPoint(local) };
+      if (entity.part.buffers) {
+        const corners = await meshTriangle(cached, entity.part, triangle);
+        const distance = pointOnTriangle(corners, local, entity.part.bounds);
+        if (distance === null) throw new PrototypeError("invalid_reference", "The reference point is not on its triangle in this mesh");
+        const [a, b, c] = corners;
+        const cross = [0, 1, 2].map((axis) => {
+          const [u, v] = [(axis + 1) % 3, (axis + 2) % 3];
+          return (b[u] - a[u]) * (c[v] - a[v]) - (b[v] - a[v]) * (c[u] - a[u]);
+        });
+        const length = Math.hypot(...cross);
+        point.normal = length ? cross.map((value) => value / length) : null;
+        point.distanceToTriangle = distance;
+      } else {
+        // STEP previews keep no triangle corners in their inspection facts: report the CAD face the triangle belongs to.
+        const face = entity.part.faces.find((item) => triangle >= item.triangleStart && triangle < item.triangleStart + item.triangleCount);
+        const tolerance = pointTolerance(entity.part.bounds);
+        if (!face || local.some((value, axis) => value < face.bounds.min[axis] - tolerance || value > face.bounds.max[axis] + tolerance)) {
+          throw new PrototypeError("invalid_reference", "The reference point is not on its CAD face");
+        }
+        point.face = face.id;
+      }
+    }
+    const extension = cached.format === "step" ? "step" : cached.format;
+    const sourceCache = sources[cached.kind === "mesh" ? "mesh" : "step"];
+    let snapshotPath = path.join(runtimeRoot, "inputs", `${cached.source.sha256}.${extension}`);
     let snapshotStatus = "available";
     let sourceRecord;
     try {
-      sourceRecord = await sources.get(cached.source.sha256, snapshotPath);
+      sourceRecord = await sourceCache.get(cached.source.sha256, snapshotPath);
       if (sourceRecord.value !== cached.source.sha256) {
         snapshotPath = null;
         snapshotStatus = "changed";
@@ -163,13 +231,13 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     // The model can change while a cold source hash is running; never return old facts as a successful inspection.
     await Promise.all([
       models.verify(modelRecord).catch((error) => { throw modelError(error); }),
-      sourceRecord ? sources.verify(sourceRecord).catch((error) => {
+      sourceRecord ? sourceCache.verify(sourceRecord).catch((error) => {
         snapshotPath = null;
         snapshotStatus = sourceStatus(error);
       }) : null,
     ]);
     return {
-      reference: createReference(cached, reference.nodeId, reference.faceId, reference.edgeId),
+      reference: createReference(cached, reference.nodeId, reference.faceId, reference.edgeId, reference.point),
       source: { name: shortLabel(cached.source.name), sha256: cached.source.sha256 },
       topologyRevision: cached.topologyRevision,
       workbenchRelativeSnapshot: snapshotPath ? path.relative(workbenchRoot, snapshotPath) : null,
@@ -178,9 +246,11 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
       face: structuredClone(entity.face),
       edge: structuredClone(entity.edge),
       worldEdge,
+      point,
+      ...(cached.kind === "mesh" ? { mesh: meshFacts(cached, entity.part) } : {}),
       partBounds: structuredClone(entity.part.bounds),
       originalWorldMatrix,
-      coordinateFrame: "Face and edge facts are part-local millimeters; originalWorldMatrix is the column-major assembled placement, without exploded offsets. worldEdge has the assembled center and a conservative transformed local bounding box, not a remeasured world curve bound. Display names are capped at 240 characters.",
+      coordinateFrame: "Face, edge and point facts are part-local millimeters; originalWorldMatrix is the column-major assembled placement, without exploded offsets or a view's placement of the file. worldEdge has the assembled center and a conservative transformed local bounding box, not a remeasured world curve bound. A point's world value uses the same placement. Meshes use the frame they were read with (mesh.frame). Display names are capped at 240 characters.",
       note: "This is the exact cached snapshot, not a claim that a current source file or Python generator is unchanged.",
     };
   }
@@ -192,18 +262,18 @@ export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimit
     const directory = path.join(runtimeRoot, "references");
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${hash(entity.reference)}.json`);
-    const title = nativeReferenceTitle(entity.occurrence.label, entity.face?.id ?? null, entity.edge?.id ?? null);
+    const title = nativeReferenceTitle(entity.occurrence.label, entity.face?.id ?? null, entity.edge?.id ?? null, entity.point?.triangle ?? null);
     await atomicJson(filePath, {
       schemaVersion: 1, kind: "cad-prototype-selection", inspectionTool: "cad_explorer_inspect", ...entity,
     });
     const text = format === "text"
-      ? describeSelection(entity.source.name, entity.occurrence.label, entity.face, entity.edge, entity.reference)
+      ? describeSelection(entity.source.name, entity.occurrence.label, entity.face, entity.edge, entity.reference, entity.point && { triangle: entity.point.triangle, point: entity.point.local })
       : nativeFileReference(filePath, title);
     return { text, title, filePath, reference: entity.reference };
   }
   return {
     inspectReference,
     prepareClipboardReference,
-    cacheStats: () => ({ ...counts, models: models.stats(), sources: sources.stats() }),
+    cacheStats: () => ({ ...counts, models: models.stats(), sources: sources.step.stats(), meshSources: sources.mesh.stats(), geometries: geometries.stats() }),
   };
 }

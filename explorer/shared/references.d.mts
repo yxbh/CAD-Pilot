@@ -1,6 +1,10 @@
-import type { CadEdge, CadFace, Model, ModelNode, Part } from "../src/model.ts";
-export type ParsedReference = { topologyRevision: string; nodeId: string; faceId: string | null; edgeId: string | null };
+import type { CadEdge, CadFace, Model, ModelNode, Part, PointSelection } from "../src/model.ts";
+export type ReferencePoint = Pick<PointSelection, "triangle" | "point">;
+export type ParsedReference = { topologyRevision: string; nodeId: string; faceId: string | null; edgeId: string | null; point: ReferencePoint | null };
+export function roundPoint(point: number[]): number[];
 export function parseReference(text: string): ParsedReference;
-export function referenceEntity(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null): { node: ModelNode; part: Part; face: CadFace | null; edge: CadEdge | null };
-export function createReference(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null): string;
-export function formatSelection(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null): string;
+export function triangleCount(part: Part): number;
+export function referenceEntity(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null, point?: ReferencePoint | null): { node: ModelNode; part: Part; face: CadFace | null; edge: CadEdge | null; point: ReferencePoint | null };
+export function referenceTarget(model: Model, nodeId: string): { topologyRevision: string; nodeId: string; sourceName: string };
+export function createReference(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null, point?: ReferencePoint | null): string;
+export function formatSelection(model: Model, nodeId: string, faceId?: string | null, edgeId?: string | null, point?: ReferencePoint | null): string;

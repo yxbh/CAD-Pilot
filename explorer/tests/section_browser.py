@@ -135,7 +135,7 @@ def run(url, output, fixture):
             repeated = [node for node in model["nodes"] if node["label"].startswith("Gap bar")]
             assert len(repeated) == 2 and repeated[0]["partId"] == repeated[1]["partId"]
 
-            canvas = page.locator('canvas[aria-label="Interactive STEP assembly"]')
+            canvas = page.locator('canvas[aria-label="Interactive model"]')
             canvas.evaluate("""canvas => {
                 window.sectionCanvas = canvas;
                 window.sectionContextLosses = 0;

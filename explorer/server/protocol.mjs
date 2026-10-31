@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS, viewAngle } from "../shared/view-settings.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import {
   defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
 } from "../shared/section.mjs";
 import { displayedWorldBounds, sequenceOffsets, sequencePose, STEP_MODES } from "../shared/placement.mjs";
+import { attachMeshGeometry, MESH_FORMATS, meshViews, pointOnTriangle, triangleCorners } from "../shared/mesh.mjs";
+import { referenceEntity, roundPoint } from "../shared/references.mjs";
+
+export const SELECTION_MODES = Object.freeze(["face", "edge", "point", "part"]);
 
 export class PrototypeError extends Error {
   constructor(code, message, status = 400) {
@@ -16,7 +21,7 @@ export class PrototypeError extends Error {
 export function initialState() {
   return {
     revision: 0, documentRevision: "", topologyRevision: "", modelName: "", selectedIds: [], selectedFace: null, selectedEdge: null,
-    selectionMode: "face", autoCopy: true, hiddenIds: [],
+    selectedPoint: null, selectionMode: "face", autoCopy: true, hiddenIds: [], documents: [], layout: "overlay", showFaults: false,
     explode: 0, fixedId: "", direction: "radial", cameraPreset: "iso", fitNonce: 0,
     assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
@@ -36,8 +41,9 @@ const preferences = ["autoCopy", "selectionMode", "projection", "appearance", "m
 // Regenerating a design keeps the view when every occurrence keeps its id, parent, kind and name in the assembly tree.
 export function sameAssemblyTree(previous, next) {
   if (!previous || previous.nodes.length !== next.nodes.length) return false;
-  // An unnamed single part is labelled with its snapshot name, which changes with every regeneration.
-  const label = (model, node) => node.label === model.source.sha256 ? "" : node.label;
+  // An unnamed single part is labelled with its snapshot name, which changes with every regeneration. A view of several
+  // files lists each file's snapshot. Mesh parts are named from the file, so they compare by name like STEP parts.
+  const label = (model, node) => node.label === model.source.sha256 || model.documents?.some(({ sha256 }) => node.label === sha256) ? "" : node.label;
   return previous.nodes.every((node, index) => {
     const other = next.nodes[index];
     return node.id === other.id && node.parentId === other.parentId && !node.partId === !other.partId && label(previous, node) === label(next, other);
@@ -97,6 +103,7 @@ export function changeView(state, model, name, input = {}) {
       next.selectedIds = ids();
       next.selectedFace = null;
       next.selectedEdge = null;
+      next.selectedPoint = null;
       break;
     case "select_face": {
       if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
@@ -109,6 +116,7 @@ export function changeView(state, model, name, input = {}) {
       next.selectedIds = [nodeId];
       next.selectedFace = { nodeId, faceId: input.faceId };
       next.selectedEdge = null;
+      next.selectedPoint = null;
       next.selectionMode = "face";
       break;
     }
@@ -123,14 +131,38 @@ export function changeView(state, model, name, input = {}) {
       next.selectedIds = [nodeId];
       next.selectedFace = null;
       next.selectedEdge = { nodeId, edgeId: input.edgeId };
+      next.selectedPoint = null;
       next.selectionMode = "edge";
       break;
     }
+    case "select_point": {
+      if (input.topologyRevision !== model.topologyRevision) throw new PrototypeError("stale_topology", "Supply the exact displayed topology revision", 409);
+      const nodeId = requireId(input.id);
+      if (state.hiddenIds.includes(nodeId) || sequenceHidden(state).has(nodeId)) throw new PrototypeError("hidden_point", "Show this part before picking a point on it", 409);
+      const node = model.nodes.find((item) => item.id === nodeId);
+      const part = model.parts.find((item) => item.id === node.partId);
+      const point = { triangle: input.triangle, point: Array.isArray(input.point) ? roundPoint(input.point) : input.point };
+      try { referenceEntity(model, nodeId, null, null, point); }
+      catch (error) { throw new PrototypeError("bad_point", error.message); }
+      if (pointOnTriangle(triangleCorners(part, point.triangle), point.point, part.bounds) === null) throw new PrototypeError("bad_point", "The point is not on that triangle of the part");
+      if (!sectionEntityVisible(model, state, nodeId, null, null, point.point)) throw new PrototypeError("section_hidden", "This point is outside the retained section. Move or flip the section plane before picking it.", 409);
+      next.selectedIds = [nodeId];
+      next.selectedFace = null;
+      next.selectedEdge = null;
+      next.selectedPoint = { nodeId, ...point };
+      next.selectionMode = "point";
+      break;
+    }
     case "set_selection_mode":
-      if (!["face", "edge", "part"].includes(input.mode)) throw new PrototypeError("bad_mode", "Choose face, edge or part selection");
+      if (!SELECTION_MODES.includes(input.mode)) throw new PrototypeError("bad_mode", "Choose face, edge, point or part selection");
       next.selectionMode = input.mode;
       next.selectedFace = null;
       next.selectedEdge = null;
+      next.selectedPoint = null;
+      break;
+    case "set_faults":
+      if (typeof input.visible !== "boolean") throw new PrototypeError("bad_faults", "visible must be true or false");
+      next.showFaults = input.visible;
       break;
     case "set_explode":
       if (input.amount === undefined && input.direction === undefined && input.fixedId === undefined) {
@@ -171,8 +203,7 @@ export function changeView(state, model, name, input = {}) {
         next.stepMode = input.mode;
       }
       const hidden = sequenceHidden(next);
-      if (next.selectedFace && hidden.has(next.selectedFace.nodeId)) next.selectedFace = null;
-      if (next.selectedEdge && hidden.has(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      dropHiddenSelection(next, hidden);
       followDisplay();
       break;
     }
@@ -180,15 +211,13 @@ export function changeView(state, model, name, input = {}) {
       if (typeof input.visible !== "boolean") throw new PrototypeError("bad_visibility", "visible must be true or false");
       const selected = ids();
       next.hiddenIds = input.visible ? state.hiddenIds.filter((id) => !selected.includes(id)) : [...new Set([...state.hiddenIds, ...selected])];
-      if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
-      if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      dropHiddenSelection(next, new Set(next.hiddenIds));
       followDisplay();
       break;
     }
     case "isolate":
       next.hiddenIds = [...valid].filter((id) => id !== requireId(input.id));
-      if (next.selectedFace && next.hiddenIds.includes(next.selectedFace.nodeId)) next.selectedFace = null;
-      if (next.selectedEdge && next.hiddenIds.includes(next.selectedEdge.nodeId)) next.selectedEdge = null;
+      dropHiddenSelection(next, new Set(next.hiddenIds));
       followDisplay();
       next.fitNonce++;
       next.camera = null;
@@ -290,6 +319,11 @@ function sequenceHidden(state) {
   return sequenceOffsets(sequencePose(state)).hidden;
 }
 
+function dropHiddenSelection(next, hidden) {
+  for (const key of ["selectedFace", "selectedEdge", "selectedPoint"]) if (next[key] && hidden.has(next[key].nodeId)) next[key] = null;
+}
+
+
 export function validateCommandRevision(state, name, expectedRevision, message = "The view changed. Refresh state and retry.") {
   const definition = commandDefinition(name);
   if (!definition) throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
@@ -308,6 +342,13 @@ function topologyDigest(model, conversionVersion) {
 }
 
 export function topologyRevision(model) {
+  // A mesh's identity covers its frame (units and up axis) and the exact geometry file, not only the manifest.
+  if (model.kind === "mesh") {
+    return createHash("sha256").update(JSON.stringify({
+      conversionVersion: "mesh-v1", schemaVersion: model.schemaVersion, source: { sha256: model.source.sha256, format: model.source.format },
+      units: model.units, frame: model.frame, geometry: model.geometry, parts: model.parts, nodes: model.nodes,
+    })).digest("hex");
+  }
   // Preserve face-only addresses; new edge caches have an independent converter version.
   // Closed-solid metadata belongs to each part record: caches without it keep their identity; newer imports differ.
   return topologyDigest(model, model.parts.some((part) => part.edges !== undefined) ? "native-edges-v1" : undefined);
@@ -329,18 +370,84 @@ export function validateMeasuredCleanup(value) {
   return value;
 }
 
+const fail = (message) => { throw new PrototypeError("invalid_model", message, 422); };
+const vector = (value, length) => Array.isArray(value) && value.length === length && value.every(Number.isFinite);
+const validBounds = (value) => value && vector(value.min, 3) && vector(value.max, 3) && value.min.every((number, axis) => number <= value.max[axis]);
+const count = (value) => Number.isSafeInteger(value) && value >= 0;
+
+function validateNodes(model, parts) {
+  const nodes = new Set();
+  for (const node of model.nodes) {
+    if (typeof node.id !== "string" || nodes.has(node.id) || !vector(node.matrix, 16) || !vector(node.color, 3)) fail("Invalid assembly node");
+    if (node.parentId !== null && !nodes.has(node.parentId)) fail("Parents must precede their children");
+    if (node.partId !== null && !parts.has(node.partId)) fail("Assembly refers to missing geometry");
+    nodes.add(node.id);
+  }
+  if (!model.nodes.some((node) => node.partId)) fail("No displayable part occurrences");
+  if (!Array.isArray(model.warnings) || !model.warnings.every((warning) => typeof warning === "string")) fail("Invalid import diagnostics");
+}
+
+// The manifest only; validateMeshGeometry checks the binary file it describes.
+function validateMeshModel(model, requireRevision) {
+  if (model.schemaVersion !== 2 || model.units !== "mm" || !/^[a-f0-9]{64}$/.test(model.source?.sha256 || "") ||
+      !MESH_FORMATS.includes(model.source.format)) fail("Invalid mesh identity, format or units");
+  const frame = model.frame;
+  if (!frame || typeof frame.units !== "string" || !Number.isFinite(frame.scale) || frame.scale <= 0 ||
+      !["z", "y"].includes(frame.up) || typeof frame.note !== "string") fail("Invalid mesh frame");
+  if (!count(model.geometry?.bytes) || !/^[a-f0-9]{64}$/.test(model.geometry.sha256 || "")) fail("Invalid mesh geometry identity");
+  if (!Array.isArray(model.parts) || !model.parts.length || !Array.isArray(model.nodes) || !validBounds(model.bounds)) fail("Mesh has no usable geometry");
+  const parts = new Set();
+  for (const part of model.parts) {
+    if (typeof part.id !== "string" || parts.has(part.id) || typeof part.label !== "string") fail("Duplicate or invalid mesh part");
+    parts.add(part.id);
+    if (!vector(part.color, 3) || !validBounds(part.bounds) || !count(part.vertexCount) || part.vertexCount < 3 ||
+        !count(part.triangleCount) || part.triangleCount < 1 || typeof part.closed !== "boolean" || part.sectionCaps !== part.closed ||
+        !Array.isArray(part.faces) || part.faces.length || part.edges !== undefined) fail("Invalid mesh part record");
+    const expected = {
+      positions: part.vertexCount * 3, indices: part.triangleCount * 3, outlines: null,
+      openEdges: part.faults?.openEdges * 2, oversharedEdges: part.faults?.oversharedEdges * 2,
+      flippedEdges: part.faults?.flippedEdges * 2, degenerateTriangles: part.faults?.degenerateTriangles,
+    };
+    for (const [name, length] of Object.entries(expected)) {
+      const buffer = part.buffers?.[name];
+      if (!buffer || !count(buffer.offset) || buffer.offset % 4 || !count(buffer.count) ||
+          (length === null ? buffer.count % 2 : buffer.count !== length) || buffer.offset + buffer.count * 4 > model.geometry.bytes) {
+        fail(`Invalid mesh ${name} buffer`);
+      }
+    }
+  }
+  validateNodes(model, parts);
+  if (requireRevision && model.topologyRevision !== topologyRevision(model)) fail("Cached mesh does not match its reference identity");
+  return model;
+}
+
+// Checks the geometry file against its manifest and attaches its typed views to each part.
+export function validateMeshGeometry(model, bytes) {
+  if (bytes.length !== model.geometry.bytes || createHash("sha256").update(bytes).digest("hex") !== model.geometry.sha256) {
+    fail("Mesh geometry file does not match its manifest");
+  }
+  for (const part of model.parts) {
+    const views = meshViews(part, bytes);
+    for (const value of views.positions) if (!Number.isFinite(value)) fail("Mesh has a non-finite vertex position");
+    for (const name of ["indices", "outlines", "openEdges", "oversharedEdges", "flippedEdges"]) {
+      for (const index of views[name]) if (index >= part.vertexCount) fail(`Mesh ${name} refer to a missing vertex`);
+    }
+    for (const triangle of views.degenerateTriangles) if (triangle >= part.triangleCount) fail("Mesh fault list refers to a missing triangle");
+    attachMeshGeometry(part, views);
+  }
+  return model;
+}
+
 export function validateModel(model, { requireRevision = true } = {}) {
-  const fail = (message) => { throw new PrototypeError("invalid_model", message, 422); };
-  const vector = (value, length) => Array.isArray(value) && value.length === length && value.every(Number.isFinite);
-  const bounds = (value) => value && vector(value.min, 3) && vector(value.max, 3) && value.min.every((number, axis) => number <= value.max[axis]);
+  if (model?.kind === "mesh") return validateMeshModel(model, requireRevision);
   if (model?.schemaVersion !== 2 || model.units !== "mm" || !/^[a-f0-9]{64}$/.test(model.source?.sha256 || "")) fail("Invalid face-mapped model identity or units");
-  if (!Array.isArray(model.parts) || !model.parts.length || !Array.isArray(model.nodes) || !bounds(model.bounds)) fail("Model has no usable geometry");
+  if (!Array.isArray(model.parts) || !model.parts.length || !Array.isArray(model.nodes) || !validBounds(model.bounds)) fail("Model has no usable geometry");
   const parts = new Set();
   for (const part of model.parts) {
     if (typeof part.id !== "string" || parts.has(part.id)) fail("Duplicate or invalid part ID");
     parts.add(part.id);
     if (!Array.isArray(part.positions) || !part.positions.length || part.positions.length % 3 || !part.positions.every(Number.isFinite)) fail("Invalid vertex positions");
-    if (!vector(part.normals, part.positions.length) || !vector(part.color, 3) || !bounds(part.bounds)) fail("Invalid part normals, color or bounds");
+    if (!vector(part.normals, part.positions.length) || !vector(part.color, 3) || !validBounds(part.bounds)) fail("Invalid part normals, color or bounds");
     if (!Array.isArray(part.indices) || !part.indices.length || part.indices.length % 3 ||
         !part.indices.every((index) => Number.isInteger(index) && index >= 0 && index < part.positions.length / 3)) fail("Invalid triangle indices");
     if (!Array.isArray(part.faces) || !part.faces.length) fail("Missing CAD face map");
@@ -350,7 +457,7 @@ export function validateModel(model, { requireRevision = true } = {}) {
     for (const face of part.faces) {
       if (!/^f[1-9][0-9]*$/.test(face.id) || faceIds.has(face.id) || face.triangleStart !== nextTriangle ||
           !Number.isInteger(face.triangleCount) || face.triangleCount <= 0 || !vector(face.center, 3) ||
-          !bounds(face.bounds) || !Number.isFinite(face.area) || face.area <= 0 || typeof face.surfaceType !== "string") fail("Invalid CAD face mapping or properties");
+          !validBounds(face.bounds) || !Number.isFinite(face.area) || face.area <= 0 || typeof face.surfaceType !== "string") fail("Invalid CAD face mapping or properties");
       faceIds.add(face.id);
       nextTriangle += face.triangleCount;
     }
@@ -362,7 +469,7 @@ export function validateModel(model, { requireRevision = true } = {}) {
       for (const edge of part.edges) {
         if (!edge || !/^e[1-9][0-9]*$/.test(edge.id) || edgeIds.has(edge.id) ||
             !Array.isArray(edge.positions) || edge.positions.length < 6 || edge.positions.length % 3 ||
-            !edge.positions.every(Number.isFinite) || !vector(edge.center, 3) || !bounds(edge.bounds) ||
+            !edge.positions.every(Number.isFinite) || !vector(edge.center, 3) || !validBounds(edge.bounds) ||
             !Number.isFinite(edge.length) || edge.length <= 0 || typeof edge.curveType !== "string" || !edge.curveType) fail("Invalid CAD edge mapping or properties");
         if (!edge.positions.some((value, index) => index >= 3 && value !== edge.positions[index % 3])) fail("CAD edge polyline has no length");
         if (edge.positions.some((value, index) => value < edge.bounds.min[index % 3] - 1e-6 || value > edge.bounds.max[index % 3] + 1e-6)) fail("CAD edge polyline exceeds native bounds");
@@ -370,15 +477,7 @@ export function validateModel(model, { requireRevision = true } = {}) {
       }
     }
   }
-  const nodes = new Set();
-  for (const node of model.nodes) {
-    if (typeof node.id !== "string" || nodes.has(node.id) || !vector(node.matrix, 16) || !vector(node.color, 3)) fail("Invalid assembly node");
-    if (node.parentId !== null && !nodes.has(node.parentId)) fail("Parents must precede their children");
-    if (node.partId !== null && !parts.has(node.partId)) fail("Assembly refers to missing geometry");
-    nodes.add(node.id);
-  }
-  if (!model.nodes.some((node) => node.partId)) fail("No displayable part occurrences");
-  if (!Array.isArray(model.warnings) || !model.warnings.every((warning) => typeof warning === "string")) fail("Invalid import diagnostics");
+  validateNodes(model, parts);
   if (model.cleanup !== undefined && !validCleanupCounts(model.cleanup, true)) fail("Invalid display cleanup diagnostics");
   // Early schema-2 edge snapshots used the original unsalted full-content hash.
   // Keep those copied references resolvable without changing their cache or identity.
@@ -386,4 +485,3 @@ export function validateModel(model, { requireRevision = true } = {}) {
       model.topologyRevision !== topologyDigest(model)) fail("Cached model topology does not match its reference identity");
   return model;
 }
-import { createHash } from "node:crypto";

@@ -12,6 +12,23 @@ export const defaultViewId = "standalone";
 const standaloneScript = path.join(explorerRoot, "server", "standalone.mjs");
 const maxLogBytes = 1024 * 1024;
 
+// key=value pairs avoid shell-specific JSON quoting (Windows PowerShell strips embedded quotes). Values that parse
+// as JSON (numbers, booleans, arrays) keep that type; anything else is a string.
+export function actionInput(args) {
+  if (args.length === 1 && args[0].trim().startsWith("{")) {
+    try { return JSON.parse(args[0]); }
+    catch { throw new PrototypeError("bad_arguments", "Action input must be key=value pairs or one JSON object"); }
+  }
+  const input = {};
+  for (const pair of args) {
+    const split = pair.indexOf("=");
+    if (split < 1) throw new PrototypeError("bad_arguments", `Expected key=value, got "${pair}"`);
+    const value = pair.slice(split + 1);
+    try { input[pair.slice(0, split)] = JSON.parse(value); }
+    catch { input[pair.slice(0, split)] = value; }
+  }
+  return input;
+}
 
 // Without the built page a viewer would answer with an error page, so fail before handing out a URL.
 export async function assertBuilt(index = path.join(explorerRoot, "dist", "index.html")) {
@@ -76,21 +93,22 @@ export async function waitForLoad(record, timeout = 150_000) {
   }
 }
 
-export async function reloadInto(record, file) {
+export async function reloadInto(record, file, options = {}) {
   await waitForLoad(record);
-  return sendCommand(record, "load_file", { file });
+  return sendCommand(record, "load_file", { ...options, file });
 }
 
 // The viewer outlives the command (and the chat session) that started it, so its links stay valid. Its log
 // can contain the tokened URL, so it is owner-only; concurrent starts append rather than truncate each other.
-export function spawnDetached(location, file) {
+export function spawnDetached(location, file, options = {}) {
   mkdirSync(path.dirname(location.log), { recursive: true });
   const output = openSync(location.log, "a", 0o600);
   try {
     if (process.platform !== "win32") fchmodSync(output, 0o600);
     if (fstatSync(output).size > maxLogBytes) ftruncateSync(output, 0);
     const logStart = fstatSync(output).size;
-    const child = spawn(process.execPath, [standaloneScript, ...(file ? [file] : [])], {
+    const optionArgs = Object.entries(options).map(([key, value]) => `${key}=${value}`);
+    const child = spawn(process.execPath, [standaloneScript, ...(file ? [file, ...optionArgs] : [])], {
       cwd: location.project, detached: true, windowsHide: true, stdio: ["ignore", output, output],
       env: { ...process.env, CAD_EXPLORER_VIEW: location.viewId, CAD_EXPLORER_RUNTIME_ROOT: location.runtimeRoot },
     });
@@ -134,7 +152,8 @@ async function waitForStart(location, { child, logStart }, timeout, handoverTime
 // The store is shared by every workbench checkout, so a project's running viewer may run another checkout's code.
 export const foreignCheckout = (record, checkout = explorerRoot) => record.explorerRoot !== checkout;
 
-export async function openViewer(location, file, { spawnViewer = spawnDetached, startTimeout = 30_000, loadTimeout = 150_000, distIndex, checkout = explorerRoot } = {}) {
+// options are load_file's mesh inputs (units, up); they only apply with a file.
+export async function openViewer(location, file, options = {}, { spawnViewer = spawnDetached, startTimeout = 30_000, loadTimeout = 150_000, distIndex, checkout = explorerRoot } = {}) {
   await assertBuilt(distIndex);
   let running = await runningViewer(location);
   let started = false;
@@ -146,10 +165,10 @@ export async function openViewer(location, file, { spawnViewer = spawnDetached, 
     running = null;
   }
   if (running) {
-    if (file) await reloadInto(running.record, file);
+    if (file) await reloadInto(running.record, file, options);
   } else {
     // A process that hands over to a concurrently started viewer has already reloaded the file there.
-    ({ started, ...running } = await waitForStart(location, spawnViewer(location, file), startTimeout, loadTimeout * 2));
+    ({ started, ...running } = await waitForStart(location, spawnViewer(location, file, options), startTimeout, loadTimeout * 2));
   }
   await waitForLoad(running.record, loadTimeout);
   // A view counts as shown once a renderer has drawn it: the person's page, or the background renderer.

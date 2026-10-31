@@ -50,7 +50,7 @@ def run(url, output):
             wait(lambda: state()["rendered"]["revision"] == state()["revision"])
             assert state()["rendered"]["geometryIds"] == report["geometryIds"], "Explosion recreated geometry"
             before = state()
-            live_canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            live_canvas = page.locator("canvas[aria-label='Interactive model']")
             live_canvas.evaluate("(canvas) => { window.originalCadCanvas = canvas; window.cadContextLosses = 0; canvas.addEventListener('webglcontextlost', () => window.cadContextLosses++); }")
             original_viewport = page.locator(".viewport").bounding_box()
             page.get_by_role("button", name="Draw", exact=True).click()
@@ -180,7 +180,7 @@ def run(url, output):
             assert not ImageChops.difference(copied_pixels, restored).getbbox(), "Reload/resize shifted drawing coordinates"
             page.get_by_role("button", name="Back to model").click()
             wait(lambda: state()["activeReviewId"] is None)
-            expect(page.locator("canvas[aria-label='Interactive STEP assembly']")).to_be_visible()
+            expect(page.locator("canvas[aria-label='Interactive model']")).to_be_visible()
             assert state()["explode"] == 0.4
             assert live_canvas.evaluate("(canvas) => canvas === window.originalCadCanvas")
             assert page.evaluate("window.cadContextLosses") == 0

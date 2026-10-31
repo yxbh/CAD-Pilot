@@ -31,13 +31,11 @@ export function sectionAxisIndex(axis) {
   return axisIndex[axis];
 }
 
-// Caches created before closed-solid metadata remain valid, but their capability is unknown.
+// Open meshes and surface parts are cut without caps; only caches made before closed-solid metadata existed,
+// whose parts may or may not be closed, cannot be cut until the file is opened again.
 export function sectionSupport(model) {
   const parts = model?.parts ?? [];
-  if (parts.some((part) => part.sectionCaps === false)) {
-    return { supported: false, reason: "open_geometry", message: "Section view requires closed solids. This STEP contains surface or open-shell parts." };
-  }
-  if (!parts.length || parts.some((part) => part.sectionCaps !== true)) {
+  if (!parts.length || parts.some((part) => typeof part.sectionCaps !== "boolean")) {
     return { supported: false, reason: "unknown_solids", message: "This preview was cached without closed-solid metadata. Reopen the STEP to enable section view." };
   }
   return { supported: true, reason: null, message: "" };
@@ -74,38 +72,35 @@ export function reconcileSectionWithDisplay(state, model) {
   };
 }
 
+function vertexVisible(positions, vertex, matrix, section) {
+  return sectionPointVisible([positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]], matrix, section);
+}
+
 function partVisible(part, matrix, section) {
-  for (let offset = 0; offset < part.positions.length; offset += 3) {
-    if (sectionPointVisible(part.positions.slice(offset, offset + 3), matrix, section)) return true;
-  }
+  for (let vertex = 0; vertex < part.positions.length / 3; vertex++) if (vertexVisible(part.positions, vertex, matrix, section)) return true;
   return false;
 }
 
 function faceVisible(part, face, matrix, section) {
-  const first = face.triangleStart * 3;
-  const end = first + face.triangleCount * 3;
-  for (let slot = first; slot < end; slot++) {
-    const vertex = part.indices[slot] * 3;
-    if (sectionPointVisible(part.positions.slice(vertex, vertex + 3), matrix, section)) return true;
-  }
+  const end = (face.triangleStart + face.triangleCount) * 3;
+  for (let slot = face.triangleStart * 3; slot < end; slot++) if (vertexVisible(part.positions, part.indices[slot], matrix, section)) return true;
   return false;
 }
 
 function edgeVisible(edge, matrix, section) {
-  for (let offset = 0; offset < edge.positions.length; offset += 3) {
-    if (sectionPointVisible(edge.positions.slice(offset, offset + 3), matrix, section)) return true;
-  }
+  for (let vertex = 0; vertex < edge.positions.length / 3; vertex++) if (vertexVisible(edge.positions, vertex, matrix, section)) return true;
   return false;
 }
 
-export function sectionEntityVisible(model, state, nodeId, faceId = null, edgeId = null) {
+export function sectionEntityVisible(model, state, nodeId, faceId = null, edgeId = null, point = null) {
   if (!state.section?.enabled) return true;
   const placement = sectionPlacements(model, state).find((item) => item.node.id === nodeId);
-  return entityVisibleAt(placement, state.section, faceId, edgeId);
+  return entityVisibleAt(placement, state.section, faceId, edgeId, point);
 }
 
-function entityVisibleAt(placement, section, faceId = null, edgeId = null) {
+function entityVisibleAt(placement, section, faceId = null, edgeId = null, point = null) {
   if (!placement) return false;
+  if (point) return sectionPointVisible(point, placement.matrix, section);
   if (faceId) {
     const face = placement.part.faces.find((item) => item.id === faceId);
     return !!face && faceVisible(placement.part, face, placement.matrix, section);
@@ -133,5 +128,10 @@ export function pruneSectionSelection(state, model) {
     selectedIds = selectedIds.filter((id) => id !== selectedEdge.nodeId);
     selectedEdge = null;
   }
-  return { ...state, selectedIds, selectedFace, selectedEdge };
+  let selectedPoint = state.selectedPoint ?? null;
+  if (selectedPoint && !entityVisibleAt(placements.get(selectedPoint.nodeId), state.section, null, null, selectedPoint.point)) {
+    selectedIds = selectedIds.filter((id) => id !== selectedPoint.nodeId);
+    selectedPoint = null;
+  }
+  return { ...state, selectedIds, selectedFace, selectedEdge, selectedPoint };
 }

@@ -1,11 +1,18 @@
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mjs";
 import { SECTION_AXES } from "./section.mjs";
 import { STEP_MODES } from "./placement.mjs";
+import { MESH_UNITS, MESH_UP_AXES } from "./mesh.mjs";
 
 export const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const ids = { type: "array", items: { type: "string" }, maxItems: 500 };
 const revision = { type: "integer", minimum: 0 };
 const reference = { type: "string", maxLength: 16384 };
+const vector = (description) => ({ type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description });
+const frame = {
+  units: { enum: MESH_UNITS, description: "Mesh files only: the unit their numbers are in. auto uses the file's declared unit, else metres for models under 2.5 units across, else millimetres." },
+  up: { enum: MESH_UP_AXES, description: "Mesh files only: the axis that points up in the file. auto is Y for OBJ and GLB, Z otherwise. Shown Z-up either way." },
+};
+const fileId = { type: "string", description: "A file in the view, as listed in state documents: main, ref1, ref2 ..." };
 
 function command(description, properties = {}, required = [], policy = {}) {
   return {
@@ -41,7 +48,14 @@ export const COMMANDS = Object.freeze({
   select_edge: command("Highlight a native CAD edge on the exact displayed topology, without writing the clipboard.", {
     id: { type: "string" }, edgeId: { type: "string" }, topologyRevision: { type: "string" },
   }, ["id", "edgeId", "topologyRevision"]),
-  set_selection_mode: command("Choose face, edge or whole-part picking.", { mode: { enum: ["face", "edge", "part"] } }, ["mode"]),
+  select_point: command("Highlight a picked point on a part's triangle, in part millimetres, without writing the clipboard. Works on meshes and STEP previews.", {
+    id: { type: "string" }, triangle: { type: "integer", minimum: 0, description: "Triangle number in the part, counting from 0 in file order." },
+    point: vector("Point on that triangle, in the part's own frame (mm)."), topologyRevision: { type: "string" },
+  }, ["id", "triangle", "point", "topologyRevision"]),
+  set_selection_mode: command("Choose face, edge, point or whole-part picking. Meshes have no CAD faces or edges: face and edge picking select their whole part.",
+    { mode: { enum: ["face", "edge", "point", "part"] } }, ["mode"]),
+  set_faults: command("Show or hide mesh faults: open edges (red), edges shared by more than two triangles (magenta), edges whose triangles wind the same way (orange) and zero-area triangles (yellow dots). Visual only; nothing is repaired.",
+    { visible: { type: "boolean" } }, ["visible"]),
   set_auto_copy: command("Enable clipboard copying for future user selections. Selection never inserts or sends a chat message.",
     { enabled: { type: "boolean" } }, ["enabled"], { duringReview: true, render: "none" }),
   prepare_clipboard_reference: read("Prepare a local exact-selection descriptor and native file-reference markup. Does not alter clipboard or chat.", { reference }, ["reference"]),
@@ -68,7 +82,19 @@ export const COMMANDS = Object.freeze({
   }),
   fit_view: command("Explicitly frame visible parts, including their exploded positions."),
   reset_view: command("Reassemble without moving the camera or changing STEP geometry."),
-  load_file: command("Load a STEP snapshot inside the configured project root.", { file: { type: "string" } }, ["file"], { revision: "unchecked" }),
+  load_file: command("Load a STEP, STL, OBJ, 3MF, PLY or GLB file inside the configured project root as the view's main file. Files added beside it stay; remove them with remove_file. Meshes are shown as they are, not converted to CAD.",
+    { file: { type: "string" }, ...frame }, ["file"], { revision: "unchecked" }),
+  add_file: command("Add another file to the view in its own frame, for example a scan or the original model to compare against. Each file keeps its own references.", {
+    file: { type: "string" }, ...frame,
+    style: { enum: ["solid", "ghost"], description: "ghost (the default) draws it see-through, as a reference that clicks in the view pass through; its parts can still be selected from the parts list or with select_parts." },
+  }, ["file"]),
+  set_file: command("Restyle or move a file in the view. Placement is visual and does not change the file or its references.", {
+    id: fileId, style: { enum: ["solid", "ghost"] },
+    offset: vector("Move by X, Y and Z (mm)."), rotate: vector("Turn about X, then Y, then Z (degrees), before moving."),
+  }, ["id"]),
+  remove_file: command("Remove an added file from the view. Open another main file with load_file.", { id: fileId }, ["id"]),
+  set_layout: command("Compare files overlaid in one place (overlay) or side by side along X (side), under one camera.",
+    { mode: { enum: ["overlay", "side"] } }, ["mode"]),
   load_demo: command("Load the synthetic demonstration assembly.", {}, [], { revision: "unchecked" }),
   capture_image: command("Save a PNG of the current view or annotated drawing, with source and pose metadata. It is drawn in the background at a fixed size, so no viewer page needs to be open or visible.", {
     width: { type: "integer", minimum: 16, maximum: 4096 },

@@ -1,9 +1,11 @@
 import { createExplorerServer } from "./server.mjs";
 import { explorerRoot } from "./paths.mjs";
 import { readEndpoint, writeEndpoint } from "./endpoint.mjs";
-import { assertBuilt, defaultViewId, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
+import { actionInput, assertBuilt, defaultViewId, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
 
+// standalone.mjs [file [units=... up=...]]
 const file = process.argv[2];
+const fileOptions = actionInput(process.argv.slice(3));
 const print = (line) => process.stdout.write(`${line}\n`);
 
 try {
@@ -19,7 +21,7 @@ try {
   });
   try {
     service = await createExplorerServer({
-      projectRoot: location.project, viewId: location.viewId, file, runtimeRoot: location.runtimeRoot,
+      projectRoot: location.project, viewId: location.viewId, file, fileOptions, runtimeRoot: location.runtimeRoot,
       referenceFormat: "text", port: previous?.port, token: previous?.token, onShutdown: () => void stop(),
     });
   } catch (error) {
@@ -28,7 +30,7 @@ try {
     // that is still starting may not have published its address yet.
     const running = await waitForViewer(location);
     if (!running) throw new Error("Another Explorer process holds this project's viewer but is not answering. Stop that process, or set CAD_EXPLORER_VIEW to open a separate setup.");
-    const state = file ? await reloadInto(running.record, file) : await waitForLoad(running.record);
+    const state = file ? await reloadInto(running.record, file, fileOptions) : await waitForLoad(running.record);
     print(running.record.url);
     print(`${file ? "Reloaded" : "Already running"}: ${state.modelName || state.error}`);
     process.exit(0);

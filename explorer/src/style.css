@@ -184,3 +184,11 @@ select { color: var(--text-color-default, #c3dbe1); background: var(--background
   .model-toolbar .icon-control { width: 26px; flex-basis: 26px; }
   .model-toolbar .icon-button { width: 26px; }
 }
+.file-list { padding: 4px 10px 8px; border-bottom: 1px solid var(--border-color-default, #283f49); }
+.file-layout { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.file-layout .eyebrow { margin: 0; }
+.file-layout select { font-size: 11px; }
+.file-row { display: flex; align-items: center; gap: 2px; min-width: 0; font-size: 11px; }
+.file-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
+.file-row small { display: block; color: var(--text-color-muted, #8aa3ad); font-size: 10px; }
+.mesh-facts { margin-top: -4px !important; }

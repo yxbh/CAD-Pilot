@@ -28,15 +28,16 @@ export async function saveCopy(project, source, target) {
 }
 
 /**
- * Render one STEP to a PNG without touching any saved setup: a private, transient viewer loads it, applies the
+ * Render one STEP or mesh file to a PNG without touching any saved setup: a private, transient viewer loads it, applies the
  * requested view and draws it in the background renderer. The view actions are the same ones `do` accepts.
- * options: { width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
+ * options: { units, up (how to read a mesh), width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
  * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns] }.
  */
 export async function renderOnce({ project, file, output, runtimeRoot, options = {}, log = () => {} }) {
   const target = await projectOutput(project, output);
   const service = await createExplorerServer({
-    projectRoot: project, viewId: `render-${randomUUID()}`, file, runtimeRoot, transient: true, referenceFormat: "text", log,
+    projectRoot: project, viewId: `render-${randomUUID()}`, file, fileOptions: { units: options.units, up: options.up },
+    runtimeRoot, transient: true, referenceFormat: "text", log,
   });
   try {
     await service.initialize();

@@ -8,13 +8,15 @@ import { useSelection } from "./useSelection.ts";
 import { useViewCapture } from "./useViewCapture.ts";
 import { useSectionControl } from "./useSectionControl.ts";
 import { useStepPlayer } from "./useStepPlayer.ts";
+import { useArrangedModel } from "./useArrangedModel.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
 import { HeadlessApp } from "./HeadlessApp.tsx";
 import {
-  Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen, ListOrdered,
+  Box, Camera, Copy, Crosshair, Expand, Eye, EyeOff, FilePlus, FolderOpen, Ghost, ListOrdered,
   Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
-  Slice,
+  Slice, TriangleAlert,
 } from "lucide-react";
+import { MODEL_EXTENSIONS } from "../shared/mesh.mjs";
 import { axisViews, type ViewPreset } from "./camera.ts";
 import { IconButton } from "./ui/IconButton";
 import { ImportWarnings } from "./ui/ImportWarnings.tsx";
@@ -32,7 +34,7 @@ class ViewerBoundary extends React.Component<{ children: React.ReactNode }, { er
 
 export function App({ host }: { host: ViewerHost }) {
   const [state, setState] = useState<ViewState | null>(null);
-  const [model, setModel] = useState<Model | null>(null);
+  const [composed, setModel] = useState<Model | null>(null);
   const [error, setError] = useState("");
   const [reviewError, setReviewError] = useState("");
   const [notice, setNotice] = useState("");
@@ -45,6 +47,8 @@ export function App({ host }: { host: ViewerHost }) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const referenceField = useRef<HTMLTextAreaElement | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  // One file picker serves Open and Add file; this says which the next pick is for.
+  const addingFile = useRef(false);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const latest = useRef(state);
   const acceptState = useCallback((incoming: ViewState) => {
@@ -70,6 +74,7 @@ export function App({ host }: { host: ViewerHost }) {
     });
     return queue.current;
   }, [host, acceptState]);
+  const model = useArrangedModel(composed, state);
   const { select, copySelection, setAutoCopy, copyStatus, autoCopyEnabled, autoCopyPending, dismissCopyStatus } = useSelection({
     host, model, state, latest, run, onError: reportError,
   });
@@ -96,11 +101,11 @@ export function App({ host }: { host: ViewerHost }) {
   }, [host, state?.topologyRevision, state?.modelName]);
   useEffect(() => { if (state) setAmount(state.explode); }, [state?.explode]);
 
-  async function upload(file: File) {
+  async function upload(file: File, add = false) {
     setError("");
     try {
-      await host.upload(file);
-      setNotice("Loaded a local snapshot. Your original STEP is unchanged.");
+      await host.upload(file, add);
+      setNotice(`${add ? "Added" : "Loaded"} a local snapshot. Your original file is unchanged.`);
     } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
   }
   async function captureImage() {
@@ -120,7 +125,11 @@ export function App({ host }: { host: ViewerHost }) {
   const selectedPart = model?.parts.find((part) => part.id === selected?.partId);
   const selectedFace = selectedPart?.faces.find((face) => face.id === state?.selectedFace?.faceId);
   const selectedEdge = selectedPart?.edges?.find((edge) => edge.id === state?.selectedEdge?.edgeId);
-  const selectionName = state?.selectionMode === "edge" ? "edge" : state?.selectionMode === "part" ? "part" : "face";
+  const selectedPoint = state?.selectedPoint?.nodeId === selected?.id ? state?.selectedPoint ?? undefined : undefined;
+  const selectionName = state?.selectionMode ?? "face";
+  const meshParts = model?.parts.filter((part) => part.buffers) ?? [];
+  const triangles = meshParts.reduce((sum, part) => sum + (part.triangleCount ?? 0), 0);
+  const documents = state?.documents ?? [];
   const referenceText = copyStatus.text;
   const ready = model && state && model.topologyRevision === state.topologyRevision && model.source.name === state.modelName;
   const loading = !state || state.loading;
@@ -140,9 +149,9 @@ export function App({ host }: { host: ViewerHost }) {
         <span className="app-symbol" title="CAD Explorer"><Box size={22} strokeWidth={1.6} aria-hidden="true" /></span>
         <div className="document-heading">
           <strong title={activeReview?.source.name || state?.modelName}>{activeReview?.source.name || state?.modelName || "Opening assembly"}</strong>
-          <span>{drawingActive ? "Drawing review" : `${leaves.length} parts \u00b7 mm`}<span className="version-tag">v1</span></span>
+          <span>{drawingActive ? "Drawing review" : `${leaves.length} parts${triangles ? ` \u00b7 ${triangles.toLocaleString()} mesh triangles` : ""} \u00b7 mm`}<span className="version-tag">v1</span></span>
           {!drawingActive && revision && <span className="model-revision" data-revision={state?.documentRevision}
-            title={`STEP revision ${state?.documentRevision}${state?.source.file ? ` from ${state.source.file}` : ""}${generated ? `, generated ${generated.toLocaleString()}` : ""}`}>
+            title={`Revision ${state?.documentRevision}${state?.source.file ? ` from ${state.source.file}` : ""}${generated ? `, generated ${generated.toLocaleString()}` : ""}`}>
             rev {revision}{generated && ` \u00b7 ${generated.toDateString() === new Date().toDateString() ? generated.toLocaleTimeString() : generated.toLocaleString()}`}
           </span>}
         </div>
@@ -157,10 +166,11 @@ export function App({ host }: { host: ViewerHost }) {
         {!drawingActive && !busy && model && <ImportWarnings
           key={`${model.topologyRevision}:${model.source.name}`} warnings={model.warnings} cleanup={model.cleanup} sourceName={model.source.name}
           target={warningsTarget} onOpen={() => setNotice("")} />}
-        <IconButton label="Open STEP" icon={FolderOpen} onClick={() => fileInput.current?.click()} disabled={loading || drawingActive} />
+        <IconButton label="Open a STEP or mesh file" icon={FolderOpen} onClick={() => { addingFile.current = false; fileInput.current?.click(); }} disabled={loading || drawingActive} />
+        <IconButton label="Add a file to compare" icon={FilePlus} onClick={() => { addingFile.current = true; fileInput.current?.click(); }} disabled={busy || drawingActive} />
         <IconButton label="Toggle parts panel" icon={PanelRight} aria-pressed={treeOpen} onClick={() => setTreeOpen(!treeOpen)} />
-        <input ref={fileInput} hidden type="file" accept=".step,.stp" onChange={(event) => {
-          const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = "";
+        <input ref={fileInput} hidden type="file" accept={MODEL_EXTENSIONS.join(",")} onChange={(event) => {
+          const file = event.target.files?.[0]; if (file) void upload(file, addingFile.current); event.target.value = "";
         }} />
       </header>
       <section className="mode-toolbar" aria-label={drawingActive ? "Draw toolbar" : "Model toolbar"}>
@@ -198,8 +208,13 @@ export function App({ host }: { host: ViewerHost }) {
             <div className="tool-group" role="group" aria-label="Selection mode">
               <IconButton label="Faces" icon={ScanFace} aria-pressed={state?.selectionMode === "face"} onClick={() => run("set_selection_mode", { mode: "face" })} />
               <IconButton label="Edges" icon={Spline} aria-pressed={state?.selectionMode === "edge"} onClick={() => run("set_selection_mode", { mode: "edge" })} />
+              <IconButton label="Points" icon={Crosshair} aria-pressed={state?.selectionMode === "point"} onClick={() => run("set_selection_mode", { mode: "point" })} />
               <IconButton label="Parts" icon={Box} aria-pressed={state?.selectionMode === "part"} onClick={() => run("set_selection_mode", { mode: "part" })} />
             </div>
+            {meshParts.length > 0 && <div className="tool-group" role="group" aria-label="Mesh faults">
+              <IconButton label="Mesh faults: open, over-shared and flipped edges, zero-area triangles" icon={TriangleAlert}
+                aria-pressed={state?.showFaults} onClick={() => run("set_faults", { visible: !state?.showFaults })} />
+            </div>}
             <div className="tool-group">
               <IconButton label="Capture image" icon={Camera} disabled={busy} onClick={() => void captureImage()} />
               <IconButton label="Show all" icon={Eye} onClick={() => run("show_all")} />
@@ -228,7 +243,7 @@ export function App({ host }: { host: ViewerHost }) {
               <Scene model={model} state={state} amount={amount} stepPosition={player.position} sectionPosition={section.position} active={!drawingActive} onSelect={select}
                 onError={reportError} registerCapture={registerCapture} onRendered={rendered} onCameraChange={saveCamera} onView={chooseView} />
             </ViewerBoundary>
-          ) : <div className="empty">{state?.error ? "No model to display. Open a STEP file to retry." : "Preparing the model..."}</div>}
+          ) : <div className="empty">{state?.error ? "No model to display. Open a STEP or mesh file to retry." : "Preparing the model..."}</div>}
           </div>
           {ready && !drawingActive && <AssemblyPanel state={state} player={player} busy={busy} run={run} />}
           {drawingActive && <div className="drawing-layer">
@@ -238,7 +253,7 @@ export function App({ host }: { host: ViewerHost }) {
                 onError={reportError} status={reviews.status} saving={reviews.saving} readOnly={reviews.working} toolbarTarget={toolbarTarget} />
             ) : <div className="review-loading" role="status">Loading review...</div>}
           </div>}
-          {!drawingActive && (loading || (!ready && !state?.error)) && <div className="loading" role="status"><span className="spinner" />Converting STEP...</div>}
+          {!drawingActive && (loading || (!ready && !state?.error)) && <div className="loading" role="status"><span className="spinner" />Reading the file...</div>}
         </div>
         <aside className="inspector" inert={!treeOpen}>
           <div className="panel-heading"><strong>{drawingActive ? "Review" : "Parts"}</strong>
@@ -255,6 +270,18 @@ export function App({ host }: { host: ViewerHost }) {
             <p>Captured view</p>
             <span>Confirmed saves are stored on this computer. Unconfirmed marks stay only in this panel and will not survive reload. Download or copy preserves an image, not editable drawing history.</span>
           </div> : <>
+          {(documents.length > 1 || documents.some((document) => document.style === "ghost")) && <div className="file-list" aria-label="Files in view">
+            <div className="file-layout"><span className="eyebrow">FILES</span>
+              <select aria-label="Compare files" title="Compare files" value={state?.layout ?? "overlay"} onChange={(event) => run("set_layout", { mode: event.target.value })}>
+                <option value="overlay">Overlaid</option><option value="side">Side by side</option>
+              </select></div>
+            {documents.map((document) => <div className="file-row" key={document.id}>
+              <span title={document.frame?.note ?? document.name}>{document.name}<small>{document.id}{document.frame ? ` \u00b7 ${document.frame.units}, ${document.frame.up.toUpperCase()} up` : ""}</small></span>
+              <IconButton label={`${document.style === "ghost" ? "Show solid" : "Show as ghost"}: ${document.name}`} icon={Ghost} aria-pressed={document.style === "ghost"}
+                onClick={() => run("set_file", { id: document.id, style: document.style === "ghost" ? "solid" : "ghost" })} />
+              {document.id !== "main" && <IconButton label={`Remove ${document.name}`} icon={X} onClick={() => run("remove_file", { id: document.id })} />}
+            </div>)}
+          </div>}
           <div className="part-list">{leaves.map((node) => {
             const hidden = state?.hiddenIds.includes(node.id);
             return <div className={`part-row ${state?.selectedIds.includes(node.id) ? "selected" : ""} ${hidden ? "hidden-part" : ""}`} key={node.id}>
@@ -270,10 +297,17 @@ export function App({ host }: { host: ViewerHost }) {
             <span className="eyebrow">SELECTION</span><strong>{selected?.label || `Pick a ${selectionName}`}</strong>
             <p>{selectedEdge ? `Edge ${selectedEdge.id} / ${selectedEdge.curveType} / ${selectedEdge.length.toFixed(2)} mm`
               : selectedFace ? `Face ${selectedFace.id} / ${selectedFace.surfaceType} / ${selectedFace.area.toFixed(2)} mm\u00b2`
+              : selectedPoint ? `Point on triangle ${selectedPoint.triangle} / ${selectedPoint.point.map((value) => value.toFixed(3)).join(", ")} mm in the part's frame`
               : selectedPart ? `${selectedPart.bounds.max.map((value, axis) => (value - selectedPart.bounds.min[axis]).toFixed(1)).join(" x ")} mm`
                 : state?.selectionMode === "edge" ? "Point near an outline to select its CAD edge."
+                  : state?.selectionMode === "point" ? "Click a surface to pick a point on it."
                   : state?.selectionMode === "part" ? "Click an object to select its whole part."
                     : "Click a surface to select its CAD face."}</p>
+            {selectedPart?.buffers && <p className="mesh-facts">{`${(selectedPart.triangleCount ?? 0).toLocaleString()} triangles / ${selectedPart.closed ? "closed" : "open"} mesh`}
+              {selectedPart.faults && Object.values(selectedPart.faults).some(Boolean) ? ` / ${[
+                [selectedPart.faults.openEdges, "open edges"], [selectedPart.faults.oversharedEdges, "over-shared edges"],
+                [selectedPart.faults.flippedEdges, "flipped edges"], [selectedPart.faults.degenerateTriangles, "zero-area triangles"],
+              ].filter(([count]) => count).map(([count, name]) => `${count} ${name}`).join(", ")}` : ""}</p>}
             <div className="selection-actions">
               <IconButton label="Keep fixed" icon={Pin} disabled={!selected} onClick={() => run("set_explode", { fixedId: selected?.id })} />
               <IconButton label="Isolate" icon={Expand} disabled={!selected} onClick={() => run("isolate", { id: selected?.id })} />
@@ -304,11 +338,11 @@ export function App({ host }: { host: ViewerHost }) {
           aria-label="Auto-copy reference" disabled={!state || drawingActive || autoCopyPending} onChange={(event) => void setAutoCopy(event.target.checked)} />
           Auto-copy</label>
         <IconButton label="Copy reference" icon={Copy} disabled={!selected || busy || drawingActive}
-          onClick={() => selected && void copySelection(selected.id, selectedFace?.id, selectedEdge?.id)} />
+          onClick={() => selected && void copySelection(selected.id, selectedFace?.id, selectedEdge?.id, selectedPoint)} />
         </div>
       </section>
       <div className="status-line"><span className={`dot ${connected ? "live" : ""}`} aria-hidden="true" />
-        <span role="status">{drawingActive ? reviews.status || "Captured view" : reviews.status || copyStatus.message || (connected ? "Local STEP" : "Reconnecting")}</span>
+        <span role="status">{drawingActive ? reviews.status || "Captured view" : reviews.status || copyStatus.message || (connected ? "Local file" : "Reconnecting")}</span>
         {!drawingActive && referenceText && <button className="text-link" onClick={() => setReferenceOpen(!referenceOpen)}>Reference text</button>}
         {drawingActive && activeReview && <span className="status-detail">{activeReview.drawing.present.length} marks</span>}
       </div>
