@@ -1,22 +1,16 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { assertBuilt } from "../server/launcher.mjs";
 import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
-import { workbenchPython } from "../server/paths.mjs";
 import { createHeadlessRenderer } from "../server/renderer.mjs";
+import { runPython } from "./python-host.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
-
-const execute = promisify(execFile);
 
 export async function runBrowser(script, { url, output, timeout = 210_000 }) {
   await assertBuilt();
-  const result = await execute(workbenchPython, [
-    "-B", path.join(explorerRoot, "tests", script), "--url", url, "--output", output,
-  ], { cwd: explorerRoot, encoding: "utf8", timeout, maxBuffer: 2 * 1024 * 1024 });
+  const result = await runPython(script, ["--url", url, "--output", output], { timeout });
   if (result.stderr) console.error(result.stderr.trim());
   return result;
 }
