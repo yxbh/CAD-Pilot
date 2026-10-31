@@ -6,6 +6,7 @@ import {
   Vector3,
   type Intersection,
 } from "three";
+import { acceleratedRaycast } from "three-mesh-bvh";
 import type { SectionSettings } from "../shared/section.mjs";
 import { sectionAxisIndex, sectionDistance } from "../shared/section.mjs";
 import type { CadEdge, CadFace, Part } from "./model.ts";
@@ -63,28 +64,38 @@ export function clipCadEdges(edges: CadEdge[], matrix: number[], section: Sectio
   return { positions, ranges };
 }
 
+// Where the plane cuts each triangle, in part coordinates. Distances are computed once per vertex so a
+// million-triangle mesh can follow the section slider; open meshes get outlines too, just no cap.
 export function sectionOutlineSegments(part: Part, matrix: number[], section: SectionSettings): number[] {
   if (!section.enabled) return [];
+  const { positions, indices } = part;
+  const axis = sectionAxisIndex(section.axis);
+  const distances = new Float64Array(positions.length / 3);
+  for (let vertex = 0; vertex < distances.length; vertex++) {
+    const world = matrix[axis] * positions[vertex * 3] + matrix[4 + axis] * positions[vertex * 3 + 1] +
+      matrix[8 + axis] * positions[vertex * 3 + 2] + matrix[12 + axis];
+    distances[vertex] = section.flipped ? section.position - world : world - section.position;
+  }
   const result: number[] = [];
   const tolerance = 1e-8;
-  for (let offset = 0; offset < part.indices.length; offset += 3) {
-    const points = [0, 1, 2].map((slot) => {
-      const vertex = part.indices[offset + slot] * 3;
-      return part.positions.slice(vertex, vertex + 3);
-    });
-    const distances = points.map((point) => sectionDistance(point, matrix, section));
-    const cuts: number[][] = [];
+  const cuts: number[][] = [];
+  const point = (vertex: number) => [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
+  for (let offset = 0; offset < indices.length; offset += 3) {
+    const da = distances[indices[offset]], db = distances[indices[offset + 1]], dc = distances[indices[offset + 2]];
+    if ((da > tolerance && db > tolerance && dc > tolerance) || (da < -tolerance && db < -tolerance && dc < -tolerance)) continue;
+    const corners = [indices[offset], indices[offset + 1], indices[offset + 2]];
+    cuts.length = 0;
     for (const [a, b] of [[0, 1], [1, 2], [2, 0]]) {
-      const da = distances[a];
-      const db = distances[b];
-      if (Math.abs(da) <= tolerance) cuts.push(points[a]);
-      if ((da < -tolerance && db > tolerance) || (da > tolerance && db < -tolerance)) {
-        cuts.push(interpolate(points[a], points[b], da / (da - db)));
+      const from = distances[corners[a]];
+      const to = distances[corners[b]];
+      if (Math.abs(from) <= tolerance) cuts.push(point(corners[a]));
+      if ((from < -tolerance && to > tolerance) || (from > tolerance && to < -tolerance)) {
+        cuts.push(interpolate(point(corners[a]), point(corners[b]), from / (from - to)));
       }
     }
-    const unique = cuts.filter((point, index) => cuts.findIndex((candidate) =>
-      candidate.every((value, axis) => Math.abs(value - point[axis]) <= tolerance)) === index);
-    if (unique.length >= 2 && unique[0].some((value, axis) => Math.abs(value - unique[1][axis]) > tolerance)) {
+    const unique = cuts.filter((candidate, index) => cuts.findIndex((other) =>
+      other.every((value, item) => Math.abs(value - candidate[item]) <= tolerance)) === index);
+    if (unique.length >= 2 && unique[0].some((value, item) => Math.abs(value - unique[1][item]) > tolerance)) {
       result.push(...unique[0], ...unique[1]);
     }
   }
@@ -99,7 +110,7 @@ export function visibleFaceTriangleCount(part: Part, face: CadFace, matrix: numb
     const offset = first + triangle * 3;
     if ([0, 1, 2].some((slot) => {
       const vertex = part.indices[offset + slot] * 3;
-      return sectionDistance(part.positions.slice(vertex, vertex + 3), matrix, section) <= 1e-8;
+      return sectionDistance([part.positions[vertex], part.positions[vertex + 1], part.positions[vertex + 2]], matrix, section) <= 1e-8;
     })) visible++;
   }
   return visible;
@@ -112,7 +123,7 @@ export function visibleFacePoint(part: Part, face: CadFace, matrix: number[], se
     const offset = first + triangle * 3;
     let polygon = [0, 1, 2].map((slot) => {
       const vertex = part.indices[offset + slot] * 3;
-      return part.positions.slice(vertex, vertex + 3);
+      return [part.positions[vertex], part.positions[vertex + 1], part.positions[vertex + 2]];
     });
     const clipped: number[][] = [];
     for (let index = 0; index < polygon.length; index++) {
@@ -141,7 +152,7 @@ function uniqueIntersectionDistances(hits: Intersection[], maximum: number): num
 
 export function sectionMeshRaycast(mesh: Mesh, raycaster: Raycaster, intersections: Intersection[], plane: Plane | null) {
   if (!plane) {
-    Mesh.prototype.raycast.call(mesh, raycaster, intersections);
+    (mesh.geometry.boundsTree ? acceleratedRaycast : Mesh.prototype.raycast).call(mesh, raycaster, intersections);
     return;
   }
   const material = mesh.material;
@@ -149,7 +160,7 @@ export function sectionMeshRaycast(mesh: Mesh, raycaster: Raycaster, intersectio
   const sides = materials.map((entry) => entry.side);
   materials.forEach((entry) => { entry.side = DoubleSide; });
   const raw: Intersection[] = [];
-  try { Mesh.prototype.raycast.call(mesh, raycaster, raw); }
+  try { (mesh.geometry.boundsTree ? acceleratedRaycast : Mesh.prototype.raycast).call(mesh, raycaster, raw); }
   finally { materials.forEach((entry, index) => { entry.side = sides[index]; }); }
 
   const originDistance = plane.distanceToPoint(raycaster.ray.origin);

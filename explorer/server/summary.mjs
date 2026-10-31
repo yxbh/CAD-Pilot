@@ -12,7 +12,16 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "" }
   const steps = state.assembly?.steps ?? [];
   const { viewers, seen, headless, drawn } = state.renderers;
   const selected = state.selectedIds.map((id) => state.selectedFace?.nodeId === id ? `${name(id)} face ${state.selectedFace.faceId}`
-    : state.selectedEdge?.nodeId === id ? `${name(id)} edge ${state.selectedEdge.edgeId}` : name(id));
+    : state.selectedEdge?.nodeId === id ? `${name(id)} edge ${state.selectedEdge.edgeId}`
+      : state.selectedPoint?.nodeId === id ? `${name(id)} point ${state.selectedPoint.point.join(", ")}` : name(id));
+  // How each mesh was read, and where the files of a view of several sit.
+  const files = state.documents ?? [];
+  const file = (entry) => ({
+    id: entry.id, name: entry.name, ...(entry.frame ? { frame: entry.frame } : {}),
+    ...(entry.style !== "solid" ? { style: entry.style } : {}),
+    ...(entry.offset.some(Boolean) ? { offset: entry.offset } : {}),
+    ...(entry.rotate.some(Boolean) ? { rotate: entry.rotate } : {}),
+  });
   const view = {
     revision: state.revision,
     camera: state.cameraPinned ? "moved by the user" : state.cameraPreset,
@@ -24,6 +33,8 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "" }
     section: state.section.enabled ? { axis: state.section.axis, position: round(state.section.position), flipped: state.section.flipped } : "off",
     ...(state.hiddenIds.length ? { hidden: listed(state.hiddenIds.map(name)) } : {}),
     ...(selected.length ? { selected: listed(selected) } : {}),
+    ...(state.showFaults ? { faults: "shown" } : {}),
+    ...(files.length > 1 ? { files: files.map(file), layout: state.layout } : {}),
     ...(state.viewKept !== null ? { kept: state.viewKept } : {}),
   };
   let note = "";
@@ -41,6 +52,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "" }
       revision: revisionLabel(state.documentRevision),
       ...(state.source.generatedAt ? { generatedAt: state.source.generatedAt } : {}),
       parts: state.parts.length,
+      ...(files.length === 1 && files[0].frame ? { frame: files[0].frame } : {}),
       ...(changedOnDisk ? { changedOnDisk: true } : {}),
     } : null,
     loading: state.loading,

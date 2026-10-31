@@ -38,7 +38,7 @@ def run(url, output):
             page.request.post(url + "api/command", data={"name": "fit_view", "input": {}})
             settled()
             viewport = page.locator(".viewport")
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             canvas.evaluate("""canvas => {
                 window.firstCanvas = canvas;
                 window.contextLosses = 0;

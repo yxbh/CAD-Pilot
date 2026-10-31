@@ -9,9 +9,9 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, mergeBounds, placeParts, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type ViewState } from "./model.ts";
+import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, isMesh, mergeBounds, placeParts, sceneOrigin, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type PointSelection, type ViewState } from "./model.ts";
 import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
-import { edgeAtSegment, GeometryResources, type EdgeRange, type PartResources } from "./resources.ts";
+import { edgeAtSegment, GeometryResources, type EdgeRange, type FaultResources, type PartResources } from "./resources.ts";
 import { prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
 import { useRenderReports } from "./useRenderReports.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
@@ -33,7 +33,7 @@ type Props = {
   stepPosition: number | null;
   sectionPosition: number;
   active: boolean;
-  onSelect: (id: string, faceId?: string, edgeId?: string) => void;
+  onSelect: (id: string, faceId?: string, edgeId?: string, point?: Pick<PointSelection, "triangle" | "point">) => void;
   onError: (message: string) => void;
   registerCapture: (capture: (() => ViewCapture) | null) => void;
   onRendered: (report: RenderReport) => Promise<unknown>;
@@ -68,8 +68,9 @@ function FaceOverlay({ part, face, selected, clippingPlane }: { part: Part; face
   );
 }
 
-function CadLines({ geometry, color, width, visible = true, renderOrder = 0, picking, clippingPlane, onSelect, onHover, onHoverEnd }: {
+function CadLines({ geometry, color, width, visible = true, renderOrder = 0, picking, clippingPlane, tag, onSelect, onHover, onHoverEnd }: {
   geometry: LineSegmentsGeometry;
+  tag?: string;
   color: string;
   width: number;
   visible?: boolean;
@@ -91,7 +92,7 @@ function CadLines({ geometry, color, width, visible = true, renderOrder = 0, pic
   material.clippingPlanes = clippingPlane ? [clippingPlane] : [];
   lines.renderOrder = renderOrder;
   useEffect(() => () => material.dispose(), [material]);
-  return <primitive object={lines} visible={visible} userData={{ cadEdges: true }}
+  return <primitive object={lines} visible={visible} userData={{ cadEdges: true, ...(tag ? { [tag]: true } : {}) }}
     raycast={(raycaster: Parameters<LineSegments2["raycast"]>[0], hits: Parameters<LineSegments2["raycast"]>[1]) => {
       if (!picking) return;
       for (const hit of visibleEdgeHits(lines, raycaster, scene.getObjectsByProperty("name", "cad-surface"),
@@ -144,6 +145,24 @@ function SequenceTrails({ placements, origin }: { placements: Placement[]; origi
   return <primitive object={lines} renderOrder={5} raycast={() => null} />;
 }
 
+function partMatrix(placement: Placement, origin: number[]) {
+  const result = new Matrix4().fromArray(placement.matrix);
+  for (let axis = 0; axis < 3; axis++) result.elements[12 + axis] -= origin[axis];
+  return result;
+}
+
+// Where the plane cuts a part. Closed parts also get a cap; open meshes and surfaces show just this line.
+function SectionOutline({ placement, origin, section, order }: { placement: Placement; origin: number[]; section: SectionSettings; order: number }) {
+  const matrix = useMemo(() => partMatrix(placement, origin), [placement, origin]);
+  const positions = useMemo(() => sectionOutlineSegments(placement.part, placement.matrix, section),
+    [placement.part, placement.matrix, section.axis, section.position, section.flipped]);
+  const outline = useMemo(() => positions.length ? new LineSegmentsGeometry().setPositions(positions) : null, [positions]);
+  useEffect(() => () => outline?.dispose(), [outline]);
+  return outline ? <group matrix={matrix} matrixAutoUpdate={false}>
+    <CadLines geometry={outline} color={placement.part.sectionCaps ? "#102631" : "#f2b65f"} width={1.6} renderOrder={order} tag="sectionOutline" />
+  </group> : null;
+}
+
 function SectionCap({ placement, resources, origin, capCenter, section, plane, planeGeometry, order, studio }: {
   placement: Placement;
   resources: PartResources;
@@ -155,15 +174,7 @@ function SectionCap({ placement, resources, origin, capCenter, section, plane, p
   order: number;
   studio: boolean;
 }) {
-  const matrix = useMemo(() => {
-    const result = new Matrix4().fromArray(placement.matrix);
-    for (let axis = 0; axis < 3; axis++) result.elements[12 + axis] -= origin[axis];
-    return result;
-  }, [placement, origin]);
-  const outlinePositions = useMemo(() => sectionOutlineSegments(placement.part, placement.matrix, section),
-    [placement.part, placement.matrix, section.axis, section.position, section.flipped]);
-  const outline = useMemo(() => outlinePositions.length ? new LineSegmentsGeometry().setPositions(outlinePositions) : null, [outlinePositions]);
-  useEffect(() => () => outline?.dispose(), [outline]);
+  const matrix = useMemo(() => partMatrix(placement, origin), [placement, origin]);
   const capPosition: [number, number, number] = [...capCenter];
   capPosition[sectionAxis(section.axis)] = section.position - origin[sectionAxis(section.axis)];
   const capRotation: [number, number, number] = section.axis === "x"
@@ -191,8 +202,8 @@ function SectionCap({ placement, resources, origin, capCenter, section, plane, p
         <meshBasicMaterial {...stencil} side={FrontSide}
           stencilZFail={DecrementWrapStencilOp} stencilZPass={DecrementWrapStencilOp} />
       </mesh>
-      {outline && <CadLines geometry={outline} color="#102631" width={1.6} renderOrder={order + 2} />}
     </group>
+    <SectionOutline placement={placement} origin={origin} section={section} order={order + 2} />
     <mesh position={capPosition} rotation={capRotation} renderOrder={order + 1}
       receiveShadow={studio} raycast={() => undefined}
       onAfterRender={(renderer) => renderer.clearStencil()}>
@@ -205,19 +216,58 @@ function SectionCap({ placement, resources, origin, capCenter, section, plane, p
   </>;
 }
 
+// Mesh faults drawn through the surface so hidden ones show too: open edges red, edges on more than two
+// triangles magenta, edges whose triangles wind the same way orange, zero-area triangles as yellow dots.
+const FAULT_COLORS = { open: "#ff4d4d", overshared: "#ff4dff", flipped: "#ffa64d", degenerate: "#ffe14d" };
+
+function FaultLines({ geometry, color, clippingPlane }: { geometry: LineSegmentsGeometry; color: string; clippingPlane: Plane | null }) {
+  const { size } = useThree();
+  const lines = useMemo(() => new LineSegments2(geometry, new LineMaterial({ color, linewidth: 2.5, transparent: true, opacity: 0.95, depthTest: false })), [geometry, color]);
+  useEffect(() => () => lines.material.dispose(), [lines]);
+  lines.material.resolution.set(size.width, size.height);
+  lines.material.clippingPlanes = clippingPlane ? [clippingPlane] : [];
+  return <primitive object={lines} renderOrder={40} raycast={() => null} userData={{ meshFault: true }} />;
+}
+
+function MeshFaults({ faults, clippingPlane }: { faults: FaultResources; clippingPlane: Plane | null }) {
+  return <>
+    {faults.open && <FaultLines geometry={faults.open} color={FAULT_COLORS.open} clippingPlane={clippingPlane} />}
+    {faults.overshared && <FaultLines geometry={faults.overshared} color={FAULT_COLORS.overshared} clippingPlane={clippingPlane} />}
+    {faults.flipped && <FaultLines geometry={faults.flipped} color={FAULT_COLORS.flipped} clippingPlane={clippingPlane} />}
+    {faults.degenerate && <points geometry={faults.degenerate} renderOrder={41} raycast={() => undefined} userData={{ meshFault: true }}>
+      <pointsMaterial color={FAULT_COLORS.degenerate} size={7} sizeAttenuation={false} depthTest={false} transparent
+        clippingPlanes={clippingPlane ? [clippingPlane] : []} />
+    </points>}
+  </>;
+}
+
+function PointMarker({ point }: { point: number[] }) {
+  const geometry = useMemo(() => {
+    const result = new BufferGeometry();
+    result.setAttribute("position", new BufferAttribute(new Float32Array(point), 3));
+    return result;
+  }, [point[0], point[1], point[2]]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <points geometry={geometry} renderOrder={42} raycast={() => undefined}>
+    <pointsMaterial color="#13d9f0" size={11} sizeAttenuation={false} depthTest={false} transparent />
+  </points>;
+}
+
 function sectionAxis(axis: SectionSettings["axis"]) {
   return axis === "x" ? 0 : axis === "y" ? 1 : 2;
 }
 
-function PartMesh({ placement, resources, origin, section, clippingPlane, selected, faceId, edgeId, hovered, hoverFaceId, hoverEdgeId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
+function PartMesh({ placement, resources, faults, origin, section, clippingPlane, selected, faceId, edgeId, point, hovered, hoverFaceId, hoverEdgeId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
   placement: Placement;
   resources: PartResources;
+  faults: FaultResources | null;
   origin: number[];
   section: SectionSettings;
   clippingPlane: Plane | null;
   selected: boolean;
   faceId: string | null;
   edgeId: string | null;
+  point: number[] | null;
   hovered: boolean;
   hoverFaceId: string | null;
   hoverEdgeId: string | null;
@@ -233,15 +283,15 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
   const { part, node } = placement;
   const { geometry, edges } = resources;
   const surface = useRef<Mesh>(null);
+  const mesh = isMesh(part);
+  // A ghost is a see-through reference: drawn after solid parts, never picked, without outlines.
+  const ghost = !!node.ghost;
+  const picking = pickingEnabled && !ghost;
   const selectedFace = part.faces.find((item) => item.id === faceId) ?? null;
   const hoveredFace = part.faces.find((item) => item.id === hoverFaceId && item.id !== faceId) ?? null;
   const selectedEdge = part.edges?.find((item) => item.id === edgeId) ?? null;
   const hoveredEdge = part.edges?.find((item) => item.id === hoverEdgeId && item.id !== edgeId) ?? null;
-  const matrix = useMemo(() => {
-    const result = new Matrix4().fromArray(placement.matrix);
-    for (let axis = 0; axis < 3; axis++) result.elements[12 + axis] -= origin[axis];
-    return result;
-  }, [placement, origin]);
+  const matrix = useMemo(() => partMatrix(placement, origin), [placement, origin]);
   const clippedEdges = useMemo(() => {
     if (!section.enabled || !resources.cadEdges) return null;
     const clipped = clipCadEdges(part.edges ?? [], placement.matrix, section);
@@ -256,23 +306,30 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
   const wholePartHovered = hovered && !wholePartSelected;
   return (
     <group matrix={matrix} matrixAutoUpdate={false}>
-      <mesh ref={surface} name="cad-surface" castShadow={studio} receiveShadow={studio}
-        raycast={(raycaster, hits) => { if (surface.current) sectionMeshRaycast(surface.current, raycaster, hits, clippingPlane); }}
+      <mesh ref={surface} name={ghost ? "reference-surface" : "cad-surface"} castShadow={studio && !ghost} receiveShadow={studio && !ghost}
+        userData={{ meshSurface: mesh }}
+        raycast={(raycaster, hits) => {
+          if (ghost || !surface.current) return;
+          sectionMeshRaycast(surface.current, raycaster, hits, clippingPlane);
+        }}
         onClick={(event) => {
         event.stopPropagation();
-        if (!pickingEnabled || event.delta > 4 || (event.faceIndex ?? -1) < 0) return;
-        if (selectionMode === "face") {
+        if (!picking || event.delta > 4 || (event.faceIndex ?? -1) < 0) return;
+        if (selectionMode === "point") {
+          const local = surface.current!.worldToLocal(event.point.clone());
+          onSelect(node.id, undefined, undefined, { triangle: event.faceIndex!, point: local.toArray() });
+        } else if (selectionMode === "face" && !mesh) {
           const hitFace = faceAtTriangle(part, event.faceIndex ?? -1);
           if (hitFace) onSelect(node.id, hitFace.id);
-        } else if (selectionMode === "part") onSelect(node.id);
+        } else if (selectionMode === "part" || mesh) onSelect(node.id);
         else onSelect("");
       }} onPointerMove={(event) => {
-        if (!pickingEnabled) return;
+        if (!picking) return;
         event.stopPropagation();
         if ((event.faceIndex ?? -1) < 0) { onHover(null); return; }
         onHover(hoverTarget(part, node.id, selectionMode, event.faceIndex ?? -1));
       }} onPointerOut={(event) => {
-        if (!pickingEnabled) return;
+        if (!picking) return;
         event.stopPropagation();
         onHoverEnd(node.id);
       }}>
@@ -281,19 +338,20 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
           {...(studio ? appearanceFor(finish) : { roughness: 0.45, metalness: 0.15, clearcoat: 0, clearcoatRoughness: 0, envMapIntensity: 0 })}
           emissive={wholePartSelected ? "#167b75" : wholePartHovered ? "#134d59" : "#000000"}
           emissiveIntensity={wholePartSelected ? 0.3 : wholePartHovered ? 0.18 : 0}
-          side={section.enabled ? DoubleSide : FrontSide} clippingPlanes={clippingPlane ? [clippingPlane] : []}
+          flatShading={mesh} transparent={ghost} opacity={ghost ? 0.28 : 1} depthWrite={!ghost}
+          side={section.enabled || ghost || (mesh && !part.closed) ? DoubleSide : FrontSide} clippingPlanes={clippingPlane ? [clippingPlane] : []}
           clipShadows={section.enabled} />
       </mesh>
-      <lineSegments visible={!resources.cadEdges && (showEdges || wholePartSelected || wholePartHovered)} raycast={() => undefined}>
+      {edges && !ghost && <lineSegments visible={!resources.cadEdges && (showEdges || wholePartSelected || wholePartHovered)} raycast={() => undefined}>
         <primitive object={edges} attach="geometry" />
         <lineBasicMaterial color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : "#0e2533"} transparent
           opacity={wholePartSelected ? 0.9 : wholePartHovered ? 0.75 : 0.45}
           clippingPlanes={clippingPlane ? [clippingPlane] : []} />
-      </lineSegments>
-      {resources.cadEdges && (!section.enabled || clippedEdges?.geometry) && <CadLines geometry={clippedEdges?.geometry ?? resources.cadEdges}
+      </lineSegments>}
+      {resources.cadEdges && !ghost && (!section.enabled || clippedEdges?.geometry) && <CadLines geometry={clippedEdges?.geometry ?? resources.cadEdges}
         color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : selectionMode === "edge" ? "#7896a6" : "#0e2533"} width={1}
         visible={showEdges || selectionMode === "edge" || wholePartSelected || wholePartHovered}
-        picking={pickingEnabled && selectionMode === "edge" ? {
+        picking={picking && selectionMode === "edge" ? {
           nodeId: node.id, ranges: clippedEdges?.ranges ?? resources.edgeRanges, tolerance: Math.max(diagonal(part.bounds) * 1e-5, 1e-6),
         } : undefined}
         onSelect={onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />}
@@ -301,6 +359,8 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
       {selectedFace && <FaceOverlay part={part} face={selectedFace} selected clippingPlane={clippingPlane} />}
       {hoveredEdge && <EdgeOverlay edge={hoveredEdge} selected={false} matrix={placement.matrix} section={section} />}
       {selectedEdge && <EdgeOverlay edge={selectedEdge} selected matrix={placement.matrix} section={section} />}
+      {faults && <MeshFaults faults={faults} clippingPlane={clippingPlane} />}
+      {point && <PointMarker point={point} />}
     </group>
   );
 }
@@ -342,7 +402,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
     const committed = placeParts(model, state.explode, state.direction, state.fixedId, sequencePose(state));
     const visible = committed.filter((item) => !state.hiddenIds.includes(item.node.id));
     const bounds = mergeBounds(visible.map((item) => item.bounds)) || model.bounds;
-    const origin = center(model.bounds);
+    const origin = sceneOrigin(model);
     const fitKey = `${state.topologyRevision}:${state.fitNonce}`;
     if (headless ? state.cameraPinned && state.camera : !fitted.current && state.camera) controller.restore(state.camera!);
     else if (headless || fitted.current !== fitKey) {
@@ -416,13 +476,21 @@ export default function Scene(props: Props) {
   const placements = useMemo(() => placeParts(model, amount, state.direction, state.fixedId, sequencePose(state, stepPosition)),
     // The sequence's digest, not its object identity, which every state event replaces.
     [model, amount, state.direction, state.fixedId, state.assembly?.digest, state.stepMode, stepPosition]);
-  const origin = useMemo(() => center(model.bounds), [model]);
+  const origin = useMemo(() => sceneOrigin(model), [model]);
   const section = useMemo(() => ({ ...state.section, position: sectionPosition }),
     [state.section.enabled, state.section.axis, state.section.flipped, sectionPosition]);
   const clippingPlane = useMemo(() => sceneSectionPlane(section, origin), [section, origin]);
-  const resources = useMemo(() => new GeometryResources(model), [model]);
+  // Geometry is built once per composed model: arranging files gives a new model object over the same parts.
+  const resources = useMemo(() => new GeometryResources(model), [model.parts]);
   const axes = useMemo(createAxisStore, []);
   const pickingEnabled = props.active && amount === state.explode && stepPosition === state.step && sectionPosition === state.section.position && !state.loading;
+  // Dense meshes that can be picked get their picking trees from a worker; ghosts, hidden parts and the background
+  // renderer, which never picks, do not ask.
+  useEffect(() => {
+    if (props.headless) return;
+    const pickable = new Set(model.nodes.filter((node) => node.partId && !node.ghost && !state.hiddenIds.includes(node.id)).map((node) => node.partId));
+    for (const part of model.parts) if (pickable.has(part.id)) resources.requestTree(part);
+  }, [model, resources, state.hiddenIds, props.headless]);
   const onHover = useCallback((next: HoverTarget | null) => setHovered((current) =>
     current?.nodeId === next?.nodeId && current?.faceId === next?.faceId && current?.edgeId === next?.edgeId ? current : next
   ), []);
@@ -452,7 +520,7 @@ export default function Scene(props: Props) {
       onPointerMissed={() => { if (props.active) props.onSelect(""); }}
       onCreated={({ gl }) => {
         gl.localClippingEnabled = true;
-        gl.domElement.setAttribute("aria-label", "Interactive STEP assembly");
+        gl.domElement.setAttribute("aria-label", "Interactive model");
       }}>
       <color attach="background" args={[props.background ?? (studio ? "#29313d" : "#0b1722")]} />
       <StudioStage bounds={stageBounds} enabled={studio} />
@@ -467,10 +535,12 @@ export default function Scene(props: Props) {
       </>}
       {placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((placement) => (
         <PartMesh key={placement.node.id} placement={placement} resources={resources.get(placement.part)} origin={origin}
+          faults={state.showFaults && !placement.node.ghost ? resources.faults(placement.part) : null}
           selected={state.selectedIds.includes(placement.node.id)}
           faceId={state.selectedFace?.nodeId === placement.node.id ? state.selectedFace.faceId : null}
           edgeId={state.selectedEdge?.nodeId === placement.node.id ? state.selectedEdge.edgeId : null}
-          hovered={state.selectionMode === "part" && hovered?.nodeId === placement.node.id}
+          point={state.selectedPoint?.nodeId === placement.node.id ? state.selectedPoint.point : null}
+          hovered={hovered?.nodeId === placement.node.id && hovered.faceId === null && !hovered.edgeId}
           hoverFaceId={state.selectionMode === "face" && hovered?.nodeId === placement.node.id ? hovered.faceId : null}
           hoverEdgeId={state.selectionMode === "edge" && hovered?.nodeId === placement.node.id ? hovered.edgeId ?? null : null}
           selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}
@@ -478,10 +548,12 @@ export default function Scene(props: Props) {
           studio={studio} finish={state.materialFinish} showEdges={state.showEdges}
           onSelect={props.onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />
       ))}
-      {clippingPlane && placements.filter((part) => !state.hiddenIds.includes(part.node.id) && part.part.sectionCaps === true).map((placement, index) => (
-        <SectionCap key={`section:${placement.node.id}`} placement={placement} resources={resources.get(placement.part)}
-          origin={origin} capCenter={capCenter} section={section} plane={clippingPlane} planeGeometry={capGeometry}
-          order={10 + index * 3} studio={studio} />
+      {clippingPlane && placements.filter((part) => !state.hiddenIds.includes(part.node.id) && !part.node.ghost).map((placement, index) => (
+        placement.part.sectionCaps === true
+          ? <SectionCap key={`section:${placement.node.id}`} placement={placement} resources={resources.get(placement.part)}
+            origin={origin} capCenter={capCenter} section={section} plane={clippingPlane} planeGeometry={capGeometry}
+            order={10 + index * 3} studio={studio} />
+          : <SectionOutline key={`section:${placement.node.id}`} placement={placement} origin={origin} section={section} order={10 + index * 3} />
       ))}
       {stepPosition !== null && <SequenceTrails placements={placements.filter((part) => !state.hiddenIds.includes(part.node.id))} origin={origin} />}
       <Rig {...props} placements={placements} resources={resources} axes={axes} />

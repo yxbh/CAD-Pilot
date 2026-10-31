@@ -34,7 +34,7 @@ def run(url, output):
 
             wait(lambda current: not current["loading"] and current["documentRevision"], 120)
             settled()
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             slider = page.get_by_role("slider", name="Explode amount")
             cases = []
             for projection, appearance in [("perspective", "inspect"), ("orthographic", "studio")]:

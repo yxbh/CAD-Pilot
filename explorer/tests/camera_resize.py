@@ -153,7 +153,7 @@ def run(url, output):
             wait(lambda current: not current["loading"] and current["documentRevision"], 120)
             wait(lambda _: page.evaluate("() => !!window.cameraTest.store?.getState().camera"))
             settled()
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             cases = []
             for projection in ["orthographic", "perspective"]:
                 page.set_viewport_size({"width": 1248, "height": 920})

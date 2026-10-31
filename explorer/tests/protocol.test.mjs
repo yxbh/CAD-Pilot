@@ -121,8 +121,8 @@ test("section settings use original model-world millimeters, preserve the camera
   assert.throws(() => changeView(state, sectionModel, "set_section", { position: Infinity }), /finite/);
   assert.throws(() => changeView(state, sectionModel, "set_section", { position: 21 }), /between/);
   assert.throws(() => changeView(state, sectionModel, "set_section", { axis: "q" }), /X, Y or Z/);
-  assert.throws(() => changeView(state, { ...sectionModel, parts: [{ ...part, sectionCaps: false }] }, "set_section", { enabled: true }),
-    { code: "section_unsupported", message: /closed solid/ });
+  // Open surfaces and meshes are cut without caps rather than refused.
+  assert.equal(changeView(state, { ...sectionModel, parts: [{ ...part, sectionCaps: false }] }, "set_section", { enabled: true }).section.enabled, true);
   const { sectionCaps, ...unknown } = part;
   assert.throws(() => changeView({ ...state, section: { ...state.section, enabled: false } }, { ...sectionModel, parts: [unknown] },
     "set_section", { enabled: true }), { code: "section_unsupported", message: /Reopen the STEP/ });

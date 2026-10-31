@@ -9,19 +9,22 @@ export function composerAttachment(model, state, expectedRevision) {
   const references = state.selectedIds.map((id) => {
     const faceId = state.selectedFace?.nodeId === id ? state.selectedFace.faceId : null;
     const edgeId = state.selectedEdge?.nodeId === id ? state.selectedEdge.edgeId : null;
-    const { node, face, edge } = referenceEntity(model, id, faceId, edgeId);
+    const point = state.selectedPoint?.nodeId === id ? state.selectedPoint : null;
+    const { node, face, edge } = referenceEntity(model, id, faceId, edgeId, point);
     return {
-      reference: createReference(model, id, faceId, edgeId),
+      reference: createReference(model, id, faceId, edgeId, point),
       occurrenceId: id,
       label: node.label,
       faceId,
       edgeId,
+      triangle: point?.triangle ?? null,
       surfaceType: face?.surfaceType ?? null,
       curveType: edge?.curveType ?? null,
     };
   });
   const label = references.length === 1
-    ? `${references[0].label}${references[0].faceId ? ` / Face ${references[0].faceId}` : references[0].edgeId ? ` / Edge ${references[0].edgeId}` : " / Part"}`
+    ? `${references[0].label}${references[0].faceId ? ` / Face ${references[0].faceId}` : references[0].edgeId ? ` / Edge ${references[0].edgeId}`
+      : references[0].triangle !== null ? ` / Point t${references[0].triangle}` : " / Part"}`
     : `${references.length} CAD selections`;
   const cleanTitle = label.replace(/[\u0000-\u001f\u007f]/g, " ");
   return {

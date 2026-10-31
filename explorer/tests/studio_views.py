@@ -43,7 +43,7 @@ def run(url, output):
 
             wait(lambda current: not current["loading"] and current["documentRevision"], 120)
             initial = settled()
-            canvas = page.locator("canvas[aria-label='Interactive STEP assembly']")
+            canvas = page.locator("canvas[aria-label='Interactive model']")
             canvas.evaluate("""canvas => {
               window.originalCanvas = canvas; window.contextLosses = 0;
               canvas.addEventListener('webglcontextlost', () => window.contextLosses++);

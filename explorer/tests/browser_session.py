@@ -42,7 +42,7 @@ class BrowserSession:
     def resize(self, width, height):
         self.page.set_viewport_size({"width": width, "height": height})
         self.page.wait_for_function("""() => {
-            const canvas = document.querySelector('canvas[aria-label="Interactive STEP assembly"]');
+            const canvas = document.querySelector('canvas[aria-label="Interactive model"]');
             if (!canvas) return false;
             const bounds = canvas.getBoundingClientRect(), dpr = Math.min(2, Math.max(1, devicePixelRatio));
             return Math.abs(canvas.width - bounds.width * dpr) <= 1 &&

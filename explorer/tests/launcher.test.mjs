@@ -16,7 +16,7 @@ test("an unbuilt Explorer fails before starting a viewer", async (t) => {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const location = await locateView({ projectRoot: directory, runtimeRoot: directory });
   let spawned = false;
-  await assert.rejects(openViewer(location, undefined, { distIndex: path.join(directory, "missing", "index.html"), spawnViewer: () => { spawned = true; } }),
+  await assert.rejects(openViewer(location, undefined, {}, { distIndex: path.join(directory, "missing", "index.html"), spawnViewer: () => { spawned = true; } }),
     (error) => error.code === "not_built" && error.message.includes("npm --prefix explorer run build"));
   assert.equal(spawned, false);
 });
@@ -92,6 +92,7 @@ test("render flags spell the same view actions as do", () => {
     step: { step: 2, mode: "buildup" }, hide: ["Lid", "bolt *"],
   });
   assert.deepEqual(renderOptions({ section: "y" }), { section: { axis: "y", flipped: false } });
+  assert.deepEqual(renderOptions({ units: "m", up: "y" }), { units: "m", up: "y" }, "how to read a mesh");
   assert.throws(() => renderOptions({ size: "600" }), /WIDTHxHEIGHT/);
   assert.throws(() => renderOptions({ explode: "lots" }), /--explode needs a number/);
   assert.throws(() => renderOptions({ outlines: "maybe" }), /on or off/);
@@ -134,7 +135,7 @@ test("open restarts a viewer that another workbench checkout started, keeping on
     void fakeViewer(t, { checkout: "/this/checkout/explorer", pid: 4242 }).then(({ record }) => writeEndpoint(location.endpoint, record));
     return { child, logStart: 0 };
   };
-  const opened = await openViewer(location, undefined, { spawnViewer, distIndex, checkout: "/this/checkout/explorer" });
+  const opened = await openViewer(location, undefined, {}, { spawnViewer, distIndex, checkout: "/this/checkout/explorer" });
   assert.deepEqual([opened.started, opened.replaced, opened.pid], [true, "/other/checkout/explorer", 4242]);
   assert.equal(foreign.server.listening, false, "the other checkout's viewer was stopped, not left competing");
   assert.ok(foreignCheckout({ explorerRoot: "/other" }, "/this") && !foreignCheckout({ explorerRoot: "/this" }, "/this"));

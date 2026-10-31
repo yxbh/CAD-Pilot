@@ -64,7 +64,7 @@ def run(url, output):
             page.route(endpoint, hold_read)
             page.route(url + "api/command", hold_open)
             live = page.locator(".live-scene")
-            canvas = page.get_by_label("Interactive STEP assembly")
+            canvas = page.get_by_label("Interactive model")
             expect(canvas).to_be_visible()
             canvas.evaluate("canvas => { window.originalCanvas = canvas; }")
             viewport = page.locator(".viewport").bounding_box()

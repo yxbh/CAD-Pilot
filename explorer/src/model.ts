@@ -30,17 +30,33 @@ export type CadEdge = {
   bounds: Bounds;
 };
 export type EdgeSelection = { nodeId: string; edgeId: string };
+export type PointSelection = { nodeId: string; triangle: number; point: number[] };
+export type MeshFaults = { openEdges: number; oversharedEdges: number; flippedEdges: number; degenerateTriangles: number };
+export type MeshBuffers = {
+  positions: Float32Array; indices: Uint32Array; outlines: Uint32Array; openEdges: Uint32Array;
+  oversharedEdges: Uint32Array; flippedEdges: Uint32Array; degenerateTriangles: Uint32Array;
+};
+// STEP previews carry JSON arrays and CAD faces; mesh parts carry typed views of their geometry file and no faces.
 export type Part = {
   id: string;
   label: string;
   color: Vec3;
-  positions: number[];
-  normals: number[];
-  indices: number[];
+  positions: ArrayLike<number>;
+  normals?: number[];
+  indices: ArrayLike<number>;
   bounds: Bounds;
   faces: CadFace[];
   edges?: CadEdge[];
   sectionCaps?: boolean;
+  documentId?: string;
+  buffers?: Record<keyof MeshBuffers, { offset: number; count: number }>;
+  mesh?: MeshBuffers;
+  vertexCount?: number;
+  triangleCount?: number;
+  closed?: boolean;
+  faults?: MeshFaults;
+  area?: number;
+  volume?: number | null;
 };
 export type ModelNode = {
   id: string;
@@ -49,15 +65,27 @@ export type ModelNode = {
   partId: string | null;
   matrix: number[];
   color: Vec3;
+  documentId?: string;
+  sourceId?: string;
+  ghost?: boolean;
+};
+export type MeshFrame = { units: string; up: "z" | "y"; note: string };
+export type ViewDocument = {
+  id: string; name: string; kind: "step" | "mesh"; format: string; topologyRevision: string;
+  frame: MeshFrame | null; style: "solid" | "ghost"; offset: number[]; rotate: number[];
 };
 export type Model = {
   schemaVersion: 2;
+  kind?: "mesh" | "view";
   topologyRevision: string;
-  source: { name: string; sha256: string };
+  source: { name: string; sha256: string; format?: string };
+  documents?: { id: string; name: string; kind: string; sha256: string; topologyRevision: string; bounds: Bounds }[];
+  frame?: MeshFrame;
   units: "mm";
   parts: Part[];
   nodes: ModelNode[];
   bounds: Bounds;
+  sourceBounds?: Bounds;
   warnings: string[];
   cleanup?: { degenerateEdges: number | null; zeroAreaTriangles: number | null };
 };
@@ -69,9 +97,13 @@ export type ViewState = {
   selectedIds: string[];
   selectedFace: FaceSelection | null;
   selectedEdge: EdgeSelection | null;
-  selectionMode: "face" | "edge" | "part";
+  selectedPoint: PointSelection | null;
+  selectionMode: "face" | "edge" | "point" | "part";
   autoCopy: boolean;
   hiddenIds: string[];
+  documents: ViewDocument[];
+  layout: "overlay" | "side";
+  showFaults: boolean;
   explode: number;
   fixedId: string;
   direction: "radial" | "x" | "y" | "z";
@@ -132,9 +164,18 @@ export function faceAtTriangle(part: Part, triangle: number): CadFace | null {
   return null;
 }
 
+export const isMesh = (part: Part) => !!part.buffers;
+
+// The scene is drawn relative to the files' own centre, not where the view arranges them, so moving a file in the
+// view moves only that file and the camera stays put.
+export function sceneOrigin(model: Model): Vec3 {
+  return center(model.sourceBounds ?? model.bounds);
+}
+
 export function hoverTarget(part: Part, nodeId: string, mode: ViewState["selectionMode"], triangle: number): HoverTarget | null {
+  // Meshes have no CAD faces or edges, so every mode picks their whole part.
+  if (mode === "part" || mode === "point" || isMesh(part)) return { nodeId, faceId: null };
   if (mode === "edge") return null;
-  if (mode === "part") return { nodeId, faceId: null };
   const face = faceAtTriangle(part, triangle);
   return face ? { nodeId, faceId: face.id } : null;
 }

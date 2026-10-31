@@ -34,7 +34,7 @@ def run(url, output):
             wait(lambda current: not current["loading"] and current["documentRevision"], 120)
             settled()
             model = page.request.get(url + "api/model").json()
-            canvas = page.locator('canvas[aria-label="Interactive STEP assembly"]')
+            canvas = page.locator('canvas[aria-label="Interactive model"]')
             parts = {part["id"]: part for part in model["parts"]}
             leaves = [node for node in model["nodes"] if node["partId"]]
             cover = next(node for node in leaves if node["label"] == "Cover plate")
