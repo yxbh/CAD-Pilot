@@ -4,10 +4,14 @@ A part keeps its own label. An unlabelled only child takes its group's name,
 and other unlabelled parts are numbered after their group by position, so
 ``kit`` with two unlabelled solids exports as ``kit 1`` and ``kit 2`` rather
 than the STEP writer's ``SOLID``. A name a CAD kernel or STEP writer made up,
-such as ``COMPOUND`` or ``=>[0:1:1:3]``, counts as no label. The STEP writer,
-the part listings and CAD Explorer's STEP converter use these same rules, so a
-fallback name read back from a STEP file matches the one it was written with
-and the one the viewer shows.
+such as ``COMPOUND`` or ``=>[0:1:1:3]``, counts as no label; kernels spell type
+names in capitals, so a part labelled ``shell`` or ``Solid`` keeps its name. A
+label of digits alone, such as ``608``, also counts as none, since other
+writers put numeric ids where a name belongs. The STEP writer, the part
+listings and CAD Explorer's STEP converter use these same rules, so a fallback
+name read back from a STEP file matches the one it was written with and the
+one the viewer shows. An unlabelled root is named after its STEP file, as
+``root_name`` gives it.
 """
 
 from __future__ import annotations
@@ -18,8 +22,9 @@ from typing import TypeVar
 
 Node = TypeVar("Node")
 
-# What shapes are called when nobody named them: their type, as build123d, OCCT and other STEP writers put it.
-_GENERIC_NAMES = {"assembly", "solid", "compound", "compsolid", "shell", "face", "wire", "edge", "vertex", "shape"}
+# What shapes are called when nobody named them: their type, spelled as build123d, OCCT and other STEP writers put it.
+# Matched exactly, since people label parts "shell" or "Solid".
+_GENERIC_NAMES = {"ASSEMBLY", "SOLID", "COMPOUND", "COMPSOLID", "SHELL", "FACE", "WIRE", "EDGE", "VERTEX", "SHAPE"}
 # The STEP writer names an unnamed label after its document entry.
 _ENTRY_NAME = re.compile(r"=>\[[0-9:]*\]")
 
@@ -29,11 +34,20 @@ def own_label(name: object) -> str | None:
     if name is None:
         return None
     text = " ".join(str(name).split())
-    lowered = text.lower()
-    if (not text or text.isdigit() or lowered in _GENERIC_NAMES or _ENTRY_NAME.fullmatch(text)
-            or lowered.replace("_", " ").startswith("open cascade step translator")):  # build123d's import_step spells it with _
+    if (not text or text.isdigit() or text in _GENERIC_NAMES or _ENTRY_NAME.fullmatch(text)
+            or text.lower().replace("_", " ").startswith("open cascade step translator")):  # build123d's import_step spells it with _
         return None
     return text
+
+
+def root_name(path: str) -> str:
+    """What a STEP's unlabelled root is called: its file name without ``.step`` or ``.stp``.
+
+    ``path`` is a STEP file's name or path, or a cad path (a STEP's path without its suffix), with ``/`` separators.
+    """
+    name = path.rsplit("/", 1)[-1]
+    stem, dot, suffix = name.rpartition(".")
+    return stem if dot and stem and suffix.lower() in {"step", "stp"} else name
 
 
 def child_name(label: object, *, group: str, index: int, siblings: int) -> str:

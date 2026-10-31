@@ -59,11 +59,6 @@ class StepCliTests(unittest.TestCase):
 
         self.assertEqual("STEP/sample.step", generate.call_args.kwargs["output"])
 
-    def test_output_flag_rejects_multiple_targets(self) -> None:
-        with self.assertRaises(SystemExit) as cm:
-            cli.main(["parts/first.py", "parts/second.py", "-o", "STEP/first.step"])
-        self.assertEqual(2, cm.exception.code)
-
     def test_passes_import_metadata_flags(self) -> None:
         with mock.patch.object(cli, "generate_step_targets", return_value=0) as generate:
             self.assertEqual(

@@ -28,7 +28,7 @@ class CacheTests(unittest.TestCase):
         os.utime(stale, (long_ago, long_ago))
         issued_refs.mark(new_step, "b" * 64)
         self.assertFalse(stale.exists())
-        self.assertTrue(issued_refs.refs_issued_for(new_step, "b" * 64))
+        self.assertEqual("b" * 64, issued_refs.issued_step_hash(new_step))
 
 
 if __name__ == "__main__":

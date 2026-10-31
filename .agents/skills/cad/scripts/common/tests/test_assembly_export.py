@@ -12,6 +12,7 @@ from common import assembly_export as assembly_export_module
 from common.assembly_export import build_assembly_compound, export_assembly_step_scene
 from common.assembly_spec import AssemblyInstanceSpec, AssemblyNodeSpec, AssemblySpec
 from common.glb_mesh_payload import DEFAULT_MATERIAL, scene_glb_mesh_payload
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION
 from common.render import part_glb_path
 from common.step_scene import (
     SelectorProfile,
@@ -37,14 +38,14 @@ def _pad4(payload: bytes, *, byte: bytes = b"\0") -> bytes:
 
 def _write_topology_glb(path: Path, manifest: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_payload = json.dumps({"schemaVersion": 1, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
+    manifest_payload = json.dumps({"schemaVersion": STEP_TOPOLOGY_SCHEMA_VERSION, "profile": "index", **manifest}, separators=(",", ":")).encode("utf-8")
     binary = _pad4(manifest_payload)
     gltf = {
         "asset": {"version": "2.0"},
         "buffers": [{"byteLength": len(binary)}],
         "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(manifest_payload)}],
         "extensionsUsed": ["STEP_topology"],
-        "extensions": {"STEP_topology": {"schemaVersion": 1, "indexView": 0, "encoding": "utf-8"}},
+        "extensions": {"STEP_topology": {"schemaVersion": STEP_TOPOLOGY_SCHEMA_VERSION, "indexView": 0, "encoding": "utf-8"}},
     }
     json_chunk = _pad4(json.dumps(gltf, separators=(",", ":")).encode("utf-8"), byte=b" ")
     path.write_bytes(

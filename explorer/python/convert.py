@@ -55,7 +55,7 @@ from OCP.XCAFDoc import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".agents" / "skills" / "cad" / "scripts"))
 
-from common.part_names import child_name, own_label  # noqa: E402
+from common.part_names import child_name, own_label, root_name  # noqa: E402
 
 MAX_INPUT_BYTES = 100 * 1024 * 1024
 MAX_OUTPUT_BYTES = 128 * 1024 * 1024
@@ -428,7 +428,7 @@ def convert_step(input_path: str | Path, name: str | None = None) -> dict:
     are named after it.
     """
     path = Path(input_path)
-    file_name = Path(name or path.name).stem
+    file_name = root_name(Path(name or path.name).name)
     data = _read_bytes(path)
     warnings = WarningLog()
     document = _read_document(data, warnings)

@@ -14,6 +14,7 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
 
 from common.atomic_replace import replacing
+from common.part_names import root_name
 from common.render import REPO_ROOT, part_3mf_path
 from common.step_scene import ColorRGBA, LoadedStepScene, OccurrenceNode, _shape_hash, occurrence_selector_id
 
@@ -494,7 +495,7 @@ def _build_scene_model_xml(
         append_component_object(
             resources,
             object_id=root_object_id,
-            name=_object_name(scene.step_path.stem, f"component-{root_object_id}"),
+            name=_object_name(root_name(scene.step_path.name), f"component-{root_object_id}"),
             components=root_components,
         )
         ET.SubElement(build, f"{{{CORE_NS}}}item", {"objectid": str(root_object_id)})
