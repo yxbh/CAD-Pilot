@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { changeView, initialState, loadedView, sameAssemblyTree } from "../server/protocol.mjs";
 import { stateSummary } from "../server/summary.mjs";
@@ -17,7 +18,10 @@ const modelFor = (sha256, labels = ["base", "lid"], width = 10) => ({
     { id: "lid", label: labels[1], partId: "shape", parentId: "root", matrix: at(0, 0, 10) },
   ],
 });
-const loaded = (model) => ({ documentRevision: model.source.sha256, topologyRevision: model.topologyRevision, modelName: "jig.step", assembly: null, loading: false, error: "" });
+const loaded = (model, file = "outputs/jig.step") => ({
+  documentRevision: model.source.sha256, topologyRevision: model.topologyRevision, modelName: path.basename(file || "jig.step"),
+  source: { file, generatedAt: "", size: 1 }, assembly: null, loading: false, error: "",
+});
 
 test("a regenerated STEP keeps the view when its assembly tree still matches, otherwise only display preferences", () => {
   const previous = modelFor("1".repeat(64));
@@ -51,6 +55,13 @@ test("a regenerated STEP keeps the view when its assembly tree still matches, ot
     [[], 0, null, false, false, 4]);
   assert.equal(reset.appearance, "studio", "display preferences belong to the person and survive any reload");
   assert.equal(loadedView(initialState(), null, renamed, loaded(renamed)).viewKept, null, "a first load has nothing to keep");
+  // Another file can share the node ids (positions in the file) and unnamed labels; it never inherits the view.
+  const other = loadedView(state, previous, regenerated, loaded(regenerated, "outputs/clip.step"));
+  assert.deepEqual([other.viewKept, other.camera, other.explode, other.section.enabled], [false, null, 0, false]);
+  // Uploads have no project path: the same file name keeps the view, another name does not.
+  const uploaded = { ...state, source: { file: "", generatedAt: "", size: 1 }, modelName: "jig.step" };
+  assert.equal(loadedView(uploaded, previous, regenerated, loaded(regenerated, "")).viewKept, true);
+  assert.equal(loadedView(uploaded, previous, regenerated, { ...loaded(regenerated, ""), modelName: "clip.step" }).viewKept, false);
   // The next view change clears the news.
   assert.equal(changeView(kept, regenerated, "fit_view").viewKept, null);
 });

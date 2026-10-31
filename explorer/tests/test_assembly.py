@@ -208,8 +208,8 @@ def test_a_wildcard_never_matches_the_whole_assembly():
     root = Compound(children=[base, anchor])
     root.label = "TMAT anchor v3"
     leaves, groups = assembly.labelled_parts(root)
-    assert assembly.match_parts(["TMAT anchor *"], groups) == (["TMAT anchor plate", "TMAT anchor bolt"], [])
-    assert assembly.match_parts(["anchor"], groups) == (["TMAT anchor plate", "TMAT anchor bolt"], []), "a real subgroup still matches"
+    assert assembly.match_parts(["TMAT anchor *"], groups) == ([("TMAT anchor plate", 0), ("TMAT anchor bolt", 0)], [])
+    assert assembly.match_parts(["anchor"], groups) == ([("TMAT anchor plate", 0), ("TMAT anchor bolt", 0)], []), "a real subgroup still matches"
     assert assembly.match_parts(["TMAT anchor v?"], groups) == ([], ["TMAT anchor v? (it matches only the whole assembly)"])
     steps = assembly.normalize_steps({"steps": [{"title": "Anchor", "parts": ["TMAT anchor *"], "from": (0, 0, -30)}]}, groups)
     # Moving every part would leave nothing to collide with and so report clear; the anchor now meets the base.
@@ -219,4 +219,29 @@ def test_a_wildcard_never_matches_the_whole_assembly():
     # A single-part model can still name its only part.
     lone = Box(4, 4, 4)
     lone.label = "lone"
-    assert assembly.match_parts(["lone"], assembly.labelled_parts(Compound(children=[lone]))[1]) == (["lone"], [])
+    assert assembly.match_parts(["lone"], assembly.labelled_parts(Compound(children=[lone]))[1]) == ([("lone", 0)], [])
+
+
+def test_groups_count_occurrences_and_no_step_moves_every_part():
+    from build123d import Box, Compound, Pos
+
+    plate = Box(20, 20, 2)
+    plate.label = "plate"
+    bolt = Pos(0, 0, 5) * Box(2, 2, 8)
+    bolt.label = "bolt"
+    bracket = Compound(children=[plate, bolt])
+    bracket.label = "Bracket"
+    loose = Pos(30, 0, 0) * Box(2, 2, 8)
+    loose.label = "bolt"
+    leaves, groups = assembly.labelled_parts(Compound(children=[bracket, loose]))
+    # Bracket holds two of the three occurrences: it is not the whole assembly, and moving it leaves the loose bolt
+    # placed, exactly as the viewer resolves it.
+    assert assembly.match_parts(["Bracket"], groups) == ([("plate", 0), ("bolt", 0)], [])
+    steps = assembly.normalize_steps({"steps": [{"title": "Bracket", "parts": ["Bracket"], "from": (30, 0, 0)}]}, groups)
+    assert steps[0]["leaves"] == [("plate", 0), ("bolt", 0)]
+    result = assembly.check_steps(steps, leaves, 1.0)[0]
+    assert (result["status"], result["contacts"][0]["blocker"]) == ("blocked", "bolt"), "the loose bolt stays in the way"
+    # A wildcard or shared prefix that resolves to every part would leave nothing to check against.
+    for pattern in (["*"], ["plate", "b*"]):
+        with pytest.raises(assembly.SequenceError, match="moves every part"):
+            assembly.normalize_steps({"steps": [{"title": "All", "parts": pattern, "from": (0, 0, 30)}]}, groups)

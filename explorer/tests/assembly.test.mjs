@@ -64,6 +64,9 @@ test("sequence labels resolve groups and wildcards to parts, and report what the
   const broad = resolveSequence(document([{ title: "All", parts: ["jig*", "p*"], from: [0, 0, 1] }]), wrapped, "x");
   assert.deepEqual(broad.steps[0].unresolved, ["jig*"]);
   assert.deepEqual(broad.steps[0].nodeIds, ["pin-1", "pin-2"], "subgroups and parts still match");
+  // A pattern that resolves to every part, such as "*" or a prefix every label shares, is refused like the exporter does.
+  assert.throws(() => resolveSequence(document([{ title: "All", parts: ["*"], from: [0, 0, 1] }]), model, "x"), /step 1 moves every part/);
+  assert.throws(() => resolveSequence(document([{ title: "Some", parts: ["cap"], from: [0, 0, 1] }, { title: "All", parts: ["base", "p*", "cap"], from: [0, 0, 1] }]), model, "x"), /step 2 moves every part/);
 });
 
 test("steps place parts from their offsets, carry earlier parts and animate fractional positions", () => {

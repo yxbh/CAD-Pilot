@@ -68,7 +68,8 @@ export function createDesktopHost(kind: RendererKind = "viewer"): ViewerHost {
   let prepareQueue: Promise<unknown> = Promise.resolve();
   return {
     getState: () => request("state"),
-    loadModel: () => request("model"),
+    // The server gives a viewer page time to mesh a model it has fetched before drawing it in the background.
+    loadModel: () => request(`model?kind=${kind}`),
     command: (name, input) => post("command", { name, input }),
     subscribe(callbacks) {
       const events = new EventSource(`api/events?client=${client}&kind=${kind}`);

@@ -19,17 +19,18 @@ import { readSequence, sequencePath } from "./assembly.mjs";
 import { defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, sameSection, sectionSupport, validateSection } from "../shared/section.mjs";
 import { displayedWorldBounds } from "../shared/placement.mjs";
 import { createHeadlessRenderer } from "./renderer.mjs";
-import { markUsed, pruneRuntime } from "./runtime-store.mjs";
+import { markUsed, pruneIfDue } from "./runtime-store.mjs";
 import { stateSummary } from "./summary.mjs";
 
 export { explorerRoot, workbenchRoot, runtimeRoot } from "./paths.mjs";
 const maxImageBytes = 40 * 1024 * 1024;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const publicError = (error) => error instanceof Error ? error.message : String(error);
-// An open viewer page usually draws within a frame or two; it gets this long before the background renderer starts.
+// An open viewer page usually draws within a frame or two; it gets this long before the background renderer starts,
+// or up to viewerLoadGraceMs while it is still meshing a model it has just fetched.
 const viewerGraceMs = 1500;
+const viewerLoadGraceMs = 15_000;
 const renderTimeoutMs = 90_000;
-const pruneIntervalMs = 10 * 60 * 1000;
 
 async function readOptionalJson(file) {
   try { return JSON.parse(await readFile(file, "utf8")); }
@@ -135,7 +136,11 @@ async function startOwnedService({
   // The last report from a person's viewer page, and from the background renderer.
   let lastRendered = null;
   let lastHeadless = null;
-  let lastPrune = 0;
+  // Why the current view could not be drawn, until a renderer draws one.
+  let renderProblem = "";
+  // The model a viewer page last fetched, and when: it is still meshing until it reports that model drawn.
+  let viewerFetch = null;
+  let headlessCaptures = Promise.resolve();
   const clients = new Map();
   const children = new Set();
   const renderWaiters = new Set();
@@ -169,6 +174,7 @@ async function startOwnedService({
     return state;
   };
   const drawn = (report) => report?.revision === state.revision && report.topologyRevision === state.topologyRevision;
+  const headlessConnected = () => [...clients.values()].some((client) => client.kind === "headless");
   const getState = () => ({
     ...state,
     application: "CAD Explorer",
@@ -180,7 +186,7 @@ async function startOwnedService({
     // drawn says which renderer drew the current revision: a viewer page, the background renderer, or neither yet.
     renderers: {
       viewers: viewerCount(), seen: drawn(lastRendered), headless: !!headless?.running,
-      drawn: drawn(lastRendered) ? "viewer" : drawn(lastHeadless) ? "headless" : null,
+      drawn: drawn(lastRendered) ? "viewer" : headlessConnected() && drawn(lastHeadless) ? "headless" : null,
     },
     // False until the startup model (requested file, saved setup or demo) has been loaded or has failed.
     initialized,
@@ -202,7 +208,7 @@ async function startOwnedService({
       const info = await stat(path.join(project, state.source.file)).catch(() => null);
       changedOnDisk = !info || info.size !== state.source.size || info.mtime.toISOString() !== state.source.generatedAt;
     }
-    return stateSummary(getState(), { url: origin && `${origin}/${token}/`, changedOnDisk });
+    return stateSummary(getState(), { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem });
   }
 
   async function python(script, args) {
@@ -228,12 +234,9 @@ async function startOwnedService({
   }
 
   // Storage stays bounded without a separate maintenance step; a failed prune never fails the user's action.
+  // A one-shot render prunes when it finishes instead, since its process may exit before a background prune ends.
   function schedulePrune() {
-    if (transient || Date.now() - lastPrune < pruneIntervalMs) return;
-    lastPrune = Date.now();
-    void pruneRuntime(runtimeRoot).then(({ freedBytes, removed }) => {
-      if (freedBytes) log(`Explorer storage: removed ${Object.entries(removed).filter(([, count]) => count).map(([kind, count]) => `${count} ${kind}`).join(", ")} (${Math.round(freedBytes / 1048576)} MB)`);
-    }, (error) => log(`Explorer storage cleanup: ${publicError(error)}`));
+    if (!transient) void pruneIfDue(runtimeRoot, { log });
   }
 
   async function demoFile() {
@@ -306,11 +309,13 @@ async function startOwnedService({
       clearTimeout(pending.timer); captures.delete(id); pending.reject(error);
     }
   }
+  // A report from a background page that has since closed says nothing about the page that will draw next.
   function renderedBy(by) {
     if (by !== "headless" && drawn(lastRendered)) return { ...lastRendered, kind: "viewer" };
-    if (by !== "viewer" && drawn(lastHeadless)) return { ...lastHeadless, kind: "headless" };
+    if (by !== "viewer" && headlessConnected() && drawn(lastHeadless)) return { ...lastHeadless, kind: "headless" };
     return null;
   }
+  const viewerMeshing = () => viewerFetch?.topologyRevision === state.topologyRevision && lastRendered?.topologyRevision !== state.topologyRevision;
 
   // Resolves once a renderer has drawn this revision. With no open (or no answering) viewer page, the background
   // renderer is started, so a hidden or closed tab never leaves a view unconfirmed.
@@ -332,16 +337,32 @@ async function startOwnedService({
         });
       };
       if (by === "viewer") return;
-      if (dependsOnHeadless(by)) start();
-      else waiter.grace = setTimeout(start, viewerGraceMs);
+      if (dependsOnHeadless(by)) return start();
+      const patience = Date.now() + viewerLoadGraceMs;
+      const check = () => {
+        if (viewerMeshing() && Date.now() < patience) waiter.grace = setTimeout(check, 250);
+        else start();
+      };
+      waiter.grace = setTimeout(check, viewerGraceMs);
     });
+  }
+
+  // A load or view change that no renderer could draw has still happened; the summary says why it was not drawn
+  // instead of failing the action. Captures, which need an image, still fail.
+  async function confirm(revision) {
+    try { await waitForRender(revision); }
+    catch (error) {
+      if (!/^render(er)?_/.test(error?.code ?? "")) throw error;
+      renderProblem = error.message;
+      log(`Explorer: the view was not drawn: ${error.message}`);
+    }
   }
 
   // Confirms the current view against a renderer that drew it, retrying when a newer command supersedes it.
   async function confirmRendered() {
     for (let attempt = 0; attempt < 5; attempt++) {
       if (!model || state.loading) break;
-      try { await waitForRender(state.revision); break; }
+      try { await confirm(state.revision); break; }
       catch (error) { if (error?.code !== "superseded_view") throw error; }
     }
     return summary();
@@ -394,15 +415,23 @@ async function startOwnedService({
       await commit(next);
       return state;
     });
-    if (rendered && definition.render === "live") await waitForRender(changed.revision);
+    if (rendered && definition.render === "live") await confirm(changed.revision);
     return getState();
   }
 
   // Agents' captures come from the background renderer at a fixed size; a viewer page's own Capture button names
   // itself as the client so the image matches what that person sees.
+  // The background page has one drawing surface, so its captures (each with its own size and backdrop) take turns.
   async function captureImage(input = {}) {
     const { client, ...requested } = input;
     const options = captureOptions(requested);
+    if (client !== undefined) return captureFrom(client, options);
+    const turn = headlessCaptures.then(() => captureFrom(undefined, options));
+    headlessCaptures = turn.catch(() => {});
+    return turn;
+  }
+
+  async function captureFrom(client, options) {
     if (!model || state.loading) throw new PrototypeError("not_ready", "Wait for the model to finish loading", 409);
     const review = state.activeReviewId ? await reviews.get(state.activeReviewId) : null;
     const revision = state.revision;
@@ -469,6 +498,7 @@ async function startOwnedService({
       if (route === "api/state" && req.method === "GET") return respond(200, url.searchParams.get("detail") === "summary" ? await summary() : getState());
       if (route === "api/model" && req.method === "GET") {
         if (!model) throw new PrototypeError("not_ready", "Model is not ready", 409);
+        if (url.searchParams.get("kind") === "viewer") viewerFetch = { topologyRevision: model.topologyRevision };
         return respond(200, model);
       }
       if (route === "api/events" && req.method === "GET") {
@@ -477,7 +507,11 @@ async function startOwnedService({
         const kind = url.searchParams.get("kind") === "headless" ? "headless" : "viewer";
         clients.set(res, { id: url.searchParams.get("client") || randomUUID(), kind });
         const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15_000);
-        res.on("close", () => { clients.delete(res); clearInterval(heartbeat); });
+        res.on("close", () => {
+          clients.delete(res);
+          clearInterval(heartbeat);
+          if (kind === "headless" && !headlessConnected()) lastHeadless = null;
+        });
         return;
       }
       if (route === "api/command" && req.method === "POST") {
@@ -524,6 +558,7 @@ async function startOwnedService({
           }
           if (kind === "viewer") lastRendered = report;
           else lastHeadless = report;
+          renderProblem = "";
           for (const waiter of [...renderWaiters]) {
             if (report.revision < waiter.revision) continue;
             if (report.revision !== waiter.revision || report.topologyRevision !== waiter.topologyRevision) {

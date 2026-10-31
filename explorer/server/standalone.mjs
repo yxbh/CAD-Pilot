@@ -1,4 +1,5 @@
 import { createExplorerServer } from "./server.mjs";
+import { explorerRoot } from "./paths.mjs";
 import { readEndpoint, writeEndpoint } from "./endpoint.mjs";
 import { assertBuilt, defaultViewId, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
 
@@ -36,7 +37,7 @@ try {
   const url = new URL(service.url);
   await writeEndpoint(location.endpoint, {
     url: service.url, port: Number(url.port), token: url.pathname.split("/")[1], pid: process.pid,
-    projectRoot: location.project, viewId: location.viewId,
+    projectRoot: location.project, viewId: location.viewId, explorerRoot,
   });
   print(service.url);
   await service.initialize();

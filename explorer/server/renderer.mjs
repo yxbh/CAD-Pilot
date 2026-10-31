@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PrototypeError } from "./protocol.mjs";
@@ -32,69 +32,127 @@ export async function findChromium({ env = process.env, platform = process.platf
 // Hardware WebGL where the platform's ANGLE backend is dependable; software WebGL is the fallback when it is not.
 const gpuFlags = { darwin: ["--use-angle=metal"], win32: ["--use-angle=d3d11"] };
 const softwareFlags = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
+const profilePrefix = "cad-explorer-renderer-";
+
+// A viewer killed outright cannot remove its renderer's profile; the next renderer removes profiles whose owner is gone.
+export async function sweepProfiles(root = os.tmpdir(), alive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
+}) {
+  for (const name of (await readdir(root).catch(() => [])).filter((entry) => entry.startsWith(profilePrefix))) {
+    const owner = Number(await readFile(path.join(root, name, "owner"), "utf8").catch(() => ""));
+    if (Number.isInteger(owner) && owner > 0 && !alive(owner)) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// Commands over Chromium's debugging pipe: NUL-terminated JSON on fds 3 (to the browser) and 4 (from it).
+function devtools(browser) {
+  const pending = new Map();
+  let buffer = "";
+  let next = 0;
+  browser.stdio[4].on("data", (chunk) => {
+    buffer += chunk.toString("utf8");
+    for (let end = buffer.indexOf("\0"); end >= 0; end = buffer.indexOf("\0")) {
+      const text = buffer.slice(0, end);
+      buffer = buffer.slice(end + 1);
+      let message;
+      try { message = JSON.parse(text); } catch { continue; }
+      const waiter = pending.get(message.id);
+      if (!waiter) continue;
+      pending.delete(message.id);
+      if (message.error) waiter.reject(new Error(message.error.message));
+      else waiter.resolve(message.result);
+    }
+  });
+  return (method, params = {}, timeout = 15_000) => new Promise((resolve, reject) => {
+    const id = ++next;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, timeout);
+    pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
+    browser.stdio[3].write(`${JSON.stringify({ id, method, params })}\0`);
+  });
+}
+
+// Why a renderer stopped: its exit status, and the last error Chromium printed (page console output is not a reason).
+function stopReason(code, signal, stderr) {
+  const status = signal ? `signal ${signal}` : `exit code ${code}`;
+  const error = stderr.split(/\r?\n/).filter((line) => /ERROR|FATAL/.test(line) && !/CONSOLE|CVDisplayLink|GPU stall/.test(line)).at(-1);
+  return error ? `${status}: ${error.replace(/^\[[^\]]*\]\s*/, "").slice(0, 300)}` : status;
+}
 
 /**
  * One background Chromium page that draws the same viewer as the user's tab, so loads, render acknowledgements and
- * captures never depend on a visible or focused tab. It starts on demand and stops after idling. The debugging pipe
- * is held open but unused: Chromium exits by itself when this process ends, however it ends.
+ * captures never depend on a visible or focused tab. It starts on demand and stops after idling. Chromium starts on a
+ * blank page and opens the viewer over its debugging pipe, so the capability URL never appears in its command line,
+ * and it exits by itself when this process ends, however it ends. Each browser has its own temporary profile.
  */
-export function createHeadlessRenderer({ url, log = () => {}, idleMs = 10 * 60_000, find = findChromium, launch = spawn, onExit = () => {} }) {
+export function createHeadlessRenderer({ url, log = () => {}, idleMs = 2 * 60_000, find = findChromium, launch = spawn, onExit = () => {}, tmp = os.tmpdir() }) {
   let child = null;
   let starting = null;
-  let profile = null;
+  let stopping = null;
   let software = false;
   let idle = null;
   let closed = false;
-  let stderr = "";
 
   const touch = () => {
     clearTimeout(idle);
-    idle = setTimeout(() => { void stop(); }, idleMs);
+    idle = setTimeout(() => { void halt(); }, idleMs);
     idle.unref?.();
   };
-  async function stop() {
-    clearTimeout(idle);
-    const running = child;
-    child = null;
-    if (running && running.exitCode === null) {
-      const exited = new Promise((resolve) => running.once("exit", resolve));
-      running.kill();
+  // An intentional stop: the browser's exit is expected, so it is not reported as a failure.
+  async function stop(browser) {
+    if (browser.exitCode === null && browser.signalCode === null) {
+      const exited = new Promise((resolve) => browser.once("exit", resolve));
+      browser.kill();
       // A browser wedged by its GPU process may ignore the polite signal.
-      const force = setTimeout(() => running.kill("SIGKILL"), 5000);
+      const force = setTimeout(() => browser.kill("SIGKILL"), 5000);
       await exited;
       clearTimeout(force);
     }
-    if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
-    profile = null;
+    await rm(browser.profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+  }
+  function halt() {
+    clearTimeout(idle);
+    const running = child;
+    child = null;
+    if (!running) return stopping ?? Promise.resolve();
+    stopping = stop(running).finally(() => { stopping = null; });
+    return stopping;
   }
   async function start() {
+    await stopping;
     const executable = await find();
-    profile = await mkdtemp(path.join(os.tmpdir(), "cad-explorer-renderer-"));
-    stderr = "";
+    await sweepProfiles(tmp);
+    const profile = await mkdtemp(path.join(tmp, profilePrefix));
+    await writeFile(path.join(profile, "owner"), String(process.pid));
+    let stderr = "";
     const browser = launch(executable, [
       "--headless", `--user-data-dir=${profile}`, "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
       "--disable-extensions", "--mute-audio", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1280,800",
       "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
       ...(software ? softwareFlags : gpuFlags[process.platform] ?? []),
-      `${url}?renderer=headless`,
+      "about:blank",
     ], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
+    browser.profile = profile;
     child = browser;
-    browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-4000); });
+    browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-8000); });
     browser.once("exit", (code, signal) => {
+      void rm(profile, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
       if (child !== browser) return;
       child = null;
-      const detail = stderr.trim().split(/\r?\n/).filter((line) => !/CVDisplayLink|GPU stall/.test(line)).at(-1) || `exit ${code ?? signal}`;
-      log(`Explorer headless renderer stopped: ${detail}`);
-      onExit(new PrototypeError("renderer_failed", `The headless renderer stopped (${detail})`, 503));
+      const reason = stopReason(code, signal, stderr);
+      log(`Explorer headless renderer stopped: ${reason}`);
+      onExit(new PrototypeError("renderer_failed", `The headless renderer stopped (${reason})`, 503));
     });
     try {
       await new Promise((resolve, reject) => {
         browser.once("spawn", resolve);
         browser.once("error", (error) => reject(new PrototypeError("renderer_failed", `Headless renderer did not start: ${error.message}`, 503)));
       });
+      await devtools(browser)("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
+        throw new PrototypeError("renderer_failed", `Headless renderer did not open the viewer: ${error.message}`, 503);
+      });
     } catch (error) {
-      child = null;
-      await stop();
+      if (child === browser) child = null;
+      await stop(browser);
       throw error;
     }
   }
@@ -104,7 +162,7 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 10 * 60_0
     async ensure() {
       if (closed) throw new PrototypeError("closed", "Explorer is closing", 410);
       touch();
-      if (child) return;
+      if (child && !starting) return;
       starting ??= start().finally(() => { starting = null; });
       return starting;
     },
@@ -114,19 +172,21 @@ export function createHeadlessRenderer({ url, log = () => {}, idleMs = 10 * 60_0
       if (software || closed) return false;
       software = true;
       log("Explorer headless renderer: hardware WebGL is unavailable; retrying with software rendering.");
-      await stop();
+      await starting?.catch(() => {});
+      await halt();
       await this.ensure();
       return true;
     },
-    // A page that failed for good is stopped, so the next request starts a fresh one instead of waiting on it.
+    // A page that failed for good is stopped, so the next request starts a fresh one instead of waiting on it. With no
+    // start in progress the stop begins at once, so a later ensure() waits for it and starts a new browser.
     async stop() {
-      await starting?.catch(() => {});
-      await stop();
+      if (starting) await starting.catch(() => {});
+      return halt();
     },
     async close() {
       closed = true;
-      await starting?.catch(() => {});
-      await stop();
+      if (starting) await starting.catch(() => {});
+      return halt();
     },
   };
 }

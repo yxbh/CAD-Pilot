@@ -25,6 +25,9 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
   const [model, setModel] = useState<Model | null>(null);
   const [surface, setSurface] = useState<{ width: number; height: number; background: string | null }>({ ...defaultSize, background: null });
   const latest = useRef<ViewState | null>(null);
+  // The surface React has committed: a capture is drawn only once its own size and backdrop are in place.
+  const applied = useRef(surface);
+  useEffect(() => { applied.current = surface; }, [surface]);
   const lastReport = useRef<RenderReport | null>(null);
   const capture = useRef<(() => ViewCapture) | null>(null);
   const fail = useCallback((text: string) => {
@@ -35,13 +38,13 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     setState(latest.current);
   }, []);
 
-  const settle = useCallback(async (revision: number, width: number, height: number) => {
-    // Two frames let React apply the requested size and background before checking the renderer's report.
+  const settle = useCallback(async (revision: number, width: number, height: number, background: string | null) => {
     await nextFrame(); await nextFrame();
     for (let frame = 0; frame < 900; frame++) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
-      if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height) return;
+      const surfaceReady = applied.current.width === width && applied.current.height === height && applied.current.background === background;
+      if (capture.current && surfaceReady && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height) return;
       await nextFrame();
     }
     throw new Error("The background renderer did not draw the view at the requested size");
@@ -60,8 +63,9 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
         }
         const width = request.width ?? defaultSize.width;
         const height = request.height ?? defaultSize.height;
-        setSurface({ width, height, background: request.background ?? null });
-        await settle(request.revision, width, height);
+        const background = request.background ?? null;
+        setSurface({ width, height, background });
+        await settle(request.revision, width, height, background);
         const captured = capture.current!();
         await host.captureResult({ ...request, dataUrl: captured.dataUrl, camera: captured.camera });
       } catch (failure) {

@@ -44,10 +44,15 @@ export function sameAssemblyTree(previous, next) {
   });
 }
 
-/** The state for a newly loaded model: the previous view where the assembly tree still matches, otherwise its defaults. */
+// Only a regeneration of the same file keeps its view: an unrelated STEP can share node ids (they are positions in
+// the file) and unnamed labels. Uploads have no project path, so they compare by file name.
+const sameSource = (state, loaded) => loaded.source.file ? loaded.source.file === state.source.file
+  : !state.source.file && loaded.modelName === state.modelName;
+
+/** The state for a newly loaded model: the previous view where the same file's assembly tree still matches, otherwise its defaults. */
 export function loadedView(state, previousModel, model, loaded) {
   const base = { ...initialState(), ...Object.fromEntries(preferences.map((key) => [key, state[key]])), ...loaded, revision: state.revision };
-  if (!sameAssemblyTree(previousModel, model)) {
+  if (!sameSource(state, loaded) || !sameAssemblyTree(previousModel, model)) {
     return { ...base, section: defaultSection(model.bounds), fitNonce: state.fitNonce + 1, viewKept: previousModel ? false : null };
   }
   const steps = loaded.assembly?.steps.length ?? 0;

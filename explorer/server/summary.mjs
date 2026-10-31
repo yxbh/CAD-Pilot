@@ -6,7 +6,7 @@ export function revisionLabel(sha256) {
   return sha256 ? sha256.slice(0, 12) : "";
 }
 
-export function stateSummary(state, { url, changedOnDisk = false } = {}) {
+export function stateSummary(state, { url, changedOnDisk = false, problem = "" } = {}) {
   const labels = new Map(state.parts.map((part) => [part.id, part.label]));
   const name = (id) => labels.get(id) ?? id;
   const steps = state.assembly?.steps ?? [];
@@ -28,6 +28,7 @@ export function stateSummary(state, { url, changedOnDisk = false } = {}) {
   };
   let note = "";
   if (!state.modelName || state.loading) note = state.loading ? "The model is still loading." : "";
+  else if (problem && !drawn) note = `The model loaded, but no renderer could draw it: ${problem} Open ${url} to see it.`;
   else if (!viewers) note = `No viewer page is open${drawn === "headless" ? "; the view was drawn in the background" : ""}. Open ${url} to see it.`;
   else if (!seen) note = "An open viewer page has not drawn this revision yet; it may be hidden or in the background.";
   if (changedOnDisk) note = `${state.source.file} changed on disk after it was loaded; run open again to show the new file. ${note}`.trim();

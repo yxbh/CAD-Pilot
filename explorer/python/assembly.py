@@ -68,10 +68,15 @@ def _load_source(path: Path):
     return module
 
 
-def labelled_parts(shape) -> tuple[dict[str, list], dict[str, list[str]]]:
-    """World-placed leaf shapes by label, and every label (leaf or group) mapped to its leaf labels."""
+# A part occurrence: its label and its index among the parts sharing that label, as CAD Explorer moves occurrences.
+Occurrence = tuple[str, int]
+
+
+def labelled_parts(shape) -> tuple[dict[str, list], dict[str, list[Occurrence]]]:
+    """World-placed leaf shapes by label (one per occurrence), and every label (leaf or group) mapped to the part
+    occurrences under it."""
     leaves: dict[str, list] = {}
-    groups: dict[str, list[str]] = {}
+    groups: dict[str, list[Occurrence]] = {}
 
     def visit(node, ancestors):
         children = list(getattr(node, "children", None) or ())
@@ -82,11 +87,10 @@ def labelled_parts(shape) -> tuple[dict[str, list], dict[str, list[str]]]:
             return
         if not label:
             raise SequenceError("Every assembly part needs a label so sequence steps can name it")
-        leaves.setdefault(label, []).append(node.located(node.global_location))
+        placed = leaves.setdefault(label, [])
+        placed.append(node.located(node.global_location))
         for name in ancestors + [label]:
-            members = groups.setdefault(name, [])
-            if label not in members:
-                members.append(label)
+            groups.setdefault(name, []).append((label, len(placed) - 1))
 
     visit(shape, [])
     return leaves, groups
@@ -97,16 +101,17 @@ def label_pattern(glob: str) -> re.Pattern:
     return re.compile("".join(".*" if char == "*" else "." if char == "?" else re.escape(char) for char in glob), re.DOTALL)
 
 
-def match_parts(patterns: list[str], groups: dict[str, list[str]]) -> tuple[list[str], list[str]]:
-    """Leaf labels named by the patterns, and the patterns that name nothing.
+def match_parts(patterns: list[str], groups: dict[str, list[Occurrence]]) -> tuple[list[Occurrence], list[str]]:
+    """Part occurrences named by the patterns, and the patterns that name nothing.
 
     A group holding every part (the top-level assembly, or a wrapper around it) never matches, exactly as in CAD
     Explorer: a step moving the whole model has nothing to arrive at, so its check would be clear by default, and a
     pattern such as ``Anchor *`` written for parts must not catch an ``Anchor v3`` root.
     """
-    every = {leaf for members in groups.values() for leaf in members}
-    whole = {name for name, members in groups.items() if members != [name] and set(members) == every}
-    matched: list[str] = []
+    every = every_occurrence(groups)
+    # Occurrences, not labels: a group of a plate and a bolt beside a loose bolt is not the whole assembly.
+    whole = {name for name, members in groups.items() if set(members) == every and {label for label, _ in members} != {name}}
+    matched: list[Occurrence] = []
     missing: list[str] = []
     for pattern in patterns:
         matcher = label_pattern(pattern)
@@ -114,8 +119,12 @@ def match_parts(patterns: list[str], groups: dict[str, list[str]]) -> tuple[list
         if not names:
             missing.append(f"{pattern} (it matches only the whole assembly)" if any(matcher.fullmatch(name) for name in whole) else pattern)
         for name in names:
-            matched.extend(leaf for leaf in groups[name] if leaf not in matched)
+            matched.extend(occurrence for occurrence in groups[name] if occurrence not in matched)
     return matched, missing
+
+
+def every_occurrence(groups: dict[str, list[Occurrence]]) -> set[Occurrence]:
+    return {occurrence for members in groups.values() for occurrence in members}
 
 
 def _vector(value, field: str) -> list[float]:
@@ -147,11 +156,14 @@ def normalize_steps(raw, groups: dict[str, list[str]]) -> list[dict]:
         leaves, missing = match_parts(parts, groups)
         if missing:
             raise SequenceError(f"Step {index} names unknown part(s): {', '.join(missing)}")
+        # A step moving every part has nothing to arrive at, and its check would be clear by default.
+        if set(leaves) == every_occurrence(groups):
+            raise SequenceError(f"Step {index} moves every part ({', '.join(parts)}); name only the parts that arrive in that step")
         note = step.get("note", "")
         if not isinstance(note, str):
             raise SequenceError(f"Step {index} note must be text")
         check_shapes = step.get("check_shapes") or {}
-        if not isinstance(check_shapes, dict) or any(name not in leaves for name in check_shapes):
+        if not isinstance(check_shapes, dict) or any(name not in {label for label, _ in leaves} for name in check_shapes):
             raise SequenceError(f"Step {index} check_shapes must replace parts named in that step")
         if not all(isinstance(shape, Shape) and shape.wrapped is not None for shape in check_shapes.values()):
             raise SequenceError(f"Step {index} check_shapes values must be build123d shapes")
@@ -222,21 +234,21 @@ def check_steps(steps: list[dict], leaves: dict[str, list], sample_mm: float) ->
 
     first_step = {}
     for index, step in enumerate(steps):
-        for name in step["leaves"]:
-            first_step.setdefault(name, index)
+        for occurrence in step["leaves"]:
+            first_step.setdefault(occurrence, index)
     results = []
     for index, step in enumerate(steps):
         moving = set(step["leaves"])
-        placed = [(name, shape, _box(shape)) for name, shapes in leaves.items() if name not in moving and first_step.get(name, -1) < index
-                  for shape in shapes]
+        placed = [(name, shape, _box(shape)) for name, shapes in leaves.items() for number, shape in enumerate(shapes)
+                  if (name, number) not in moving and first_step.get((name, number), -1) < index]
         movers = []
         substitutes = []
-        for name in step["leaves"]:
+        for name, number in step["leaves"]:
             replacement = step["check_shapes"].get(name)
-            if replacement is not None:
+            if replacement is not None and not any(item.startswith(f"{name} checked as") for item in substitutes):
                 substitutes.append(f"{name} checked as {getattr(replacement, 'label', '') or 'a supplied stand-in'}")
-            for shape in [replacement] if replacement is not None else leaves[name]:
-                movers.append((name, shape, _box(shape)))
+            shape = replacement if replacement is not None else leaves[name][number]
+            movers.append((name, shape, _box(shape)))
         length = math.hypot(*step["from"])
         direction = [value / length for value in step["from"]] if length else [0.0, 0.0, 0.0]
         result = {"status": "clear", "clearsAt": None, "contacts": []}

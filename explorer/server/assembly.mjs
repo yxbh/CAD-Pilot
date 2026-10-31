@@ -53,7 +53,7 @@ export function resolveSequence(document, model, file) {
   const leavesOf = (node) => node.partId ? [node.id] : (children.get(node.id) ?? []).flatMap(leavesOf);
   const partCount = model.nodes.filter((node) => node.partId).length;
   const candidates = model.nodes.filter((node) => node.partId || leavesOf(node).length < partCount);
-  const steps = document.steps.map((step) => {
+  const steps = document.steps.map((step, index) => {
     const nodeIds = [];
     const unresolved = [];
     for (const part of step.parts) {
@@ -61,6 +61,10 @@ export function resolveSequence(document, model, file) {
       const matches = candidates.filter((node) => matcher.test(node.label));
       if (!matches.length) unresolved.push(part);
       for (const id of matches.flatMap(leavesOf)) if (!nodeIds.includes(id)) nodeIds.push(id);
+    }
+    // A step moving every part has nothing to arrive at; the exporter refuses it, and so does the viewer.
+    if (nodeIds.length === partCount) {
+      throw new PrototypeError("invalid_sequence", `Assembly sequence: step ${index + 1} moves every part (${step.parts.join(", ")}); name only the parts that arrive in that step`, 422);
     }
     return {
       title: step.title.trim(), note: step.note?.trim() ?? "", parts: step.parts, nodeIds, unresolved, from: step.from,

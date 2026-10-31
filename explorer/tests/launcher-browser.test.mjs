@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { workbenchPython } from "../server/paths.mjs";
 import { readEndpoint } from "../server/endpoint.mjs";
 import { assertBuilt, locateView } from "../server/launcher.mjs";
 import { revisionLabel } from "../server/summary.mjs";
@@ -21,6 +23,12 @@ function exec(script, args, options) {
     child.once("error", reject);
     child.once("close", (code) => resolve({ code, stdout, stderr, json: () => JSON.parse(stdout) }));
   });
+}
+
+// The top-left pixel, which a capture's backdrop fills.
+async function corner(file) {
+  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image; print(*Image.open(sys.argv[1]).convert('RGB').getpixel((0, 0)))", file]);
+  return stdout.trim().split(" ").map(Number);
 }
 
 async function pngSize(file) {
@@ -133,6 +141,17 @@ test("capture draws in the background into the project at any size and rejects o
   const small = (await explorer("capture", "reviews/small.png", "--size", "320x200", "--background", "#ffffff")).json();
   assert.deepEqual([small.width, small.height], [320, 200]);
   assert.deepEqual(await pngSize(path.join(project, "reviews", "small.png")), [320, 200]);
+  // Simultaneous captures take turns, each with its own size and backdrop.
+  const [red, blue] = await Promise.all([
+    explorer("capture", "reviews/red.png", "--size", "64x48", "--background", "#ff0000"),
+    explorer("capture", "reviews/blue.png", "--size", "96x64", "--background", "#0000ff"),
+  ]);
+  assert.equal(red.code, 0, red.stderr);
+  assert.equal(blue.code, 0, blue.stderr);
+  assert.deepEqual(await pngSize(path.join(project, "reviews", "red.png")), [64, 48]);
+  assert.deepEqual(await pngSize(path.join(project, "reviews", "blue.png")), [96, 64]);
+  assert.deepEqual(await corner(path.join(project, "reviews", "red.png")), [255, 0, 0]);
+  assert.deepEqual(await corner(path.join(project, "reviews", "blue.png")), [0, 0, 255]);
   // An unchanged view captured again reuses its stored image.
   assert.equal((await explorer("capture")).json().path, captured.json().path);
   const outside = await explorer("capture", "../outside.png");
@@ -161,6 +180,7 @@ test("render writes a STEP's image without touching the project's viewer or save
   assert.equal(result.section.axis, "y");
   assert.deepEqual(await pngSize(path.join(project, "docs", "demo.png")), [400, 300]);
   assert.deepEqual(await readdir(path.join(runtimeRoot, "views")), views, "a one-shot render saves no setup");
+  assert.ok((await readdir(runtimeRoot)).includes(".pruned"), "a one-shot render prunes the store it imported into");
   const state = (await explorer("state")).json();
   assert.deepEqual([state.view.revision, state.view.section, state.model.name], [opened.view.revision, "off", "Demo assembly.step"]);
   const missing = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "no such part");

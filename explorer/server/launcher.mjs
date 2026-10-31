@@ -131,10 +131,20 @@ async function waitForStart(location, { child, logStart }, timeout, handoverTime
   throw new PrototypeError("start_timeout", `The Explorer viewer did not start. See ${location.log}`, 504);
 }
 
-export async function openViewer(location, file, { spawnViewer = spawnDetached, startTimeout = 30_000, loadTimeout = 150_000, distIndex } = {}) {
+// The store is shared by every workbench checkout, so a project's running viewer may run another checkout's code.
+export const foreignCheckout = (record, checkout = explorerRoot) => record.explorerRoot !== checkout;
+
+export async function openViewer(location, file, { spawnViewer = spawnDetached, startTimeout = 30_000, loadTimeout = 150_000, distIndex, checkout = explorerRoot } = {}) {
   await assertBuilt(distIndex);
   let running = await runningViewer(location);
   let started = false;
+  let replaced;
+  // Restart it from this checkout; it keeps its address, so an open page reconnects to the new viewer.
+  if (running && foreignCheckout(running.record, checkout)) {
+    replaced = running.record.explorerRoot ?? "an earlier workbench version";
+    await stopViewer(location);
+    running = null;
+  }
   if (running) {
     if (file) await reloadInto(running.record, file);
   } else {
@@ -144,7 +154,7 @@ export async function openViewer(location, file, { spawnViewer = spawnDetached, 
   await waitForLoad(running.record, loadTimeout);
   // A view counts as shown once a renderer has drawn it: the person's page, or the background renderer.
   const shown = await call(running.record, "api/confirm", {});
-  return { started, reloaded: !started && !!file, pid: running.record.pid, ...shown };
+  return { started, reloaded: !started && !!file, pid: running.record.pid, ...(replaced ? { replaced } : {}), ...shown };
 }
 
 export async function stopViewer(location, { timeout = 10_000 } = {}) {

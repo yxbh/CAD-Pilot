@@ -1,8 +1,8 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { createExplorerServer } from "../server/server.mjs";
-import { inspectionFor } from "../server/inspection.mjs";
-import { explorerRoot, workbenchRoot, workbenchRuntimeRoot } from "../server/paths.mjs";
+import { inspectAcross } from "../server/inspection.mjs";
+import { explorerRoot, userRuntimeRoot, workbenchRoot, workbenchRuntimeRoot } from "../server/paths.mjs";
 import { createViewRegistry } from "../server/view-registry.mjs";
 import { pushComposerAttachment } from "../server/composer.mjs";
 import { COMMANDS, objectSchema } from "../shared/commands.mjs";
@@ -10,7 +10,7 @@ import { COMMANDS, objectSchema } from "../shared/commands.mjs";
 export async function startCopilotExplorer({ joinSession, createCanvas, CanvasError }, {
   createService = createExplorerServer,
   runtimeRoot = workbenchRuntimeRoot,
-  inspect = inspectionFor(runtimeRoot).inspectReference,
+  inspect = inspectAcross([runtimeRoot, userRuntimeRoot()]),
   checkBuild = () => access(path.join(explorerRoot, "dist", "index.html")),
   canonicalize,
 } = {}) {

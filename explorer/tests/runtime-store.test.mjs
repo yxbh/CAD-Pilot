@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pruneRuntime, RETENTION } from "../server/runtime-store.mjs";
+import { pruneIfDue, pruneRuntime, RETENTION } from "../server/runtime-store.mjs";
 
 const day = 24 * 60 * 60 * 1000;
 const hex = (character) => character.repeat(64);
@@ -72,4 +72,30 @@ test("the snapshot budget removes the oldest unused snapshots first", async (t) 
   const result = await pruneRuntime(root, { now, retention: { ...RETENTION, maxSnapshotBytes: 1300 } });
   assert.equal(result.removed.models, 1);
   assert.deepEqual(await list("models"), [`${hex("6")}.json`, `${hex("7")}.json`]);
+});
+
+test("viewers and one-shot renders in separate processes space their prunes out through the store", async (t) => {
+  const { root, now, put, list } = await store(t);
+  await put(`models/${hex("9")}.json`, 30);
+  const first = await pruneIfDue(root, { now });
+  assert.equal(first.removed.models, 1);
+  await put(`models/${hex("a")}.json`, 30);
+  assert.equal(await pruneIfDue(root, { now: now + 60_000 }), null, "a prune within the interval is skipped");
+  assert.deepEqual(await list("models"), [`${hex("a")}.json`]);
+  assert.equal((await pruneIfDue(root, { now: Date.now() + 11 * 60_000 })).removed.models, 1);
+});
+
+test("a model cache's companion files share its fate, and snapshots of any format are kept by the setup that shows them", async (t) => {
+  const { root, now, put, list } = await store(t);
+  // A setup showing several files names each of them somewhere in its saved view.
+  await writeFile(path.join(root, "views", "c".repeat(24) + ".json"), JSON.stringify({
+    modelCache: `${hex("b")}.json`, references: [{ modelCache: `${hex("c")}.json`, inputFile: `/x/${hex("c")}.stl` }],
+  }));
+  for (const name of [`${hex("b")}.json`, `${hex("c")}.json`, `${hex("c")}.bin`, `${hex("d")}.json`, `${hex("d")}.bin`]) await put(`models/${name}`, 30);
+  await put(`inputs/${hex("c")}.stl`, 30);
+  await put(`inputs/${hex("d")}.3mf`, 30);
+  const result = await pruneRuntime(root, { now });
+  assert.deepEqual([result.removed.models, result.removed.inputs], [1, 1]);
+  assert.deepEqual(await list("models"), [`${hex("b")}.json`, `${hex("c")}.bin`, `${hex("c")}.json`]);
+  assert.deepEqual(await list("inputs"), [`${hex("c")}.stl`]);
 });

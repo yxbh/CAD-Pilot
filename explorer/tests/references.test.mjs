@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createReference, formatSelection, parseReference } from "../shared/references.mjs";
 import { changeView, initialState, topologyRevision, validateModel } from "../server/protocol.mjs";
-import { createInspectionService } from "../server/inspection.mjs";
+import { createInspectionService, inspectAcross } from "../server/inspection.mjs";
 import { workbenchRuntimeRoot, workbenchRoot } from "../server/paths.mjs";
 import { inspectionFixture } from "./inspection-fixtures.mjs";
 
@@ -111,4 +112,15 @@ test("chip descriptors use the maintained runtime and remain inspectable after s
   assert.deepEqual(resolved.face, descriptor.face);
   assert.deepEqual(resolved.originalWorldMatrix, descriptor.originalWorldMatrix);
   assert.equal((await restarted.prepareClipboardReference(reference)).filePath, prepared.filePath);
+});
+
+test("a pasted reference resolves from whichever host's store holds it", async (t) => {
+  const canvas = await inspectionFixture(t);
+  const empty = await mkdtemp(path.join(os.tmpdir(), "cad-inspection-empty-"));
+  t.after(() => rm(empty, { recursive: true, force: true }));
+  // The design-project viewer looks in its own store first, then the Copilot canvas's, and vice versa.
+  const inspected = await inspectAcross([empty, canvas.runtimeRoot])(canvas.reference);
+  assert.equal(inspected.reference, canvas.reference);
+  await assert.rejects(inspectAcross([empty])(canvas.reference), { code: "reference_unavailable" });
+  await assert.rejects(inspectAcross([empty, canvas.runtimeRoot])("not a reference"), { code: "invalid_reference" }, "other errors are not retried");
 });

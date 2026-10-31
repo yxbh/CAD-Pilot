@@ -34,6 +34,23 @@ export function inspectionFor(runtimeRoot, workbenchRoot = checkout) {
   return shared.get(runtimeRoot);
 }
 
+// The Copilot canvas and the design-project viewer keep separate stores, and a reference can be pasted into either
+// host: look in each store in turn, the host's own first.
+export function inspectAcross(roots) {
+  const services = [...new Set(roots)].map((root) => inspectionFor(root));
+  return async (reference) => {
+    let missing;
+    for (const service of services) {
+      try { return await service.inspectReference(reference); }
+      catch (error) {
+        if (error?.code !== "reference_unavailable") throw error;
+        missing ??= error;
+      }
+    }
+    throw missing;
+  };
+}
+
 export function createInspectionService({ runtimeRoot, workbenchRoot, cacheLimits = {}, io }) {
   const counts = { modelReads: 0, jsonParses: 0, modelValidations: 0, sourceHashes: 0, sourceBytesRead: 0 };
   const models = createVerifiedFileCache({

@@ -56,7 +56,7 @@ def run(url, output):
                 route.fulfill(response=response, json=model)
 
             # Exercise presentation without changing a cached model or manufacturing a converter failure.
-            page.route("**/api/model", inject_warnings)
+            page.route("**/api/model*", inject_warnings)
             page.goto(url)
 
             session = BrowserSession(page, url, errors)
@@ -179,7 +179,7 @@ def run(url, output):
             expect(page.get_by_role("alert")).to_have_count(0)
 
             # An actual rounded STEP import, with no intercepted diagnostic response.
-            page.unroute("**/api/model", inject_warnings)
+            page.unroute("**/api/model*", inject_warnings)
             rounded = output / "Rounded fixture.step"
             rounded_fixture(rounded)
             with page.expect_file_chooser() as chooser:
@@ -278,7 +278,7 @@ def run(url, output):
             # Legacy-normalized diagnostics use unknown counts, never guessed totals.
             warnings = ["STEP transfer: actual warning"]
             cleanup = {"degenerateEdges": None, "zeroAreaTriangles": None}
-            page.route("**/api/model", inject_warnings)
+            page.route("**/api/model*", inject_warnings)
             page.reload()
             mixed = page.get_by_role("button", name="Import warnings (1)", exact=True)
             mixed.click()
@@ -287,7 +287,7 @@ def run(url, output):
             expect(details.locator("dd")).to_have_text(["Count unavailable", "Count unavailable"])
             expect(details).to_contain_text("older import did not record exact cleanup counts")
             page.screenshot(path=str(output / "legacy-mixed-information.png"))
-            page.unroute("**/api/model", inject_warnings)
+            page.unroute("**/api/model*", inject_warnings)
             page.reload()
             settled()
             failed = page.request.post(url + "api/upload", data=b"invalid STEP", headers={"x-file-name": "Broken.step"})

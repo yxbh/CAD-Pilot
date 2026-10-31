@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readEndpoint, validEndpoint, writeEndpoint } from "../server/endpoint.mjs";
-import { locateView, openViewer } from "../server/launcher.mjs";
+import { foreignCheckout, locateView, openViewer } from "../server/launcher.mjs";
 import { actionInput, referenceFrom, renderOptions, run } from "../scripts/explorer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
@@ -92,4 +95,48 @@ test("render flags spell the same view actions as do", () => {
   assert.throws(() => renderOptions({ size: "600" }), /WIDTHxHEIGHT/);
   assert.throws(() => renderOptions({ explode: "lots" }), /--explode needs a number/);
   assert.throws(() => renderOptions({ outlines: "maybe" }), /on or off/);
+});
+
+// A stand-in viewer: just enough of the HTTP protocol for the launcher to find, stop and confirm it.
+async function fakeViewer(t, { checkout, pid }) {
+  const token = randomBytes(24).toString("hex");
+  let record;
+  const server = createServer((req, res) => {
+    const route = req.url.slice(`/${token}/`.length).split("?")[0];
+    const json = (value, after) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(value), after);
+    };
+    if (route === "api/state") return json({ application: "CAD Explorer", initialized: true, loading: false });
+    if (route === "api/confirm") return json({ application: "CAD Explorer", url: record.url });
+    if (route === "api/shutdown") return json({ stopping: true }, () => { server.close(); server.closeAllConnections(); });
+    res.writeHead(404);
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.close(); server.closeAllConnections(); });
+  const { port } = server.address();
+  record = { url: `http://127.0.0.1:${port}/${token}/`, port, token, pid, explorerRoot: checkout };
+  return { server, record };
+}
+
+test("open restarts a viewer that another workbench checkout started, keeping one viewer per setup", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-checkout-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const location = await locateView({ projectRoot: directory, runtimeRoot: directory });
+  const distIndex = path.join(directory, "index.html");
+  await writeFile(distIndex, "");
+  const foreign = await fakeViewer(t, { checkout: "/other/checkout/explorer", pid: 1 });
+  await mkdir(path.dirname(location.endpoint), { recursive: true });
+  await writeEndpoint(location.endpoint, foreign.record);
+  const spawnViewer = () => {
+    const child = Object.assign(new EventEmitter(), { pid: 4242 });
+    void fakeViewer(t, { checkout: "/this/checkout/explorer", pid: 4242 }).then(({ record }) => writeEndpoint(location.endpoint, record));
+    return { child, logStart: 0 };
+  };
+  const opened = await openViewer(location, undefined, { spawnViewer, distIndex, checkout: "/this/checkout/explorer" });
+  assert.deepEqual([opened.started, opened.replaced, opened.pid], [true, "/other/checkout/explorer", 4242]);
+  assert.equal(foreign.server.listening, false, "the other checkout's viewer was stopped, not left competing");
+  assert.ok(foreignCheckout({ explorerRoot: "/other" }, "/this") && !foreignCheckout({ explorerRoot: "/this" }, "/this"));
+  assert.ok(foreignCheckout({}, "/this"), "a viewer from before checkouts were recorded is replaced too");
 });

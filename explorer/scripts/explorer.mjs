@@ -2,9 +2,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMMANDS } from "../shared/commands.mjs";
-import { createInspectionService } from "../server/inspection.mjs";
-import { call, defaultViewId, locateView, openViewer, runningViewer, sendCommand, stopViewer } from "../server/launcher.mjs";
-import { workbenchRoot, workbenchRuntimeRoot } from "../server/paths.mjs";
+import { inspectAcross } from "../server/inspection.mjs";
+import { call, defaultViewId, foreignCheckout, locateView, openViewer, runningViewer, sendCommand, stopViewer } from "../server/launcher.mjs";
+import { workbenchRuntimeRoot } from "../server/paths.mjs";
 import { PrototypeError } from "../server/protocol.mjs";
 import { projectOutput, renderOnce, saveCopy } from "../server/render-once.mjs";
 import { pruneRuntime } from "../server/runtime-store.mjs";
@@ -133,6 +133,9 @@ export async function referenceFrom(text) {
 async function viewer(location) {
   const running = await runningViewer(location);
   if (!running) throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file.step>", 409);
+  if (foreignCheckout(running.record)) {
+    throw new PrototypeError("other_checkout", `This project's viewer was started from another workbench (${running.record.explorerRoot ?? "an earlier version"}). Run open from this workbench to restart it here.`, 409);
+  }
   return running;
 }
 
@@ -151,7 +154,7 @@ export async function run(argv, { cwd = process.cwd(), inspect } = {}) {
   const location = await locateView({ projectRoot: cwd, viewId });
   if (command === "inspect") {
     if (!args.length) throw new PrototypeError("bad_arguments", "inspect needs a copied reference");
-    const resolve = inspect ?? createInspectionService({ runtimeRoot: location.runtimeRoot, workbenchRoot }).inspectReference;
+    const resolve = inspect ?? inspectAcross([location.runtimeRoot, workbenchRuntimeRoot]);
     return resolve(await referenceFrom(args.join(" ")));
   }
   if (command === "prune") {

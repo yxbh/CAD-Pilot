@@ -6,6 +6,7 @@ import { isInside } from "./paths.mjs";
 import { PrototypeError } from "./protocol.mjs";
 import { createExplorerServer } from "./server.mjs";
 import { revisionLabel } from "./summary.mjs";
+import { pruneIfDue } from "./runtime-store.mjs";
 
 // An output must land in the project even when a folder on the way is a symlink, and never write through one.
 export async function projectOutput(project, out) {
@@ -71,5 +72,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
     };
   } finally {
     await service.close();
+    // The transient viewer saves no setup, but its snapshots join the shared store, so prune it here.
+    await pruneIfDue(runtimeRoot, { log });
   }
 }
