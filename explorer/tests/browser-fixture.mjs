@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { assertBuilt } from "../server/launcher.mjs";
 import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
 import { workbenchPython } from "../server/paths.mjs";
+import { createHeadlessRenderer } from "../server/renderer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
 const execute = promisify(execFile);
@@ -26,7 +27,7 @@ export async function withBrowserView(name, run) {
   await mkdir(output, { recursive: true });
   const runtime = await createTestRuntime();
   try {
-    const service = await runtime.createService({ projectRoot: workbenchRoot, viewId });
+    const service = await runtime.createService({ projectRoot: workbenchRoot, viewId, renderer: createHeadlessRenderer });
     await service.initialize();
     assert.equal(service.getState().error, "");
     return await run({ service, output });

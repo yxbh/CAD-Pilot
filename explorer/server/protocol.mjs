@@ -1,7 +1,7 @@
-import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "../shared/view-settings.mjs";
+import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS, viewAngle } from "../shared/view-settings.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import {
-  pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
+  defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
 } from "../shared/section.mjs";
 import { displayedWorldBounds, sequenceOffsets, sequencePose, STEP_MODES } from "../shared/placement.mjs";
 
@@ -20,10 +20,52 @@ export function initialState() {
     explode: 0, fixedId: "", direction: "radial", cameraPreset: "iso", fitNonce: 0,
     assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
-    activeReviewId: null, camera: null,
+    activeReviewId: null, camera: null, cameraPinned: false,
     projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true,
     section: { enabled: false, axis: "x", position: 0, flipped: false },
+    // Where the shown STEP came from: project-relative file (empty for uploads and the demo), its modified time and size.
+    source: { file: "", generatedAt: "", size: 0 },
+    // Whether the last reload kept the previous view (null before any reload).
+    viewKept: null,
   };
+}
+
+// Display preferences belong to the person, not to one model, so a newly loaded STEP keeps them.
+const preferences = ["autoCopy", "selectionMode", "projection", "appearance", "materialFinish", "showEdges", "cameraPreset"];
+
+// Regenerating a design keeps the view when every occurrence keeps its id, parent, kind and name in the assembly tree.
+export function sameAssemblyTree(previous, next) {
+  if (!previous || previous.nodes.length !== next.nodes.length) return false;
+  // An unnamed single part is labelled with its snapshot name, which changes with every regeneration.
+  const label = (model, node) => node.label === model.source.sha256 ? "" : node.label;
+  return previous.nodes.every((node, index) => {
+    const other = next.nodes[index];
+    return node.id === other.id && node.parentId === other.parentId && !node.partId === !other.partId && label(previous, node) === label(next, other);
+  });
+}
+
+// Only a regeneration of the same file keeps its view: an unrelated STEP can share node ids (they are positions in
+// the file) and unnamed labels. Uploads have no project path, so they compare by file name.
+const sameSource = (state, loaded) => loaded.source.file ? loaded.source.file === state.source.file
+  : !state.source.file && loaded.modelName === state.modelName;
+
+/** The state for a newly loaded model: the previous view where the same file's assembly tree still matches, otherwise its defaults. */
+export function loadedView(state, previousModel, model, loaded) {
+  const base = { ...initialState(), ...Object.fromEntries(preferences.map((key) => [key, state[key]])), ...loaded, revision: state.revision };
+  if (!sameSource(state, loaded) || !sameAssemblyTree(previousModel, model)) {
+    return { ...base, section: defaultSection(model.bounds), fitNonce: state.fitNonce + 1, viewKept: previousModel ? false : null };
+  }
+  const steps = loaded.assembly?.steps.length ?? 0;
+  const next = {
+    ...base, fitNonce: state.fitNonce, viewKept: true,
+    hiddenIds: state.hiddenIds, selectedIds: state.selectedIds, explode: state.explode, direction: state.direction, fixedId: state.fixedId,
+    step: state.step !== null && state.step <= steps ? state.step : null, stepMode: state.stepMode,
+    // A camera the person moved is theirs; a fitted one is fitted again to the regenerated geometry.
+    camera: state.cameraPinned ? state.camera : null, cameraPinned: state.cameraPinned,
+    ...(state.cameraPinned ? {} : { fitNonce: state.fitNonce + 1 }),
+    section: { ...state.section, enabled: state.section.enabled && sectionSupport(model).supported },
+  };
+  return pruneSectionSelection(reconcileSectionWithDisplay(next, model), model);
 }
 
 export function changeView(state, model, name, input = {}) {
@@ -46,7 +88,8 @@ export function changeView(state, model, name, input = {}) {
     if (!Array.isArray(input.ids) || input.ids.length > 500) throw new PrototypeError("bad_selection", "Expected at most 500 part IDs");
     return [...new Set(input.ids.map(requireId))];
   };
-  const next = { ...state, revision: state.revision + 1, error: "" };
+  // Whether a reload kept the view is news only until the next view change.
+  const next = { ...state, revision: state.revision + 1, error: "", viewKept: null };
   // Display changes keep the plane inside the visible pose and drop selections left wholly outside it.
   const followDisplay = () => Object.assign(next, pruneSectionSelection(reconcileSectionWithDisplay(next, model), model));
   switch (name) {
@@ -149,18 +192,27 @@ export function changeView(state, model, name, input = {}) {
       followDisplay();
       next.fitNonce++;
       next.camera = null;
+      next.cameraPinned = false;
       break;
     case "show_all":
       next.hiddenIds = [];
       followDisplay();
       next.fitNonce++;
       next.camera = null;
+      next.cameraPinned = false;
       break;
     case "set_view":
-      if (!VIEW_PRESETS.includes(input.preset)) throw new PrototypeError("bad_view", "Choose iso, top, bottom, front, back, right or left");
-      next.cameraPreset = input.preset;
+      if (input.preset !== undefined && (input.azimuth !== undefined || input.elevation !== undefined)) {
+        throw new PrototypeError("bad_view", "Choose a preset or an azimuth and elevation, not both");
+      }
+      if (input.preset === undefined) {
+        try { next.cameraPreset = viewAngle(input.azimuth, input.elevation); }
+        catch (error) { throw new PrototypeError("bad_view", error.message); }
+      } else if (!VIEW_PRESETS.includes(input.preset)) throw new PrototypeError("bad_view", "Choose iso, top, bottom, front, back, right or left");
+      else next.cameraPreset = input.preset;
       next.fitNonce++;
       next.camera = null;
+      next.cameraPinned = false;
       break;
     case "set_projection":
       if (!PROJECTIONS.includes(input.projection)) throw new PrototypeError("bad_projection", "Choose perspective or orthographic");
@@ -219,6 +271,7 @@ export function changeView(state, model, name, input = {}) {
     case "fit_view":
       next.fitNonce++;
       next.camera = null;
+      next.cameraPinned = false;
       break;
     case "reset_view":
       next.explode = 0;

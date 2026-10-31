@@ -1,9 +1,12 @@
 import { OrthographicCamera, PerspectiveCamera, Vector3 } from "three";
 import { center, diagonal, type Bounds, type Vec3 } from "./model.ts";
 import type { CameraState } from "./host.ts";
+import { angleView } from "../shared/view-settings.mjs";
 
 export type Projection = "perspective" | "orthographic";
 export type ViewPreset = "iso" | "top" | "bottom" | "front" | "back" | "right" | "left";
+// A named view or "azimuth:elevation" in degrees.
+export type ViewDirection = ViewPreset | `${number}:${number}`;
 export type ViewCamera = PerspectiveCamera | OrthographicCamera;
 export const axisViews: { id: ViewPreset; axis: string; label: string; color: string; direction: Vec3; up: Vec3 }[] = [
   { id: "right", axis: "+X", label: "Right view (+X)", color: "#f17b7b", direction: [1, 0, 0], up: [0, 0, 1] },
@@ -71,9 +74,9 @@ export class CameraController {
     this.camera = next;
     this.update();
   }
-  fit(bounds: Bounds, preset: ViewPreset) {
+  fit(bounds: Bounds, preset: ViewDirection) {
     const radius = Math.max(diagonal(bounds) / 2, 0.01);
-    const axis = axisViews.find((item) => item.id === preset);
+    const axis = axisViews.find((item) => item.id === preset) ?? angleView(preset);
     const direction = new Vector3(...(axis?.direction ?? [1.35, -1.8, 1.3] as Vec3)).normalize();
     this.target.set(...center(bounds));
     const distance = radius / Math.sin(Math.atan(Math.tan(this.perspective.fov * Math.PI / 360) * Math.min(this.aspect, 1))) * 1.18;

@@ -1,13 +1,14 @@
 import { createExplorerServer } from "./server.mjs";
+import { explorerRoot } from "./paths.mjs";
 import { readEndpoint, writeEndpoint } from "./endpoint.mjs";
-import { assertBuilt, defaultViewId, launcherRuntimeRoot, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
+import { assertBuilt, defaultViewId, locateView, reloadInto, waitForLoad, waitForViewer } from "./launcher.mjs";
 
 const file = process.argv[2];
 const print = (line) => process.stdout.write(`${line}\n`);
 
 try {
   await assertBuilt();
-  const location = await locateView({ projectRoot: process.cwd(), viewId: process.env.CAD_EXPLORER_VIEW || defaultViewId, runtimeRoot: launcherRuntimeRoot() });
+  const location = await locateView({ projectRoot: process.cwd(), viewId: process.env.CAD_EXPLORER_VIEW || defaultViewId });
   // Reuse the setup's previous address when possible so earlier links keep working.
   const previous = await readEndpoint(location.endpoint);
   let service;
@@ -36,7 +37,7 @@ try {
   const url = new URL(service.url);
   await writeEndpoint(location.endpoint, {
     url: service.url, port: Number(url.port), token: url.pathname.split("/")[1], pid: process.pid,
-    projectRoot: location.project, viewId: location.viewId,
+    projectRoot: location.project, viewId: location.viewId, explorerRoot,
   });
   print(service.url);
   await service.initialize();

@@ -13,6 +13,7 @@ export type RenderReport = {
   selectedIds: string[]; selectedFace: FaceSelection | null; highlightedTriangles: number;
   selectedEdge: EdgeSelection | null; highlightedSegments: number; selectedEdgeScreen: number[] | null;
   selectedFaceScreen: number[] | null; bounds: { min: number[]; max: number[] } | null;
+  pixels: [number, number];
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
   camera: CameraState; appearance: ViewState["appearance"]; materialFinish: ViewState["materialFinish"];
@@ -20,7 +21,12 @@ export type RenderReport = {
   step: ViewState["step"];
   projectedBounds: { min: number[]; max: number[] } | null;
 };
-export type CaptureRequest = { id: string; revision: number; reviewId?: string | null; reviewVersion?: number };
+export type CaptureRequest = {
+  id: string; revision: number; reviewId?: string | null; reviewVersion?: number;
+  width?: number; height?: number; background?: string;
+};
+// A person's viewer page, or the background page that draws views when no visible tab does.
+export type RendererKind = "viewer" | "headless";
 export type ReviewSummary = { id: string; title: string; version: number; createdAt: string; sourceName: string; topologyRevision: string; strokeCount: number };
 export interface ViewerHost {
   getState(): Promise<ViewState>;
@@ -31,6 +37,7 @@ export interface ViewerHost {
     onCapture: (request: CaptureRequest) => void; onError: (error: Error) => void;
   }): () => void;
   reportRendered(report: RenderReport): Promise<unknown>;
+  reportRenderError(message: string, webgl: boolean): Promise<unknown>;
   captureResult(result: object): Promise<unknown>;
   captureImage(): Promise<{ path: string }>;
   upload(file: File): Promise<unknown>;
@@ -54,16 +61,18 @@ export async function blobDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-export function createDesktopHost(): ViewerHost {
+export function createDesktopHost(kind: RendererKind = "viewer"): ViewerHost {
+  const client = crypto.randomUUID();
   const clipboard = createClipboardWriter();
   let copySequence = 0;
   let prepareQueue: Promise<unknown> = Promise.resolve();
   return {
     getState: () => request("state"),
-    loadModel: () => request("model"),
+    // The server gives a viewer page time to mesh a model it has fetched before drawing it in the background.
+    loadModel: () => request(`model?kind=${kind}`),
     command: (name, input) => post("command", { name, input }),
     subscribe(callbacks) {
-      const events = new EventSource("api/events");
+      const events = new EventSource(`api/events?client=${client}&kind=${kind}`);
       events.onopen = () => callbacks.onConnection(true);
       events.onerror = () => callbacks.onConnection(false);
       const receive = <T,>(event: MessageEvent, fn: (data: T) => void) => {
@@ -74,10 +83,14 @@ export function createDesktopHost(): ViewerHost {
       events.addEventListener("capture", (event) => receive(event, callbacks.onCapture));
       return () => events.close();
     },
-    reportRendered: (report) => post("rendered", report),
+    reportRendered: (report) => post("rendered", { ...report, kind }),
+    reportRenderError: (message, webgl) => post("renderer-error", { message, webgl }),
     captureResult: (result) => post("capture-result", result),
-    captureImage: () => post("capture", {}),
-    upload: (file) => request("upload", { method: "POST", headers: { "x-file-name": encodeURIComponent(file.name) }, body: file }),
+    // The Capture button saves what this page shows; agents' captures come from the background renderer.
+    captureImage: () => post("capture", { client }),
+    upload: (file) => request("upload", {
+      method: "POST", headers: { "x-file-name": encodeURIComponent(file.name), "x-file-modified": String(file.lastModified) }, body: file,
+    }),
     copyReference(model, id, faceId, edgeId) {
       const sequence = ++copySequence;
       const reference = createReference(model, id, faceId ?? null, edgeId ?? null);

@@ -115,9 +115,11 @@ test("auto-copy canvas actions acknowledge persisted preferences during a review
     const started = performance.now();
     const state = await change.handler({ instanceId: "review", input: { enabled: false, expectedRevision: before.revision } });
     assert.ok(performance.now() - started < 2000, "A preference-only command must not wait for rendering");
-    assert.equal(state.autoCopy, false);
-    assert.equal(state.activeReviewId, review.id);
-    assert.equal(state.rendered, null);
+    // Canvas actions answer with the compact summary.
+    assert.equal(state.review, review.id);
+    assert.equal(state.shown.drawn, null);
+    assert.equal(service.getState().autoCopy, false);
+    assert.equal(service.getState().rendered, null);
     const saved = JSON.parse(await readFile(viewStateFile(runtime.runtimeRoot, service.projectRoot, viewId), "utf8"));
     assert.equal(saved.state.autoCopy, false);
     await assert.rejects(change.handler({ instanceId: "review", input: { enabled: true, expectedRevision: before.revision } }),

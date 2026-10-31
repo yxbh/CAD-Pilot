@@ -15,7 +15,8 @@ export function sequencePath(stepPath) {
 }
 
 const text = (value, limit) => typeof value === "string" && value.length <= limit;
-const pattern = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+// Only * and ? are wildcards; every other character, brackets included, is literal.
+export const labelPattern = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "s");
 
 function validateDocument(document) {
   const fail = (message) => { throw new PrototypeError("invalid_sequence", `Assembly sequence: ${message}`, 422); };
@@ -42,20 +43,28 @@ function validateDocument(document) {
   return document;
 }
 
-// Labels resolve against every node; a group label stands for all of its parts.
+// Labels resolve against every node; a group label stands for all of its parts. A group holding every part (the
+// top-level assembly, or a wrapper around it) never matches: a step that moved the whole model would have nothing
+// to arrive at, and a pattern such as "Anchor *" written for parts must not catch an "Anchor v3" root.
 export function resolveSequence(document, model, file) {
   validateDocument(document);
   const children = new Map();
   for (const node of model.nodes) if (node.parentId) children.set(node.parentId, [...(children.get(node.parentId) ?? []), node]);
   const leavesOf = (node) => node.partId ? [node.id] : (children.get(node.id) ?? []).flatMap(leavesOf);
-  const steps = document.steps.map((step) => {
+  const partCount = model.nodes.filter((node) => node.partId).length;
+  const candidates = model.nodes.filter((node) => node.partId || leavesOf(node).length < partCount);
+  const steps = document.steps.map((step, index) => {
     const nodeIds = [];
     const unresolved = [];
     for (const part of step.parts) {
-      const matcher = pattern(part);
-      const matches = model.nodes.filter((node) => matcher.test(node.label));
+      const matcher = labelPattern(part);
+      const matches = candidates.filter((node) => matcher.test(node.label));
       if (!matches.length) unresolved.push(part);
       for (const id of matches.flatMap(leavesOf)) if (!nodeIds.includes(id)) nodeIds.push(id);
+    }
+    // A step moving every part has nothing to arrive at; the exporter refuses it, and so does the viewer.
+    if (nodeIds.length === partCount) {
+      throw new PrototypeError("invalid_sequence", `Assembly sequence: step ${index + 1} moves every part (${step.parts.join(", ")}); name only the parts that arrive in that step`, 422);
     }
     return {
       title: step.title.trim(), note: step.note?.trim() ?? "", parts: step.parts, nodeIds, unresolved, from: step.from,

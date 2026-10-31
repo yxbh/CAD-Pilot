@@ -36,11 +36,12 @@ test("runtime roots isolate leases, references, captures and persisted state for
   const state = a.getState();
   const rendered = await fetch(a.url + "api/rendered", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ revision: state.revision, modelHash: state.documentRevision, topologyRevision: state.topologyRevision }),
+    body: JSON.stringify({ revision: state.revision, modelHash: state.documentRevision, topologyRevision: state.topologyRevision, kind: "headless" }),
   });
   assert.equal(rendered.status, 200);
   const abort = new AbortController();
-  const events = await fetch(a.url + "api/events", { signal: abort.signal });
+  // This client stands in for the background renderer, which draws agents' captures.
+  const events = await fetch(a.url + "api/events?kind=headless", { signal: abort.signal });
   const reader = events.body.getReader();
   const capture = a.captureImage();
   void capture.catch(() => {});

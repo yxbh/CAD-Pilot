@@ -40,7 +40,7 @@ export async function writeEndpoint(file, record) {
 export async function probeEndpoint(record, { timeout = 2000 } = {}) {
   if (!validEndpoint(record)) return null;
   try {
-    const response = await fetch(`${record.url}api/state`, { signal: AbortSignal.timeout(timeout) });
+    const response = await fetch(`${record.url}api/state?detail=summary`, { signal: AbortSignal.timeout(timeout) });
     if (!response.ok) return null;
     const state = await response.json();
     return state?.application === "CAD Explorer" ? state : null;

@@ -39,6 +39,10 @@ type Props = {
   onRendered: (report: RenderReport) => Promise<unknown>;
   onCameraChange: (camera: CameraState) => void;
   onView: (preset: ViewPreset) => void;
+  // The background renderer follows the saved view at its own size: the person's camera once they moved it,
+  // otherwise a fresh fit of cameraPreset. It shows no on-screen controls.
+  headless?: boolean;
+  background?: string | null;
 };
 
 function FaceOverlay({ part, face, selected, clippingPlane }: { part: Part; face: CadFace; selected: boolean; clippingPlane: Plane | null }) {
@@ -301,7 +305,7 @@ function PartMesh({ placement, resources, origin, section, clippingPlane, select
   );
 }
 
-function Rig({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
@@ -340,8 +344,8 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, plac
     const bounds = mergeBounds(visible.map((item) => item.bounds)) || model.bounds;
     const origin = center(model.bounds);
     const fitKey = `${state.topologyRevision}:${state.fitNonce}`;
-    if (!fitted.current && state.camera) controller.restore(state.camera);
-    else if (fitted.current !== fitKey) {
+    if (headless ? state.cameraPinned && state.camera : !fitted.current && state.camera) controller.restore(state.camera!);
+    else if (headless || fitted.current !== fitKey) {
       controller.fit({
         min: bounds.min.map((value, axis) => value - origin[axis]) as [number, number, number],
         max: bounds.max.map((value, axis) => value - origin[axis]) as [number, number, number],
@@ -387,7 +391,9 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, plac
       orbit.dispose();
       controls.current = null;
     };
-  }, [model, state.cameraPreset, state.projection, state.fitNonce, controller, axes, gl, invalidate, set]);
+  }, [model, state.cameraPreset, state.projection, state.fitNonce, controller, axes, gl, invalidate, set,
+    // The background renderer refits when its size changes and follows a camera the person moved.
+    headless ? `${size.width}x${size.height}:${state.cameraPinned ? JSON.stringify(state.camera) : ""}` : ""]);
 
   useEffect(() => {
     registerCapture(() => {
@@ -437,7 +443,7 @@ export default function Scene(props: Props) {
   }), [...displayedBounds.min, ...displayedBounds.max, origin]);
   return (
     <>
-    <Canvas frameloop={props.active ? "demand" : "never"} shadows={studio ? "percentage" : false} dpr={[1, 2]} camera={{ fov: 42, up: [0, 0, 1] }}
+    <Canvas frameloop={props.active ? "demand" : "never"} shadows={studio ? "percentage" : false} dpr={props.headless ? 1 : [1, 2]} camera={{ fov: 42, up: [0, 0, 1] }}
       events={(store) => ({
         ...events(store),
         filter: (hits, root) => prioritizeEdges(hits, root.camera, root.pointer, root.size.width, root.size.height),
@@ -448,15 +454,16 @@ export default function Scene(props: Props) {
         gl.localClippingEnabled = true;
         gl.domElement.setAttribute("aria-label", "Interactive STEP assembly");
       }}>
-      <color attach="background" args={[studio ? "#29313d" : "#0b1722"]} />
+      <color attach="background" args={[props.background ?? (studio ? "#29313d" : "#0b1722")]} />
       <StudioStage bounds={stageBounds} enabled={studio} />
       {!studio && <>
         <ambientLight intensity={1.25} />
         <hemisphereLight args={["#d9eefb", "#19222f", 2.2]} />
         <directionalLight position={[100, -120, 180]} intensity={3} />
         <directionalLight position={[-100, 100, 30]} intensity={1.2} color="#7bcbd8" />
-        <gridHelper args={[gridSize, 24, "#2a485a", "#172f40"]} rotation={[Math.PI / 2, 0, 0]}
-          position={[0, 0, displayedBounds.min[2] - origin[2] - 1]} />
+        {/* A custom backdrop is for presentation images, which leave out the inspection grid. */}
+        {!props.background && <gridHelper args={[gridSize, 24, "#2a485a", "#172f40"]} rotation={[Math.PI / 2, 0, 0]}
+          position={[0, 0, displayedBounds.min[2] - origin[2] - 1]} />}
       </>}
       {placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((placement) => (
         <PartMesh key={placement.node.id} placement={placement} resources={resources.get(placement.part)} origin={origin}
@@ -479,7 +486,7 @@ export default function Scene(props: Props) {
       {stepPosition !== null && <SequenceTrails placements={placements.filter((part) => !state.hiddenIds.includes(part.node.id))} origin={origin} />}
       <Rig {...props} placements={placements} resources={resources} axes={axes} />
     </Canvas>
-    {props.active && <AxisIndicator store={axes} onChoose={props.onView} />}
+    {props.active && !props.headless && <AxisIndicator store={axes} onChoose={props.onView} />}
     </>
   );
 }

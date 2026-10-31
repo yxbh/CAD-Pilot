@@ -9,6 +9,7 @@ import { useViewCapture } from "./useViewCapture.ts";
 import { useSectionControl } from "./useSectionControl.ts";
 import { useStepPlayer } from "./useStepPlayer.ts";
 import DrawingReview from "./drawing/DrawingReview.tsx";
+import { HeadlessApp } from "./HeadlessApp.tsx";
 import {
   Box, Camera, Copy, Expand, Eye, EyeOff, FolderOpen, ListOrdered,
   Maximize, MousePointer2, PanelRight, Pencil, Pin, RotateCcw, ScanFace, Square, X, Sun, Glasses, SlidersHorizontal, Spline,
@@ -126,6 +127,8 @@ export function App({ host }: { host: ViewerHost }) {
   const busy = loading || !ready;
   const drawingActive = reviews.active;
   const activeReview = reviews.review;
+  const revision = state?.documentRevision.slice(0, 12) ?? "";
+  const generated = state?.source.generatedAt ? new Date(state.source.generatedAt) : null;
   useEffect(() => {
     if (copyStatus.kind !== "blocked") return;
     referenceField.current?.focus({ preventScroll: true });
@@ -138,6 +141,10 @@ export function App({ host }: { host: ViewerHost }) {
         <div className="document-heading">
           <strong title={activeReview?.source.name || state?.modelName}>{activeReview?.source.name || state?.modelName || "Opening assembly"}</strong>
           <span>{drawingActive ? "Drawing review" : `${leaves.length} parts \u00b7 mm`}<span className="version-tag">v1</span></span>
+          {!drawingActive && revision && <span className="model-revision" data-revision={state?.documentRevision}
+            title={`STEP revision ${state?.documentRevision}${state?.source.file ? ` from ${state.source.file}` : ""}${generated ? `, generated ${generated.toLocaleString()}` : ""}`}>
+            rev {revision}{generated && ` \u00b7 ${generated.toDateString() === new Date().toDateString() ? generated.toLocaleTimeString() : generated.toLocaleString()}`}
+          </span>}
         </div>
         <select className="review-select" aria-label="Saved reviews" title="Saved reviews" value={activeReview?.id ?? ""}
           disabled={reviews.saving || reviews.working || changingMode} onChange={(event) => {
@@ -338,4 +345,5 @@ export function App({ host }: { host: ViewerHost }) {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App host={createDesktopHost()} />);
+const headless = new URLSearchParams(location.search).get("renderer") === "headless";
+createRoot(document.getElementById("root")!).render(headless ? <HeadlessApp host={createDesktopHost("headless")} /> : <App host={createDesktopHost()} />);

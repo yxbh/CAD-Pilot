@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { explorerRoot, workbenchPython, workbenchRoot } from "../server/paths.mjs";
 import { runBrowser } from "./browser-fixture.mjs";
+import { createHeadlessRenderer } from "../server/renderer.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
 const execute = promisify(execFile);
@@ -21,7 +22,7 @@ test("visual section caps preserve holes, assembly gaps, picking and captured po
   await execute(workbenchPython, ["-B", path.join(explorerRoot, "tests", "section_browser.py"), "--output", output, "--fixtures-only"],
     { cwd: explorerRoot, timeout: 60_000 });
   const sourceHash = digest(await readFile(fixture));
-  const service = await createService({ projectRoot: workbenchRoot, viewId, file: path.relative(workbenchRoot, fixture), log: () => {} });
+  const service = await createService({ projectRoot: workbenchRoot, viewId, file: path.relative(workbenchRoot, fixture), log: () => {}, renderer: createHeadlessRenderer });
   await service.initialize();
   assert.equal(service.getState().error, "");
   assert.equal(service.getState().documentRevision, sourceHash);

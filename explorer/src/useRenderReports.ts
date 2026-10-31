@@ -23,7 +23,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
   onRendered: (report: RenderReport) => Promise<unknown>;
   onError: (message: string) => void;
 }) {
-  const { size, invalidate } = useThree();
+  const { size, invalidate, gl } = useThree();
   const lastReported = useRef(-1);
   const reportLifetime = useRef({ active: false });
   const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements });
@@ -96,6 +96,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
       selectedEdgeScreen: selectedEdge && edgePlacement
         ? edgeScreenPoint(clippedEdge ?? selectedEdge.positions, edgePlacement.matrix, origin, camera, size.width, size.height) : null,
       bounds: mergeBounds(visible.map((part) => part.bounds)),
+      pixels: [gl.domElement.width, gl.domElement.height],
       positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
       renderer: "React Three Fiber / WebGL2",
       inFrame,
