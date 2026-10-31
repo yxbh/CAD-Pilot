@@ -5,7 +5,7 @@ import { partResolver } from "./assembly.mjs";
 import { isInside } from "./paths.mjs";
 import { PrototypeError } from "./protocol.mjs";
 import { createExplorerServer } from "./server.mjs";
-import { revisionLabel } from "./summary.mjs";
+import { cameraSummary, revisionLabel } from "./summary.mjs";
 import { pruneIfDue } from "./runtime-store.mjs";
 
 // An output must land in the project even when a folder on the way is a symlink, and never write through one.
@@ -30,7 +30,7 @@ export async function saveCopy(project, source, target) {
 /**
  * Render one STEP or mesh file to a PNG without touching any saved setup: a private, transient viewer loads it, applies the
  * requested view and draws it in the background renderer. The view actions are the same ones `do` accepts. The answer's
- * camera is the one that drew the image: its view, projection and viewHeight, the view's height in millimetres at the target.
+ * camera is the one that drew the image, in the shape every answer reports (summary.mjs cameraSummary).
  * options: { units, up (how to read a mesh), width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
  * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns] }.
  */
@@ -72,7 +72,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
     return {
       saved: await saveCopy(project, captured.path, target), width: captured.width, height: captured.height,
       model: state.modelName, file: state.source.file, revision: revisionLabel(state.source.sha256), generatedAt: state.source.generatedAt,
-      camera: { view: state.cameraPreset, projection: captured.camera.projection, viewHeight: captured.camera.viewHeight },
+      camera: cameraSummary(state, captured.camera),
       ...(state.section.enabled ? { section: state.section } : {}),
     };
   } finally {

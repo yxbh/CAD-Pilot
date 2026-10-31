@@ -409,7 +409,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
       controller.fit({
         min: bounds.min.map((value, axis) => value - origin[axis]) as [number, number, number],
         max: bounds.max.map((value, axis) => value - origin[axis]) as [number, number, number],
-      }, state.cameraPreset);
+      }, state.cameraPreset, state.projection);
     }
     controller.setProjection(state.projection);
     const camera = controller.camera;
@@ -523,13 +523,13 @@ export default function Scene(props: Props) {
         gl.domElement.setAttribute("aria-label", "Interactive model");
       }}>
       <color attach="background" args={[props.background ?? (studio ? "#29313d" : "#0b1722")]} />
-      <StudioStage bounds={stageBounds} enabled={studio} />
+      {/* A custom backdrop is for presentation images: it replaces Studio's floor and leaves out the inspection grid. */}
+      <StudioStage bounds={stageBounds} enabled={studio} floor={!props.background} />
       {!studio && <>
         <ambientLight intensity={1.25} />
         <hemisphereLight args={["#d9eefb", "#19222f", 2.2]} />
         <directionalLight position={[100, -120, 180]} intensity={3} />
         <directionalLight position={[-100, 100, 30]} intensity={1.2} color="#7bcbd8" />
-        {/* A custom backdrop is for presentation images, which leave out the inspection grid. */}
         {!props.background && <gridHelper args={[gridSize, 24, "#2a485a", "#172f40"]} rotation={[Math.PI / 2, 0, 0]}
           position={[0, 0, displayedBounds.min[2] - origin[2] - 1]} />}
       </>}

@@ -101,6 +101,11 @@ test("the summary names the model's revision and says plainly when nobody has se
   assert.deepEqual(summary.view.hidden, ["lid"]);
   assert.deepEqual(summary.view.selected, ["base face f1"]);
   assert.equal(summary.view.section, "off");
+  // The camera in render's shape, measured once a renderer has drawn the view.
+  assert.deepEqual(summary.view.camera, { view: "iso", projection: "perspective" });
+  const camera = { position: [90, -120, 80], target: [0, 0, 0], up: [0, 0, 1], fov: 42, projection: "orthographic", viewHeight: 126.5 };
+  const moved = stateSummary({ ...base, projection: "orthographic", cameraPinned: true, camera }, { url: "u", camera });
+  assert.deepEqual(moved.view.camera, { view: "moved by the user", projection: "orthographic", viewHeight: 126.5 });
   assert.equal(summary.note, "No viewer page is open; the view was drawn in the background. Open http://127.0.0.1:1/token/ to see it.");
   const hidden = stateSummary({ ...base, renderers: { viewers: 1, seen: false, headless: true, drawn: "headless" } }, { url: "u" });
   assert.match(hidden.note, /has not drawn this revision yet; it may be hidden/);

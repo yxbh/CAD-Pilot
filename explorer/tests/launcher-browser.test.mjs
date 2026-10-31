@@ -25,10 +25,10 @@ function exec(script, args, options) {
   });
 }
 
-// The top-left pixel, which a capture's backdrop fills.
-async function corner(file) {
-  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image; print(*Image.open(sys.argv[1]).convert('RGB').getpixel((0, 0)))", file]);
-  return stdout.trim().split(" ").map(Number);
+// The four corner pixels, which a capture's backdrop fills.
+async function corners(file) {
+  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image; i = Image.open(sys.argv[1]).convert('RGB'); w, h = i.size; [print(*i.getpixel(p)) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]", file]);
+  return stdout.trim().split("\n").map((line) => line.split(" ").map(Number));
 }
 
 // The width in pixels of everything drawn over the backdrop that fills the top-left pixel.
@@ -69,6 +69,10 @@ test("open confirms each view without a tab, reloads in place keeping the view a
   assert.equal(opened.model.name, "Demo assembly.step");
   assert.equal(opened.error, undefined);
   assert.deepEqual(opened.shown, { viewers: 0, seen: false, drawn: "headless", headless: true });
+  // The camera that drew the view, in the shape render reports.
+  const { viewHeight, ...camera } = opened.view.camera;
+  assert.deepEqual(camera, { view: "iso", projection: "perspective" });
+  assert.ok(viewHeight > 0, `viewHeight ${viewHeight}`);
   assert.match(opened.note, /No viewer page is open; the view was drawn in the background/);
   assert.ok(opened.note.includes(opened.url));
   const location = await locateView({ projectRoot: project, runtimeRoot });
@@ -102,7 +106,8 @@ test("open confirms each view without a tab, reloads in place keeping the view a
   assert.equal(second.code, 0, second.stderr);
   assert.deepEqual(second.stdout.trim().split("\n"), [opened.url, "Reloaded: demo copy.step"]);
 
-  assert.equal((await explorer("do", "set_view", "azimuth=45", "elevation=32")).json().view.camera, "45:32");
+  const angled = (await explorer("do", "set_view", "azimuth=45", "elevation=32")).json().view.camera;
+  assert.deepEqual([angled.view, angled.projection], ["45:32", "perspective"]);
   const summary = (await explorer("state")).json();
   assert.equal(summary.model.name, "demo copy.step");
   assert.equal(summary.parts, undefined, "the summary leaves out the part list");
@@ -156,8 +161,8 @@ test("capture draws in the background into the project at any size and rejects o
   assert.equal(blue.code, 0, blue.stderr);
   assert.deepEqual(await pngSize(path.join(project, "reviews", "red.png")), [64, 48]);
   assert.deepEqual(await pngSize(path.join(project, "reviews", "blue.png")), [96, 64]);
-  assert.deepEqual(await corner(path.join(project, "reviews", "red.png")), [255, 0, 0]);
-  assert.deepEqual(await corner(path.join(project, "reviews", "blue.png")), [0, 0, 255]);
+  assert.deepEqual(await corners(path.join(project, "reviews", "red.png")), Array(4).fill([255, 0, 0]));
+  assert.deepEqual(await corners(path.join(project, "reviews", "blue.png")), Array(4).fill([0, 0, 255]));
   // An unchanged view captured again reuses its stored image.
   assert.equal((await explorer("capture")).json().path, captured.json().path);
   const outside = await explorer("capture", "../outside.png");
@@ -185,6 +190,8 @@ test("render writes a STEP's image without touching the project's viewer or save
   assert.deepEqual([result.saved, result.width, result.height, result.camera.view, result.camera.projection], ["docs/demo.png", 400, 300, "30:20", "perspective"]);
   assert.equal(result.section.axis, "y");
   assert.deepEqual(await pngSize(path.join(project, "docs", "demo.png")), [400, 300]);
+  // A custom background replaces Studio's floor too: seen from above, the floor would fill the bottom corners.
+  assert.deepEqual(await corners(path.join(project, "docs", "demo.png")), Array(4).fill([242, 241, 236]));
   assert.deepEqual(await readdir(path.join(runtimeRoot, "views")), views, "a one-shot render saves no setup");
   assert.ok((await readdir(runtimeRoot)).includes(".pruned"), "a one-shot render prunes the store it imported into");
   const state = (await explorer("state")).json();
@@ -213,6 +220,14 @@ test("render writes a STEP's image without touching the project's viewer or save
     scales.push(pixel);
   }
   assert.ok(Math.abs(scales[0] / scales[1] - 2) < 1e-9, "twice the size, half the millimetres per pixel");
+  // An orthographic view is fitted to the image the same way at the default size as at a requested one of the same shape.
+  const fitted = [];
+  for (const size of [[], ["--size", "640x400"]]) {
+    const ortho = await explorer("render", "demo.step", "docs/ortho.png", ...size, "--projection", "orthographic");
+    assert.equal(ortho.code, 0, ortho.stderr);
+    fitted.push(ortho.json().camera.viewHeight);
+  }
+  assert.ok(Math.abs(fitted[0] / fitted[1] - 1) < 1e-9, `view heights ${fitted.join(" and ")} mm`);
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {

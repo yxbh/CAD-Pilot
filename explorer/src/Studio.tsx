@@ -120,7 +120,7 @@ function createStudioEnvironment(renderer: WebGLRenderer): WebGLRenderTarget {
 }
 
 /** Keep mounted across mode changes; Canvas owns shadows={enabled ? 'percentage' : false} on Three r185. */
-export default function StudioStage({ bounds, enabled }: { bounds: Bounds; enabled: boolean }) {
+export default function StudioStage({ bounds, enabled, floor }: { bounds: Bounds; enabled: boolean; floor: boolean }) {
   const { gl, scene, invalidate } = useThree()
   const environment = useRef<WebGLRenderTarget | null>(null)
   const keyLight = useRef<DirectionalLight>(null)
@@ -230,21 +230,23 @@ export default function StudioStage({ bounds, enabled }: { bounds: Bounds; enabl
         position={[span * 0.5, span * 1.6, span * 1.8]}
         target={target}
       />
-      <mesh
-        name="studio-floor"
-        position={[0, 0, -height / 2 - span * 0.002]}
-        scale={[span * 12, span * 12, 1]}
-        receiveShadow
-        raycast={ignoreRaycast}
-      >
-        <planeGeometry args={[1, 1]} />
-        <meshStandardMaterial
-          color="#26313d"
-          roughness={0.92}
-          metalness={0}
-          envMapIntensity={0.35}
-        />
-      </mesh>
+      {floor && (
+        <mesh
+          name="studio-floor"
+          position={[0, 0, -height / 2 - span * 0.002]}
+          scale={[span * 12, span * 12, 1]}
+          receiveShadow
+          raycast={ignoreRaycast}
+        >
+          <planeGeometry args={[1, 1]} />
+          <meshStandardMaterial
+            color="#26313d"
+            roughness={0.92}
+            metalness={0}
+            envMapIntensity={0.35}
+          />
+        </mesh>
+      )}
     </group>
   )
 }

@@ -74,7 +74,9 @@ export class CameraController {
     this.camera = next;
     this.update();
   }
-  fit(bounds: Bounds, preset: ViewDirection) {
+  // A fit is made in the projection that draws it: switching projection afterwards keeps the earlier one's scale.
+  fit(bounds: Bounds, preset: ViewDirection, projection: Projection) {
+    this.camera = projection === "orthographic" ? this.orthographic : this.perspective;
     const radius = Math.max(diagonal(bounds) / 2, 0.01);
     const axis = axisViews.find((item) => item.id === preset) ?? angleView(preset);
     const direction = new Vector3(...(axis?.direction ?? [1.35, -1.8, 1.3] as Vec3)).normalize();
@@ -85,7 +87,7 @@ export class CameraController {
     this.camera.near = Math.max(radius / 2000, 0.0001);
     this.camera.far = Math.max(radius * 100, distance * 4);
     this.camera.zoom = 1;
-    if (this.projection === "orthographic") this.setOrthoHeight(radius * 2 * 1.18 / Math.min(this.aspect, 1));
+    if (projection === "orthographic") this.setOrthoHeight(radius * 2 * 1.18 / Math.min(this.aspect, 1));
     this.update();
   }
   restore(snapshot: CameraState) {
