@@ -200,9 +200,12 @@ async function routingFixture(t, viewId, stubOptions) {
   const service = await runtime.createService({ projectRoot: workbenchRoot, viewId, renderer: stub.factory, log: () => {} });
   await service.initialize();
   const post = (route, body) => fetch(service.url + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const report = (kind) => {
+  // A page's report that it drew the current view. One the server ignores, such as a report of a view since replaced,
+  // fails here rather than leaving a wait for the drawing to run out the test's time.
+  const report = async (kind) => {
     const state = service.getState();
-    return post("api/rendered", { revision: state.revision, modelHash: state.documentRevision, topologyRevision: state.topologyRevision, kind });
+    const response = await post("api/rendered", { revision: state.revision, modelHash: state.documentRevision, topologyRevision: state.topologyRevision, kind });
+    assert.deepEqual([response.status, await response.json()], [200, { accepted: true }]);
   };
   const page = async (kind, client = kind) => {
     const abort = new AbortController();
@@ -223,21 +226,26 @@ async function routingFixture(t, viewId, stubOptions) {
 }
 
 test("views without a viewer page start the background renderer; an answering page is given a moment first", { timeout: 60_000 }, async (t) => {
-  const { service, stub, post, report, page } = await routingFixture(t, "routing");
+  const { service, stub, post, report, page, until } = await routingFixture(t, "routing");
   const confirming = service.confirmRendered();
   await delay(50);
   assert.equal(stub.calls.ensure, 1, "with no viewer page the background renderer starts at once");
   await page("headless");
-  assert.equal((await report("headless")).status, 200);
+  await report("headless");
   const confirmed = await confirming;
   assert.equal(confirmed.shown.drawn, "headless");
   assert.match(confirmed.note, /No viewer page is open/);
 
   await page("viewer", "person");
+  const before = service.getState().revision;
   const viewing = service.execute("fit_view", {}, { rendered: true });
+  void viewing.catch(() => {});
+  // A page draws the view it is sent, which comes once the view is saved: on Windows that can take longer than the
+  // moment below, and a report of the view before it releases nothing.
+  await until(() => service.getState().revision > before, "the view was not saved");
   await delay(300);
   assert.equal(stub.calls.ensure, 1, "an open viewer page gets a moment to answer");
-  assert.equal((await report("viewer")).status, 200);
+  await report("viewer");
   await viewing;
   assert.equal(service.getState().renderers.seen, true);
 
@@ -263,7 +271,7 @@ test("views without a viewer page start the background renderer; an answering pa
 test("a closed background page's last report is forgotten, so the next capture starts the renderer again", { timeout: 60_000 }, async (t) => {
   const { service, stub, post, report, page, captureRequests, until } = await routingFixture(t, "restart");
   const first = await page("headless");
-  assert.equal((await report("headless")).status, 200);
+  await report("headless");
   assert.equal(service.getState().renderers.drawn, "headless");
   // The renderer stopped (idle, crash or a failure): its page disconnects.
   first.close();
@@ -272,7 +280,7 @@ test("a closed background page's last report is forgotten, so the next capture s
   const capturing = service.captureImage();
   await until(() => stub.calls.ensure > ensured, "the capture did not start the renderer again");
   const second = await page("headless", "fresh");
-  assert.equal((await report("headless")).status, 200);
+  await report("headless");
   await until(() => captureRequests(second).length === 1, "the fresh page was not asked to capture");
   assert.equal((await post("api/capture-result", { ...captureRequests(second)[0], dataUrl: png })).status, 200);
   assert.equal((await capturing).by, "headless");
@@ -281,7 +289,7 @@ test("a closed background page's last report is forgotten, so the next capture s
 test("background captures take turns on the one drawing surface", { timeout: 60_000 }, async (t) => {
   const { service, post, report, page, captureRequests, until } = await routingFixture(t, "turns");
   const background = await page("headless");
-  assert.equal((await report("headless")).status, 200);
+  await report("headless");
   const red = service.captureImage({ width: 64, height: 48, background: "#ff0000" });
   const blue = service.captureImage({ width: 96, height: 64, background: "#0000ff" });
   await until(() => captureRequests(background).length === 1, "the first capture was not requested");
@@ -305,7 +313,7 @@ test("a load that no renderer can draw still opens, and says why it was not draw
   assert.equal(viewed.revision, service.getState().revision, "a view action is not failed for want of a renderer");
   await assert.rejects(service.captureImage(), { code: "renderer_missing" }, "a capture still needs an image");
   await page("viewer");
-  assert.equal((await report("viewer")).status, 200);
+  await report("viewer");
   assert.doesNotMatch((await service.summary()).note ?? "", /no renderer could draw/, "a drawing clears the problem");
 });
 
@@ -316,7 +324,7 @@ test("a viewer page still meshing the model it fetched gets longer before the ba
   const confirming = service.confirmRendered();
   await delay(2500);
   assert.equal(stub.calls.ensure, 0, "a page meshing its model is not raced by the background renderer");
-  assert.equal((await report("viewer")).status, 200);
+  await report("viewer");
   assert.equal((await confirming).shown.drawn, "viewer");
 });
 
@@ -329,7 +337,7 @@ test("a hidden viewer page that fetched the model does not hold back the backgro
   await delay(2500);
   assert.equal(stub.calls.ensure, 1, "the background renderer starts after the usual moment, not after the meshing allowance");
   await page("headless");
-  assert.equal((await report("headless")).status, 200);
+  await report("headless");
   assert.equal((await confirming).shown.drawn, "headless");
 });
 
