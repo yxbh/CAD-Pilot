@@ -57,10 +57,16 @@ OPEN_WALL_SHARE = 0.5
 CHORD_HEADINGS = 36
 CHORD_SPACING = 0.5
 CHORD_BATCH = 4096
-# A thin place's middle is its pixels at least as deep as their thin neighbours and at least this share
-# as deep as the deepest material near them: shallower peaks are raster steps at the tips of corners,
-# through which every chord is short.
-MIDDLE_DEPTH_SHARE = 0.5
+# A point's shortest chord counts only where it crosses the material about square-on: where the point is
+# at least cos(TIP_DEG / 2) times as far from the outline as from the chord's nearer end. Across a wall
+# that ratio is 1; across a taper, or a tip whose faces meet at an angle, it is the cosine of half that
+# angle; where the chord cuts off a corner of a thicker wall it is at most cos 45 degrees, at a square
+# corner. So a tip sharper than TIP_DEG is measured as thin near its point, and the corners of a wall
+# near the limit are not. The angle is empirical: about the sharpest tip the size rule lists on a thick
+# wall by itself (20 degrees always, 25 sometimes, 30 never), and the walls, ribs and webs of the test
+# sets read the same with any angle from 15 to 80 degrees (at 10 a web between a hole and an edge is
+# missed; at 90 square corners read thin).
+TIP_DEG = 25.0
 REPORTED = 5
 
 
@@ -411,23 +417,24 @@ def _union(a: Rect, b: Rect) -> Rect:
     return Rect(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1))
 
 
-def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float, float], pitch: float, limit: float, limit_px: float, window: int) -> list[tuple[float, tuple[float, float], Rect]]:
+def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float, float], pitch: float, limit: float) -> list[tuple[float, tuple[float, float], Rect]]:
     """Places in a layer thinner than the limit: pixels of its raster (the outline ``segments``' winding
     numbers on a grid from ``origin``) with no point deeper than half the limit nearby, in groups at
     least about as long as the limit. Each comes with its thickness, the point where that was measured
     (on the material) and its outline's box.
 
-    The place is measured at points spaced along its middle (MIDDLE_DEPTH_SHARE says which pixels those
-    are), as the shortest chord across the outline through each. It is thin where any of those
-    chords is under the limit, and its thickness is the median of the chords that are: a wall at least
-    the limit thick is not thin while a thin rib or spur on it is, and points where thin walls meet or
-    turn a corner read long, so the walls themselves set the median. Where no chord is found at all, the
+    The place is measured at points spaced along its middle, as the shortest chord across the outline
+    through each, counting only chords that cross it about square-on (see TIP_DEG). It is thin where any
+    of those is under the limit, and its thickness is the median of those that are: a wall at least the
+    limit thick is not thin while a thin rib or spur on it is, and points where thin walls meet or turn a
+    corner read long, so the walls themselves set the median. Where no chord is found at all, the
     raster's own estimate stands, up to two pitches thin."""
     mask = winding != 0
     if not mask.any():
         return []
+    limit_px = limit / pitch
     distance = ndimage.distance_transform_edt(mask)
-    nearby = ndimage.maximum_filter(distance, size=window)
+    nearby = ndimage.maximum_filter(distance, size=2 * math.ceil(limit_px / 2) + 1)
     thin = mask & (nearby < (limit_px + 1) / 2)
     if not thin.any():
         return []
@@ -452,11 +459,10 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     if not len(places):
         return []
 
-    middle = peak.ravel()[pixels] & ((MIDDLE_DEPTH_SHARE * nearby.ravel()[pixels] <= depth) | (depth == deepest[label]))
-    # In each square of a grid CHORD_SPACING of the limit across, each place's deepest middle pixel there
-    # (every place has one: its deepest pixel is a middle pixel), grouped by place.
+    # In each square of a grid CHORD_SPACING of the limit across, each place's deepest peak pixel there,
+    # grouped by place.
     side = max(1, round(CHORD_SPACING * limit_px))
-    along = np.flatnonzero(middle & large[label])
+    along = np.flatnonzero(peak.ravel()[pixels] & large[label])
     square = (rows[along] // side) * (thin.shape[1] // side + 1) + cols[along] // side
     order = np.lexsort((-depth[along], square, label[along]))
     along, square = along[order], square[order]
@@ -464,14 +470,14 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     owner = np.searchsorted(places, label[sample])
     taken = np.bincount(owner, minlength=len(places))
     points = np.column_stack([origin[0] + (cols[sample] + 0.5) * pitch, origin[1] + (rows[sample] + 0.5) * pitch])
-    chords = _chords(segments, points, winding[rows[sample], cols[sample]], reach=2 * limit + 2 * pitch)
-    # Each place's median chord under the limit (the upper one of an even count; equal chords in order
-    # of x, then y); its other chords, and those not found, sort last and count for nothing.
-    under = chords < limit
+    chords, squarely = _chords(segments, points, winding[rows[sample], cols[sample]], reach=2 * limit + 2 * pitch)
+    # Each place's median chord under the limit that crosses it square-on (the upper one of an even count;
+    # equal chords in order of x, then y); its other chords, and those not found, sort last.
+    under = (chords < limit) & (squarely >= math.cos(math.radians(TIP_DEG / 2)))
     found_any = np.bincount(owner, weights=np.isfinite(chords), minlength=len(places)) > 0
     unders = np.bincount(owner, weights=under, minlength=len(places)).astype(np.int64)
     order = np.lexsort((points[:, 1], points[:, 0], np.where(under, chords, np.inf), owner))
-    median = order[np.cumsum(taken) - taken + unders // 2]
+    reading = order[np.cumsum(taken) - taken + unders // 2]
 
     def x(col) -> float:
         return origin[0] + (float(col) + 0.5) * pitch
@@ -480,7 +486,7 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
         return origin[1] + (float(row) + 0.5) * pitch
 
     found = []
-    for index, chosen, thin_chords, any_chord in zip(places.tolist(), median.tolist(), unders.tolist(), found_any.tolist()):
+    for index, chosen, thin_chords, any_chord in zip(places.tolist(), reading.tolist(), unders.tolist(), found_any.tolist()):
         if thin_chords or not any_chord:
             thickness = float(chords[chosen]) if thin_chords else max(2 * float(deepest[index]) - 1, 1) * pitch
             box = Rect(x(low_cols[index]), y(low_rows[index]), x(high_cols[index]), y(high_rows[index]))
@@ -492,13 +498,14 @@ def _cross(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     return p[..., 0] * q[..., 1] - p[..., 1] * q[..., 0]
 
 
-def _chords(segments: np.ndarray, points: np.ndarray, windings: np.ndarray, reach: float) -> np.ndarray:
-    """The shortest chord through each point across the material of a layer outline: on lines through it
-    at evenly spread headings, the distance between where the line leaves the material on either side,
-    by the nonzero winding rule, ``windings`` being the points' own winding numbers (none of them 0).
-    Only outline within ``reach`` of a point counts; inf where no chord is that short. A point is tried
-    only against the segments whose box comes within reach of it, and a segment only on the headings
-    toward it."""
+def _chords(segments: np.ndarray, points: np.ndarray, windings: np.ndarray, reach: float) -> tuple[np.ndarray, np.ndarray]:
+    """The shortest chord through each point across the material of a layer outline, and how squarely it
+    crosses: on lines through the point at evenly spread headings, the distance between where the line
+    leaves the material on either side, by the nonzero winding rule, ``windings`` being the points' own
+    winding numbers (none of them 0); and the point's distance to the nearest of all those exits over its
+    distance to the chord's nearer end, 1 for a chord square to the outline. Only outline within ``reach``
+    of a point counts; the chord is inf where none is that short. A point is tried only against the
+    segments whose box comes within reach of it, and a segment only on the headings toward it."""
     rays = 2 * CHORD_HEADINGS
     # Half a step off the axes, so no line runs along an axis-aligned edge or through its corners.
     headings = (np.arange(rays) + 0.5) * math.pi / CHORD_HEADINGS
@@ -533,7 +540,11 @@ def _chords(segments: np.ndarray, points: np.ndarray, windings: np.ndarray, reac
         # Crossing an edge from its inside (left) to its outside lowers the winding number by one.
         crossings = point[pair[hit]] * rays + heading[hit], t[hit], -np.sign(across[hit])
         exits[batch] = _exits(*crossings, np.repeat(windings[batch], rays)).reshape(-1, rays)
-    return (exits[:, :CHORD_HEADINGS] + exits[:, CHORD_HEADINGS:]).min(axis=1)
+    across = exits[:, :CHORD_HEADINGS] + exits[:, CHORD_HEADINGS:]
+    shortest, each = across.argmin(axis=1), np.arange(len(points))
+    nearer = np.minimum(exits[each, shortest], exits[each, shortest + CHORD_HEADINGS])
+    with np.errstate(invalid="ignore"):
+        return across[each, shortest], exits.min(axis=1) / nearer
 
 
 def _exits(ray: np.ndarray, distance: np.ndarray, step: np.ndarray, start: np.ndarray) -> np.ndarray:
@@ -749,8 +760,6 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
     limit = settings.min_wall_mm
     width, depth, _ = mesh.size
     pitch = max(settings.line_width / 4, math.sqrt(float(width * depth) / WALL_PIXELS))
-    limit_px = limit / pitch
-    window = 2 * math.ceil(limit_px / 2) + 1
     # Layers are rasterised over their own outlines, on one grid starting just short of the part.
     low = mesh.bounds[0]
     origin = (float(low[0]) - LAYER_PAD * pitch, float(low[1]) - LAYER_PAD * pitch)
@@ -769,7 +778,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
             corner = (origin[0] + c0 * pitch, origin[1] + r0 * pitch)
             winding = _fill(segments, corner, (int(r1) - r0, int(c1) - c0), pitch)
             holes.add(float(z), winding != 0, (r0, c0))
-            found = _thin_places(segments, winding, corner, pitch, limit, limit_px, window)
+            found = _thin_places(segments, winding, corner, pitch, limit)
         else:
             holes.gap()
         # A place continues a group only from the sampled layer just below, where its outline overlaps.
@@ -799,7 +808,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
         "pitch_mm": round(pitch, 3),
         "layers_sampled": int(len(heights)),
         "thin_places": len(walls),
-        "method": "layer outlines rasterised at layer centres; a thin place is measured by the shortest chord across the outline through points spaced along its middle, and its thickness is the median of those under the limit",
+        "method": "layer outlines rasterised at layer centres; a thin place is measured by the shortest chord across the outline, crossing it about square-on, through points spaced along its middle, and its thickness is the median of those under the limit",
     }
     return walls, method, *holes.report(mesh, step)
 

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from build123d import Box, Compound, Cylinder, Pos, Rot, export_step, export_stl
+from build123d import Box, Compound, Cylinder, Polygon, Pos, Rot, export_step, export_stl, extrude
 
-from print import meshes
+from print import meshes, orientation
 from print.meshes import MeshError, load_mesh
 from print.orientation import CheckSettings, check_orientation
 
@@ -18,6 +18,35 @@ def _mesh(tmp_path: Path, shape, name: str = "part", rotate=(0.0, 0.0, 0.0)):
     path = tmp_path / f"{name}.step"
     export_step(shape, str(path))
     return load_mesh(path).oriented(rotate)
+
+
+def _layer(*rings, turn: float = 0.0, shift=(0.0, 0.0)):
+    """The thin places in one layer outline, on the raster a small part gets: rings of (x, y) points in mm,
+    the first the outside and the rest holes, turned ``turn`` degrees about the origin and then shifted."""
+    c, s = np.cos(np.radians(turn)), np.sin(np.radians(turn))
+    segments = []
+    for i, ring in enumerate(rings):
+        points = np.array(ring, dtype=float) @ np.array([[c, s], [-s, c]]) + shift
+        x, y = points.T
+        if (np.dot(x, np.roll(y, -1)) > np.dot(np.roll(x, -1), y)) != (i == 0):
+            points = points[::-1]  # the outside counterclockwise, holes clockwise: material on the left
+        segments.append(np.stack([points, np.roll(points, -1, axis=0)], axis=1))
+    segments = np.concatenate(segments)
+    pitch = SETTINGS.line_width / 4
+    winding, origin = orientation._raster(segments, pitch)
+    return orientation._thin_places(segments, winding, origin, pitch, SETTINGS.min_wall_mm)
+
+
+def _wall_with_rib(wall: float, rib: float, reach: float) -> list[tuple[float, float]]:
+    """A 12 mm wall along x, ``wall`` thick, with a rib ``rib`` thick standing ``reach`` off its middle."""
+    w, r = wall / 2, rib / 2
+    return [(-6, -w), (6, -w), (6, w), (r, w), (r, w + reach), (-r, w + reach), (-r, w), (-6, w)]
+
+
+def _wall_with_end(wall: float, angle: float) -> list[tuple[float, float]]:
+    """A 12 mm wall along x, ``wall`` thick, its right end cut to a corner of ``angle`` degrees."""
+    w = wall / 2
+    return [(-6, -w), (6 + wall / np.tan(np.radians(angle)), -w), (6, w), (-6, w)]
 
 
 def test_tee_overhangs_need_support_until_turned_over(tmp_path):
@@ -205,6 +234,19 @@ def test_thin_walls_that_cross_or_turn_a_corner_are_measured_along_their_length(
     shell = Pos(40, 0, 5) * (Box(20, 14, 10) - Box(18.8, 12.8, 10))
     walls = check_orientation(_mesh(tmp_path, cross + shell), SETTINGS).thin_walls
     assert sorted(wall.thickness_mm for wall in walls) == pytest.approx([0.5, 0.6], abs=0.01)
+
+
+def test_a_line_that_cuts_off_a_corner_of_a_wall_does_not_measure_it():
+    # Through a point just inside a corner the shortest line across cuts the corner off: it read 0.06 mm at the
+    # foot of this 0.3 mm rib on a 0.86 mm wall, and 0.13 mm at the 40-degree end of a 0.9 mm wall.
+    readings = [[thickness for thickness, _, _ in _layer(_wall_with_rib(0.86, 0.3, 0.45), turn=turn, shift=(0.02, 0.04))] for turn in (0, 20, 45, 70)]
+    assert readings[1] == pytest.approx([0.3], abs=0.01)
+    assert all(found == pytest.approx([0.3] * len(found), abs=0.01) for found in readings)
+    for turn in (0, 30, 45, 75):
+        assert _layer(_wall_with_end(0.9, 40), turn=turn, shift=(0.03, 0.02)) == []
+    # A tip sharper than TIP_DEG is thin near its point.
+    (tip,) = _layer(_wall_with_end(0.9, 15))
+    assert tip[0] < SETTINGS.min_wall_mm and tip[1][0] > 6
 
 
 def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
