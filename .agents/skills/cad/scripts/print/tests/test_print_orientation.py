@@ -249,6 +249,18 @@ def test_a_line_that_cuts_off_a_corner_of_a_wall_does_not_measure_it():
     assert tip[0] < SETTINGS.min_wall_mm and tip[1][0] > 6
 
 
+def test_a_thin_place_reads_as_its_thinnest_part(tmp_path):
+    # A 0.3 mm rib on a 0.8 mm wall, both under the 0.84 mm limit, reads as the rib, where it stands; a wall
+    # tapering from 1.2 to 0.6 mm reads as its thin end.
+    rib = Pos(-10, 0, 5) * (Box(12, 0.8, 6) + Pos(2, 4.4, 0) * Box(0.3, 8, 6))
+    taper = Pos(10, 0, 2) * extrude(Polygon((-6, -0.6), (6, -0.3), (6, 0.3), (-6, 0.6), align=None), 6)
+    walls = check_orientation(_mesh(tmp_path, Pos(0, 0, 1) * Box(40, 30, 2) + rib + taper), SETTINGS).thin_walls
+    on_rib, on_taper = sorted(walls, key=lambda wall: wall.model_xyz_mm[0])
+    x, y, _ = on_rib.model_xyz_mm
+    assert on_rib.thickness_mm == pytest.approx(0.3, abs=0.01) and abs(x + 8) <= 0.15 and 0.4 <= y <= 8.4
+    assert on_taper.thickness_mm == pytest.approx(0.6, abs=0.05) and on_taper.model_xyz_mm[0] > 14
+
+
 def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
     # One STEP body, and one STL, holding two boxes: neither is an assembly of parts, but both print as two pieces.
     two = Compound([Pos(10, 10, 5) * Box(20, 20, 10), Pos(50, 10, 5) * Box(20, 20, 10)])

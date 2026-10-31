@@ -425,10 +425,11 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
 
     The place is measured at points spaced along its middle, as the shortest chord across the outline
     through each, counting only chords that cross it about square-on (see TIP_DEG). It is thin where any
-    of those is under the limit, and its thickness is the median of those that are: a wall at least the
-    limit thick is not thin while a thin rib or spur on it is, and points where thin walls meet or turn a
-    corner read long, so the walls themselves set the median. Where no chord is found at all, the
-    raster's own estimate stands, up to two pitches thin."""
+    of those is under the limit, and its thickness is the second thinnest of them, or the only one: a
+    wall at least the limit thick is not thin while a thin rib or spur on it is, a thin rib on a thin
+    wall reads as the rib, and one stray reading does not set it; points where thin walls meet or turn a
+    corner read long. Where no chord is found at all, the raster's own estimate stands, up to two
+    pitches thin."""
     mask = winding != 0
     if not mask.any():
         return []
@@ -471,13 +472,13 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     taken = np.bincount(owner, minlength=len(places))
     points = np.column_stack([origin[0] + (cols[sample] + 0.5) * pitch, origin[1] + (rows[sample] + 0.5) * pitch])
     chords, squarely = _chords(segments, points, winding[rows[sample], cols[sample]], reach=2 * limit + 2 * pitch)
-    # Each place's median chord under the limit that crosses it square-on (the upper one of an even count;
-    # equal chords in order of x, then y); its other chords, and those not found, sort last.
+    # Each place's second thinnest chord under the limit that crosses it square-on, or its only one (equal
+    # chords in order of x, then y); its other chords, and those not found, sort last.
     under = (chords < limit) & (squarely >= math.cos(math.radians(TIP_DEG / 2)))
     found_any = np.bincount(owner, weights=np.isfinite(chords), minlength=len(places)) > 0
     unders = np.bincount(owner, weights=under, minlength=len(places)).astype(np.int64)
     order = np.lexsort((points[:, 1], points[:, 0], np.where(under, chords, np.inf), owner))
-    reading = order[np.cumsum(taken) - taken + unders // 2]
+    reading = order[np.cumsum(taken) - taken + np.clip(unders, 1, 2) - 1]
 
     def x(col) -> float:
         return origin[0] + (float(col) + 0.5) * pitch
@@ -808,7 +809,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
         "pitch_mm": round(pitch, 3),
         "layers_sampled": int(len(heights)),
         "thin_places": len(walls),
-        "method": "layer outlines rasterised at layer centres; a thin place is measured by the shortest chord across the outline, crossing it about square-on, through points spaced along its middle, and its thickness is the median of those under the limit",
+        "method": "layer outlines rasterised at layer centres; a thin place is measured by the shortest chord across the outline, crossing it about square-on, through points spaced along its middle, and its thickness is the second thinnest of those under the limit",
     }
     return walls, method, *holes.report(mesh, step)
 
