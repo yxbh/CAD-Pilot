@@ -1,4 +1,5 @@
 import contextlib
+import sys
 import time
 
 from playwright.sync_api import Error, expect
@@ -27,12 +28,31 @@ class _Shared:
 
     def browser(self):
         if self._browser is None or not self._browser.is_connected():
-            self._browser = self.playwright.chromium.launch()
+            self._browser = _launch(self.playwright)
         return self._browser
 
     def close(self):
         if self._browser is not None and self._browser.is_connected():
             self._browser.close()
+
+
+# Experiment: hardware WebGL where it works, as the Explorer's own renderer chooses (server/renderer.mjs).
+_ANGLE = {"darwin": [["--use-angle=metal"]], "win32": [["--use-angle=d3d11"], ["--use-angle=d3d11-warp"]]}
+
+
+def _launch(playwright):
+    for args in _ANGLE.get(sys.platform, []):
+        browser = playwright.chromium.launch(args=args)
+        page = browser.new_page()
+        renderer = page.evaluate("""() => { const gl = document.createElement('canvas').getContext('webgl2');
+            if (!gl) return null; const e = gl.getExtension('WEBGL_debug_renderer_info');
+            return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); }""")
+        page.close()
+        if renderer:
+            print(f"[timing] scenario browser {args}: {renderer}", file=sys.__stderr__, flush=True)
+            return browser
+        browser.close()
+    return playwright.chromium.launch()
 
 
 class _Contexts:
@@ -73,7 +93,7 @@ def launch_chromium(playwright):
     expect.set_options(timeout=30_000)
     if _shared is not None:
         return _Contexts(_shared.browser())
-    return playwright.chromium.launch()
+    return _launch(playwright)
 
 
 class BrowserSession:
