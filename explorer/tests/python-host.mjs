@@ -35,11 +35,16 @@ function start() {
     if (host === started) host = null;
     started.waiting?.reject(new Error(`The Python test host exited (${signal ?? code}).\n${started.log}`));
   });
-  // An idle host never keeps a finished test process alive; it is stopped when the process exits.
+  // An idle host never keeps a finished test process alive.
   for (const stream of [child, child.stdin, child.stdout, child.stderr]) stream.unref();
-  process.once("exit", () => stop(child));
   return started;
 }
+
+// The host still running when the test process exits is stopped. Hosts that exited or timed out are not: on Windows
+// their process id may already belong to another process.
+process.once("exit", () => {
+  if (host && host.child.exitCode === null && host.child.signalCode === null) stop(host.child);
+});
 
 async function run(script, args, timeout) {
   host ??= start();
