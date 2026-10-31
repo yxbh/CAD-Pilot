@@ -1,7 +1,9 @@
+import argparse
 import json
 
 import pytest
 
+from print.cli import _path
 from print.job import JobError, load_job, parse_job
 from print.profile import ProfileError, load_profile, parse_profile
 
@@ -92,8 +94,25 @@ def test_single_part_target_takes_part_options(tmp_path):
         ({"parts": [{"file": "a.step", "copies": 0}]}, "copies"),
         ({"parts": [{"file": "a.step", "orientation": "up"}]}, "unknown key"),
         ({"parts": [{"file": "a.step"}], "output": "a.stl"}, ".3mf"),
+        ({"parts": [{"file": "/outputs/a.step"}]}, "relative to the job file"),
+        ({"parts": [{"file": "D:\\outputs\\a.step"}]}, "relative to the job file"),
+        ({"parts": [{"file": "a.step"}], "output": "C:/prints/a.3mf"}, "relative to the job file"),
     ],
 )
 def test_job_errors_name_the_problem(tmp_path, data, message):
     with pytest.raises(JobError, match=message):
         parse_job(data, base=tmp_path, default_output=tmp_path / "x.3mf")
+
+
+def test_job_paths_take_either_separator(tmp_path):
+    job = parse_job({"parts": [{"file": "..\\outputs\\a.step"}], "output": "prints\\a.3mf"}, base=tmp_path / "jobs", default_output=tmp_path / "x.3mf")
+    assert job.parts[0].file == tmp_path / "outputs" / "a.step"
+    assert job.output == tmp_path / "jobs" / "prints" / "a.3mf"
+
+
+def test_command_line_paths_read_like_the_other_cad_tools(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert _path("outputs\\a.step") == tmp_path.resolve() / "outputs" / "a.step"
+    assert _path(str(tmp_path / "b.step")) == tmp_path.resolve() / "b.step"
+    with pytest.raises(argparse.ArgumentTypeError, match="absolute on this system"):
+        _path("D:a.step")  # drive-relative: absolute on no system

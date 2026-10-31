@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from common.paths import relative_path
+
 from .meshes import MESH_SUFFIXES, STEP_SUFFIXES
 from .profile import COLOUR, KEYS as PROFILE_KEYS
 
@@ -61,8 +63,9 @@ def _part(data: object, base: Path, where: str) -> PartSpec:
     if extra:
         raise JobError(f"{where}: unknown key(s) {', '.join(extra)}; expected {', '.join(sorted(PART_KEYS))}")
     file = data.get("file")
-    if not isinstance(file, str) or not file:
-        raise JobError(f"{where} needs a file: a STEP, STP or STL path relative to the job file")
+    relative = relative_path(file) if isinstance(file, str) else None
+    if relative is None:
+        raise JobError(f"{where} needs a file: a STEP, STP or STL path relative to the job file, with either separator")
     rotate = data.get("rotate", [0, 0, 0])
     if not isinstance(rotate, list) or len(rotate) != 3 or not all(isinstance(v, (int, float)) for v in rotate):
         raise JobError(f"{where} rotate must be [x, y, z] degrees about the fixed axes, applied X then Y then Z")
@@ -78,7 +81,7 @@ def _part(data: object, base: Path, where: str) -> PartSpec:
     filament = data.get("filament")
     if filament is not None and not isinstance(filament, str):
         raise JobError(f"{where} filament must name a filament of the print profile")
-    path = (base / file).resolve()
+    path = (base / Path(*relative.parts)).resolve()
     if path.suffix.lower() not in STEP_SUFFIXES | MESH_SUFFIXES:
         raise JobError(f"{where} file must be STEP, STP or STL, not {file}")
     name = data.get("name", path.stem)
@@ -115,8 +118,9 @@ def parse_job(data: Mapping, *, base: Path, default_output: Path) -> Job:
     if not isinstance(profile, Mapping):
         raise JobError(f"print job profile must be an object overriding {', '.join(sorted(PROFILE_KEYS))}")
     output = data.get("output")
-    if output is not None and (not isinstance(output, str) or not output.lower().endswith(".3mf")):
-        raise JobError("print job output must be a .3mf path relative to the job file")
+    relative_output = relative_path(output) if isinstance(output, str) else None
+    if output is not None and (relative_output is None or relative_output.suffix.lower() != ".3mf"):
+        raise JobError("print job output must be a .3mf path relative to the job file, with either separator")
     if "parts" in data:
         plates = (PlateSpec(name, _parts(data["parts"], base, "parts")),)
     else:
@@ -140,7 +144,7 @@ def parse_job(data: Mapping, *, base: Path, default_output: Path) -> Job:
         name=" ".join(name.split()),
         plates=plates,
         auto_plates="parts" in data,
-        output=(base / output).resolve() if output else default_output,
+        output=(base / Path(*relative_output.parts)).resolve() if relative_output else default_output,
         profile=profile,
     )
 

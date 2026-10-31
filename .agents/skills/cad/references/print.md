@@ -47,7 +47,7 @@ When the file is missing, ask the user, one plain question at a time, which prin
 
 ## Print jobs
 
-A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`.
+A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file, with either separator, so a job written on Windows also works on macOS; a root or drive is refused. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`.
 
 ```json
 {

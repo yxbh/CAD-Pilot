@@ -8,6 +8,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from common.paths import relative_path
+
 from .bambu import BambuStudio, BambuStudioError
 from .bambu3mf import write_project
 from .job import JobError, load_job
@@ -17,6 +19,16 @@ from .plan import PlanError, ProjectPlan, check_settings, plan_project
 from .profile import PROFILE_PATH, ProfileError, load_profile
 from .report import check_lines, plan_dict, plan_lines, slice_lines
 from .slicing import SliceReport, slice_project
+
+
+def _path(value: str) -> Path:
+    """A command-line path: relative with either separator, as the other cad tools read them, or absolute here."""
+    relative = relative_path(value)
+    path = (Path(*relative.parts) if relative is not None else Path(value)).expanduser()
+    if relative is None and not path.is_absolute():
+        # A drive or root that is not absolute here (C:\x on macOS, \x on Windows) names no single place.
+        raise argparse.ArgumentTypeError(f"{value!r} must be relative to the current folder or absolute on this system")
+    return path.resolve()
 
 
 def _emit(args: argparse.Namespace, lines: list[str], data: dict) -> None:
@@ -48,10 +60,10 @@ def _project(args: argparse.Namespace) -> int:
             part[key] = getattr(args, key)
     if args.no_support:
         part["support"] = False
-    job = load_job(Path(args.target), part or None)
+    job = load_job(args.target, part or None)
     profile = load_profile(job.profile)
     studio = BambuStudio.locate(profile.bambu_studio)
-    output = Path(args.output).resolve() if args.output else job.output
+    output = args.output or job.output
     if output.suffix.lower() != ".3mf":
         raise JobError(f"The project must be a .3mf file, not {output.name}")
     plan = plan_project(job, profile, studio)
@@ -74,7 +86,7 @@ def _project(args: argparse.Namespace) -> int:
 
 
 def _slice(args: argparse.Namespace) -> int:
-    project = Path(args.project).resolve()
+    project = args.project
     if not project.is_file():
         raise BambuStudioError(f"Project not found: {project}")
     studio = BambuStudio.locate(_configured_studio())
@@ -99,7 +111,7 @@ def _configured_studio() -> str | None:
 def _check(args: argparse.Namespace) -> int:
     profile = load_profile()
     checks = check_settings(BambuStudio.locate(profile.bambu_studio).presets, profile, bridge_review_mm=args.bridge_limit)
-    path = Path(args.file).resolve()
+    path = args.file
     mesh = load_mesh(path).oriented(tuple(args.rotate or (0.0, 0.0, 0.0)))
     report = check_orientation(mesh, checks)
     rotate = " ".join(f"{v:g}" for v in (args.rotate or (0, 0, 0)))
@@ -112,7 +124,7 @@ def _check(args: argparse.Namespace) -> int:
 def _coupon(args: argparse.Namespace) -> int:
     from .coupon import write_ladder
 
-    output = Path(args.output).resolve()
+    output = args.output
     try:
         rungs, peg = write_ladder(output, args.diameter, args.clearances, args.depth, args.peg)
     except ValueError as error:
@@ -166,8 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         return sub
 
     project = add("project", "Write a Bambu Studio project 3MF from a print job file or a single STEP/STL part.")
-    project.add_argument("target", help="A *.print.json job file, or one STEP/STP/STL part for a single plate.")
-    project.add_argument("-o", "--output", help="The .3mf to write (default: the job's output, else beside the target).")
+    project.add_argument("target", type=_path, help="A *.print.json job file, or one STEP/STP/STL part for a single plate.")
+    project.add_argument("-o", "--output", type=_path, help="The .3mf to write (default: the job's output, else beside the target).")
     project.add_argument("--rotate", nargs=3, type=float, metavar=("X", "Y", "Z"), help="Single part: degrees about X, then Y, then Z.")
     project.add_argument("--copies", type=int, help="Single part: how many to print.")
     project.add_argument("--filament", help="Single part: a filament named in the print profile.")
@@ -178,18 +190,18 @@ def build_parser() -> argparse.ArgumentParser:
     project.set_defaults(run=_project)
 
     check = add("check", "Measure one part in a print orientation: bed contact, support, bridges and thin walls.")
-    check.add_argument("file", help="A STEP, STP or STL part.")
+    check.add_argument("file", type=_path, help="A STEP, STP or STL part.")
     check.add_argument("--rotate", nargs=3, type=float, metavar=("X", "Y", "Z"), help="Degrees about X, then Y, then Z.")
     check.add_argument("--bridge-limit", type=float, default=5.0, help="Flag bridges spanning at least this many mm (default 5).")
     check.set_defaults(run=_check)
 
     sliced = add("slice", "Slice a Bambu Studio project and report each plate's time, filament and warnings.")
-    sliced.add_argument("project", help="A Bambu Studio project .3mf.")
+    sliced.add_argument("project", type=_path, help="A Bambu Studio project .3mf.")
     sliced.add_argument("--open", action="store_true", help="Open the project in the Bambu Studio app.")
     sliced.set_defaults(run=_slice)
 
     coupon = add("coupon", "Write a fit-coupon ladder STEP: round holes stepping through clearances, marked with dimple counts.")
-    coupon.add_argument("-o", "--output", required=True, help="The STEP to write, such as coupons/pin-ladder.step.")
+    coupon.add_argument("-o", "--output", type=_path, required=True, help="The STEP to write, such as coupons/pin-ladder.step.")
     coupon.add_argument("--diameter", type=float, required=True, help="Nominal diameter of the mating part (mm).")
     coupon.add_argument("--clearances", type=float, nargs="+", required=True, help="Diametral clearances to try (mm), such as 0.1 0.2 0.3 0.4.")
     coupon.add_argument("--depth", type=float, default=6.0, help="Hole depth: how far the part engages (mm, default 6).")
