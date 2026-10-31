@@ -193,7 +193,7 @@ Use these commands from the workbench root for narrower checks:
 | Complete Explorer | `npm --prefix explorer test` | Core checks, then the browser suite |
 | Non-browser | `npm --prefix explorer run test:core` | Geometry helpers, section planes, commands, HTTP, references, persistence, cache compatibility and ownership |
 | Browser | `npm --prefix explorer run test:browser` | Real selection/clipboard, camera matrices, Studio, section caps, drawing recovery, diagnostics and delayed render reports |
-| One CI share | `node explorer/scripts/test.mjs shard 2/4` | What CI's `explorer 2/4` jobs run: a share of the core suite and browser files, balanced by measured time; `--list` prints the files |
+| One CI share | `node explorer/scripts/test.mjs shard 2/4` | What CI's `explorer 2/4` jobs run: a share of the test files, balanced by the times in `tests/durations.json` for this platform; `--list` prints the files, and `--durations <file>` records each file's time |
 | Build only | `npm --prefix explorer run build` | Type-check and production assets; skipped when the sources, configuration and installed packages match the last successful build |
 | Native converter | `uv run pytest explorer/tests/test_converter.py -q` | STEP topology, placements, face/edge retention, cleanup and resource/error boundaries |
 | Mesh reader and measurement | `uv run pytest explorer/tests/test_mesh.py -q` | Mesh formats, frames, faults, the geometry file, section fits and distances |
