@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import pytest
 from build123d import GeomType
 
-from print.coupon import calibration_ladder, ladder, write_ladder
+from print.coupon import calibration_ladder, ladder
 
 
 def test_ladder_holes_step_through_the_clearances_with_dimple_marks():
@@ -39,7 +41,21 @@ def test_calibration_ladder_refuses_repeated_empty_or_vanishing_rungs(values):
         calibration_ladder("holes", 3.0, values, depth=5.0)
 
 
-def test_the_ladder_is_written_only_as_step(tmp_path):
-    with pytest.raises(ValueError, match=r"give a \.step or \.stp path, not ladder\.stl"):
-        write_ladder(tmp_path / "ladder.stl", 10.0, [0.1], 6.0, False)
+@pytest.mark.parametrize("ladder", [["--clearances", "0.1"], ["--calibrate", "holes"]])
+def test_a_coupon_is_written_only_as_step_and_refused_before_anything_else(tmp_path, monkeypatch, capsys, ladder):
+    from print import cli
+
+    monkeypatch.setattr(cli, "load_profile", lambda overrides=None: pytest.fail("the profile was read"))
+    assert cli.main(["coupon", "-o", str(tmp_path / "ladder.stl"), "--diameter", "10", *ladder]) == 2
+    assert "give -o a .step or .stp path, not ladder.stl" in capsys.readouterr().err
     assert not (tmp_path / "ladder.stl").exists()
+
+
+def test_a_coupons_project_is_named_as_it_can_be_given_back(tmp_path, monkeypatch):
+    from print.cli import _shown
+
+    monkeypatch.chdir(tmp_path)
+    assert _shown(tmp_path.resolve() / "coupons" / "petg-holes.3mf") == str(Path("coupons", "petg-holes.3mf"))
+    assert _shown(tmp_path.resolve() / "my coupons" / "a.3mf") == '"' + str(Path("my coupons", "a.3mf")) + '"'
+    elsewhere = tmp_path.resolve().parent / "a.3mf"
+    assert _shown(elsewhere) == str(elsewhere)
