@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { analysisInput, changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
-import { analysisFields, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
+import { analysisFields, analysisKey, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -29,7 +29,7 @@ const maxImageBytes = 40 * 1024 * 1024;
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const publicError = (error) => error instanceof Error ? error.message : String(error);
 // An open viewer page usually draws within a frame or two; it gets this long before the background renderer starts,
-// or up to viewerLoadGraceMs while it is still meshing a model it has just fetched.
+// or up to viewerLoadGraceMs while it is still meshing a model it has just fetched or working out an analysis view.
 const viewerGraceMs = 1500;
 const viewerLoadGraceMs = 15_000;
 const renderTimeoutMs = 90_000;
@@ -246,7 +246,7 @@ async function startOwnedService({
     const report = { viewer: lastRendered, headless: lastHeadless }[current.renderers.drawn];
     return stateSummary(current, {
       url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera,
-      drawnAnalysis: report?.revision === current.revision ? report.analysisStats : undefined,
+      drawnAnalysis: report?.revision === current.revision && report.analysisKey === analysisKey(current.analysis) ? report.analysisStats : undefined,
     });
   }
 
@@ -486,6 +486,9 @@ async function startOwnedService({
   // Only a page in front meshes and draws: a hidden tab fetches the model but draws nothing until it is shown again.
   const viewerMeshing = () => viewerFetch?.visible && viewerFetch.topologyRevision === state.topologyRevision
     && lastRendered?.topologyRevision !== state.topologyRevision;
+  // A page in front that has drawn this model, but not yet its analysis view, is working out that view's data.
+  const viewerAnalysing = () => viewerFetch?.visible && analysisFields(state.analysis).length > 0
+    && lastRendered?.topologyRevision === state.topologyRevision && lastRendered.analysisKey !== analysisKey(state.analysis);
 
   // Resolves once a renderer has drawn this revision. With no open (or no answering) viewer page, the background
   // renderer is started, so a hidden or closed tab never leaves a view unconfirmed. Once it has started, the
@@ -510,7 +513,7 @@ async function startOwnedService({
       if (dependsOnHeadless(by)) return start();
       const patience = Date.now() + viewerLoadGraceMs;
       const check = () => {
-        if (viewerMeshing() && Date.now() < patience) waiter.grace = setTimeout(check, 250);
+        if ((viewerMeshing() || viewerAnalysing()) && Date.now() < patience) waiter.grace = setTimeout(check, 250);
         else start();
       };
       waiter.grace = setTimeout(check, viewerGraceMs);
@@ -600,6 +603,7 @@ async function startOwnedService({
     // An image's own analysis settings are drawn by the background renderer, which waits for the data they need.
     if (analysis !== undefined) {
       if (client !== undefined) throw new PrototypeError("bad_capture", "A viewer page captures what it shows; capture without a client to choose analysis settings");
+      if (state.activeReviewId) throw new PrototypeError("bad_capture", "A drawing review captures its saved image; return to the model to choose analysis settings");
       options.analysis = analysisInput(state.analysis, analysis);
     }
     if (client !== undefined) return captureFrom(client, options);

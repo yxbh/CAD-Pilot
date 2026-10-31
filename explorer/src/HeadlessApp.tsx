@@ -4,7 +4,7 @@ import { useArrangedModel } from "./useArrangedModel.ts";
 import { newestState, type Model, type ViewState } from "./model.ts";
 import { blobDataUrl, type CaptureRequest, type RenderReport, type ViewCapture, type ViewerHost } from "./host.ts";
 import { composeReviewImage } from "./drawing/render.ts";
-import { analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
+import { analysisFields, analysisKey, type AnalysisSettings } from "../shared/analysis.mjs";
 
 const defaultSize = { width: 1280, height: 800 };
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -67,10 +67,12 @@ export function HeadlessApp({ host }: { host: ViewerHost }) {
     for (let frame = 0; frame < 6000; frame++) {
       if (latest.current?.revision !== revision) throw new Error("View changed before capture");
       const report = lastReport.current;
-      const drawn = analysisKey(analysis ?? latest.current.analysis);
+      const settings = analysis ?? latest.current.analysis;
+      const drawn = analysisKey(settings);
       if (capture.current && report?.revision === revision && report.pixels[0] === width && report.pixels[1] === height &&
           report.background === background && report.analysisKey === drawn) return;
-      if (frame >= 900 && report?.analysisKey === drawn) break;
+      // Only an analysis view's data is worth waiting longer for.
+      if (frame >= 900 && (report?.analysisKey === drawn || !analysisFields(settings).length)) break;
       await nextFrame();
     }
     throw new Error("The background renderer did not draw the view at the requested size and backdrop");

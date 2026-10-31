@@ -89,7 +89,10 @@ export function weldVertices(positions: ArrayLike<number>): Uint32Array {
 export function curvatures(positions: ArrayLike<number>, indices: ArrayLike<number>): FieldResults["curvature"] {
   const count = positions.length / 3;
   const welded = weldVertices(positions);
-  const corners = Uint32Array.from(indices, (index) => welded[index]);
+  // A triangle with two corners at one position has no area and no edges of its own: counting its edges would make the
+  // edge it lies along over-shared, and its vertices a border.
+  const corners = Uint32Array.from(Array.from({ length: indices.length / 3 }, (_, triangle) => [0, 1, 2].map((corner) => welded[indices[triangle * 3 + corner]]))
+    .filter(([a, b, c]) => a !== b && b !== c && a !== c).flat());
   const area = new Float64Array(count);
   const angles = new Float64Array(count);
   const laplacian = new Float64Array(count * 3);
@@ -109,7 +112,6 @@ export function curvatures(positions: ArrayLike<number>, indices: ArrayLike<numb
   const cross = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   for (let triangle = 0; triangle < corners.length / 3; triangle++) {
     const ids = [corners[triangle * 3], corners[triangle * 3 + 1], corners[triangle * 3 + 2]];
-    if (ids[0] === ids[1] || ids[1] === ids[2] || ids[0] === ids[2]) continue;
     const p = ids.map(point);
     const twice = cross(minus(p[1], p[0]), minus(p[2], p[0]));
     const doubled = Math.hypot(...twice);

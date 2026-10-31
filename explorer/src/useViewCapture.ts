@@ -23,7 +23,7 @@ export function useViewCapture({ host, latest, queue, reviews, onError }: {
       } else {
         if (!capture.current || latest.current.activeReviewId) throw new Error("Model renderer is not ready");
         const captured = capture.current();
-        await host.captureResult({ ...requested, dataUrl: captured.dataUrl, camera: captured.camera });
+        await host.captureResult({ ...requested, dataUrl: captured.dataUrl, camera: captured.camera, analysisStats: captured.analysisStats });
       }
     } catch (failure) {
       await host.captureResult({ ...requested, error: failure instanceof Error ? failure.message : String(failure) });

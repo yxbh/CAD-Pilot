@@ -24,6 +24,10 @@ test("curvature of a sphere is 1/r (mean) and 1/r^2 (Gaussian), and undefined on
   // Inside out, a convex surface reads as concave.
   const inverted = Uint32Array.from(sphere.indices, (_, slot) => sphere.indices[slot - (slot % 3) + 2 - (slot % 3)]);
   assert.ok(average(curvatures(sphere.positions, inverted).mean) < -0.09);
+  // A zero-area triangle along an edge (two corners at one point) leaves that edge shared by two and no border.
+  const [a, b] = [sphere.indices[0], sphere.indices[1]];
+  const sliver = curvatures(sphere.positions, Uint32Array.from([...sphere.indices, a, b, b]));
+  assert.ok(sliver.mean.every((value) => value !== NO_VALUE));
   // A STEP preview repeats each corner per face; joining them gives the same answer as a welded mesh.
   const box = arrays(new BoxGeometry(10, 10, 10), false);
   const welded = arrays(new BoxGeometry(10, 10, 10));
