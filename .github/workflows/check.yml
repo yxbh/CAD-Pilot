@@ -20,7 +20,8 @@ defaults:
 
 # Each system runs its checks in several jobs: each runs a share of the Python test files and a share of the Explorer's,
 # both split by each file's measured time on that system's runners, so a run takes as long as its slowest job rather
-# than the sum. macOS runs five, as many macOS jobs as an account may run at once; the others six.
+# than the sum. macOS runs five, as many macOS jobs as an account may run at once; Linux six; Windows, whose runners
+# are the slowest to set up and to draw in software, seven.
 jobs:
   check:
     name: check ${{ matrix.share }}/${{ matrix.shares }} (${{ matrix.os }})
@@ -30,12 +31,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
-        share: [1, 2, 3, 4, 5, 6]
+        share: [1, 2, 3, 4, 5, 6, 7]
         exclude:
           - { os: macos-latest, share: 6 }
+          - { os: macos-latest, share: 7 }
+          - { os: ubuntu-latest, share: 7 }
         include:
           - { os: macos-latest, shares: 5 }
-          - { os: windows-latest, shares: 6 }
+          - { os: windows-latest, shares: 7 }
           - { os: ubuntu-latest, shares: 6 }
     steps:
       - uses: actions/checkout@v7

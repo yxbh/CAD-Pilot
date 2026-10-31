@@ -49,7 +49,9 @@ def pytest_collection_modifyitems(config, items):
         return
     index, count = _share(config)
     measured = json.loads(DURATIONS.read_text(encoding="utf-8")).get(sys.platform, {}) if DURATIONS.is_file() else {}
-    chosen = set(shares(sorted({_file(item.nodeid) for item in items}), measured, count)[index - 1])
+    # Shares are counted from the other end than the Explorer's (explorer/scripts/test.mjs), so that each suite's
+    # heaviest file, the first its greedy split places, runs in a different CI job from the other suite's.
+    chosen = set(shares(sorted({_file(item.nodeid) for item in items}), measured, count)[count - index])
     config.hook.pytest_deselected(items=[item for item in items if _file(item.nodeid) not in chosen])
     items[:] = [item for item in items if _file(item.nodeid) in chosen]
 
