@@ -5,20 +5,22 @@ import { fileURLToPath } from "node:url";
 import { buildExplorer } from "./incremental-build.mjs";
 
 const USAGE = "Usage: node scripts/test.mjs core|browser|shard <i>/<n> [--no-build] [--list]";
-// Seconds each unit took on a CI runner on its own (the mean of the macOS, Linux and Windows runners), used to give
-// shards similar work. The core suite is one unit and each browser file another; a unit not listed counts as the
-// median. Refresh from a run's per-test times when a file's time changes a lot.
+// Seconds each unit took on CI runners, running alone (the slowest of the macOS, Linux and Windows runners, since the
+// slowest sets a run's time), used to give shards similar work. The core suite is one unit and each browser file
+// another; a unit not listed counts as the median. Refresh from a run's per-test times when a file's time changes a lot.
 const SECONDS = {
-  core: 45,
-  "viewer-browser.test.mjs": 92,
-  "edge-browser.test.mjs": 67,
-  "review-recovery-browser.test.mjs": 49,
-  "camera-browser.test.mjs": 47,
-  "import-warnings-browser.test.mjs": 27,
-  "assembly-browser.test.mjs": 19,
-  "section-browser.test.mjs": 18,
-  "cleanup-persistence-browser.test.mjs": 17,
-  "render-reports-browser.test.mjs": 13,
+  "edge-browser.test.mjs": 76,
+  "camera-browser.test.mjs": 75,
+  "review-recovery-browser.test.mjs": 59,
+  "explode-camera-browser.test.mjs": 55,
+  core: 52,
+  "import-warnings-browser.test.mjs": 36,
+  "studio-views-browser.test.mjs": 33,
+  "assembly-browser.test.mjs": 30,
+  "cleanup-persistence-browser.test.mjs": 23,
+  "section-browser.test.mjs": 19,
+  "viewer-browser.test.mjs": 16,
+  "render-reports-browser.test.mjs": 15,
 };
 
 const args = process.argv.slice(2);

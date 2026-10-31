@@ -175,7 +175,7 @@ Preserve these contracts when changing their owners:
 | Exact face/edge identity, pixel-space picking, occlusion and clipboard behavior | `references.test.mjs`, `edge-picking.test.ts`, `edge-browser.test.mjs`, `viewer-browser.test.mjs` |
 | Fresh measured cleanup versus unknown historical counts; immutable caches and failed-import recovery | `model-import.test.mjs`, `diagnostics.test.mjs`, `cache-migration.test.mjs`, `cleanup-persistence-browser.test.mjs`, `test_converter.py` |
 | Warning/info panels do not obscure controls or alter camera and drawings | `import-warnings-browser.test.mjs` |
-| Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `viewer-browser.test.mjs` |
+| Actual camera scale/pose across resize, projection, explosion and capture | `camera.test.ts`, `camera-browser.test.mjs`, `explode-camera-browser.test.mjs`, `studio-views-browser.test.mjs` |
 | Section planes in model-world coordinates across nested, repeated, fixed, hidden and exploded occurrences; caps that keep holes and gaps open; trimmed edge picking with unchanged references; persisted, captured and reviewed section poses; closed-solid identity for immutable caches | `section.test.ts`, `protocol.test.mjs`, `section-browser.test.mjs`, `cache-migration.test.mjs`, `test_converter.py` |
 | Review conflicts preserve unsaved local marks and other writers' data | `reviews.test.mjs`, `review-recovery-browser.test.mjs` |
 | Stale render reports neither write state nor release current waiters; genuine current errors remain visible | `render-reports.test.mjs`, `render-reports-browser.test.mjs` |
