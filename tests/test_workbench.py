@@ -5,13 +5,14 @@ import re
 import runpy
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 import trimesh
 import yaml
 from build123d import GeomType, export_step, export_stl, import_step
+
+from common.tests import cli_host
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "templates/project/source/mounting_plate.py"
@@ -282,31 +283,9 @@ def test_cli_exports_reopen(tmp_path, output_directory):
     step_path = (Path(output_directory) / "plate.step").as_posix()
     scripts = ROOT / ".agents/skills/cad/scripts"
     env = {**os.environ, "CAD_PILOT_CACHE": str(tmp_path / "cache")}
-    built = subprocess.run(
-        [
-            sys.executable, str(scripts / "step"), "models/plate.py",
-            "-o", step_path, "--stl", "plate.stl", "--3mf", "plate.3mf",
-        ],
-        cwd=project,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
+    built = cli_host.run(scripts / "step", "models/plate.py", "-o", step_path, "--stl", "plate.stl", "--3mf", "plate.3mf", cwd=project, env=env, timeout=120)
     assert built.returncode == 0, built.stderr
-    inspected = subprocess.run(
-        [
-            sys.executable, str(scripts / "inspect"), "refs", step_path,
-            "--facts", "--planes", "--positioning",
-        ],
-        cwd=project,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
+    inspected = cli_host.run(scripts / "inspect", "refs", step_path, "--facts", "--planes", "--positioning", cwd=project, env=env, timeout=120)
     assert inspected.returncode == 0, inspected.stderr
     report = json.loads(inspected.stdout)
     assert report["ok"] is True
