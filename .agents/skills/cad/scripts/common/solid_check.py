@@ -256,7 +256,7 @@ class KernelCheck:
             if message is None:
                 self._process.wait()
                 if finished < total:
-                    # The worker's last words, such as "Segmentation fault", may still be on their way to the reader.
+                    # Stdout can end before the stderr reader has taken the worker's last line, whatever it says.
                     self._stderr_reader.join(timeout=5)
                     detail = self._stderr[-1] if self._stderr else f"exit code {self._process.returncode}"
                     result.failure = f"the check stopped unexpectedly ({detail})"
