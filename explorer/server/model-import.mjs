@@ -48,17 +48,13 @@ export class StaleCacheError extends PrototypeError {
 
 // A published cache: a STEP model's JSON, or a mesh manifest whose geometry file must match it exactly. Verifying a
 // cache before publishing over it allows a stale one: it is immutable and still identifies the same snapshot.
-export async function readModelCache(modelDir, cacheName, { allowStale = false, name = "The saved model" } = {}) {
+export async function readModelCache(modelDir, cacheName, { allowStale = false } = {}) {
   if (typeof cacheName !== "string" || !/^[a-f0-9]{64}\.json$/.test(cacheName)) throw new PrototypeError("invalid_cache_name", "Saved geometry has an invalid cache name", 422);
-  const read = (file, encoding) => readFile(file, encoding).catch((error) => {
-    if (error.code !== "ENOENT") throw error;
-    throw new PrototypeError("snapshot_removed", `${name} was removed from Explorer's storage after its setup went unused. Open the file again.`, 410);
-  });
-  const parsed = JSON.parse(await read(path.join(modelDir, cacheName), "utf8"));
+  const parsed = JSON.parse(await readFile(path.join(modelDir, cacheName), "utf8"));
   if (parsed?.schemaVersion === 1) throw new StaleCacheError(parsed.source?.sha256);
   const model = validateModel(parsed);
   if (`${model.topologyRevision}.json` !== cacheName) throw new PrototypeError("cache_mismatch", "Saved geometry identity does not match its cache filename", 422);
-  if (model.kind === "mesh") validateMeshGeometry(model, await read(meshGeometryFile(modelDir, model.topologyRevision)));
+  if (model.kind === "mesh") validateMeshGeometry(model, await readFile(meshGeometryFile(modelDir, model.topologyRevision)));
   else if (!allowStale && model.parts.some((part) => part.edges === undefined)) throw new StaleCacheError(model.source.sha256);
   return model;
 }

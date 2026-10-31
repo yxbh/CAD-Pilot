@@ -285,6 +285,12 @@ async function startOwnedService({
     return loadSnapshot({ resolved, displayName, sequenceRoot: root }, source, options);
   }
 
+  // Storage retention may have removed a saved setup's model once the setup went unused; say so plainly.
+  const readSaved = (cacheName, name) => readModelCache(modelDir, cacheName).catch((error) => {
+    if (error?.code !== "ENOENT") throw error;
+    throw new PrototypeError("snapshot_removed", `${name} was removed from Explorer's storage after its setup went unused. Open the file again.`, 410);
+  });
+
   async function importDocument(id, snapshot, options) {
     const imported = await prepareModelSnapshot({ ...snapshot, uploadDir, modelDir, python, options });
     await markUsed(imported.inputFile, path.join(modelDir, imported.modelCache));
@@ -307,7 +313,7 @@ async function startOwnedService({
     for (const document of documents.slice(1)) {
       if (document.model) { restored.push(document); continue; }
       try {
-        const loaded = await readModelCache(modelDir, document.modelCache, { name: document.inputName || document.id });
+        const loaded = await readSaved(document.modelCache, document.inputName || document.id);
         Object.assign(loaded, importDiagnostics(loaded));
         if (document.measuredCleanup?.topologyRevision === loaded.topologyRevision) loaded.cleanup = { ...document.measuredCleanup.counts };
         loaded.source = { ...loaded.source, name: document.inputName || loaded.source.name };
@@ -800,7 +806,7 @@ async function startOwnedService({
       if (file) await execute("load_file", { ...fileOptions, file });
       else if (saved?.modelCache && /^[a-f0-9]{64}\.json$/.test(saved.modelCache)) {
         let cached;
-        try { cached = await readModelCache(modelDir, saved.modelCache, { name: saved.inputName || "The saved model" }); }
+        try { cached = await readSaved(saved.modelCache, saved.inputName || "The saved model"); }
         catch (error) {
           if (!(error instanceof StaleCacheError)) throw error;
           if (!/^[a-f0-9]{64}$/.test(error.sha256 || "")) throw new PrototypeError("invalid_snapshot", "Saved STEP snapshot identity is invalid", 422);

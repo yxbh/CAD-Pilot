@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { validateMeshGeometry, validateModel } from "../server/protocol.mjs";
 import { readModelCache } from "../server/model-import.mjs";
+import { pruneRuntime } from "../server/runtime-store.mjs";
 import { arrangeView } from "../shared/arrangement.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
@@ -66,6 +67,9 @@ test("mesh files open directly with their frame, faults, geometry file and exact
   await assert.rejects(service.execute("select_point", { id: "node:1", triangle: 11, point: centre, topologyRevision: state.topologyRevision }), { code: "bad_point" });
   state = await service.execute("select_point", { id: "node:1", triangle: 0, point: centre, topologyRevision: state.topologyRevision });
   assert.equal(state.selectedPoint.triangle, 0);
+  const summary = await service.summary();
+  assert.deepEqual(summary.view.selected, ["open point -1.667, 3.333, -15"]);
+  assert.equal(summary.model.frame.units, "mm", "The summary says how the mesh was read");
   const { reference, text } = state.selectedReferences[0];
   assert.match(reference, /\/t0@-1\.667,3\.333,-15$/);
   assert.match(text, /Point on triangle 0/);
@@ -82,12 +86,13 @@ test("mesh files open directly with their frame, faults, geometry file and exact
   const metres = await service.execute("load_file", { file: "open.stl", units: "m" });
   assert.notEqual(metres.topologyRevision, state.topologyRevision);
   assert.equal(metres.documents[0].frame.units, "m");
+  assert.equal(metres.viewKept, false, "Reading it in other units is not a regeneration, so the view starts afresh");
   await assert.rejects(service.execute("load_file", { file: "open.stl", up: "x" }), { code: "bad_up" });
 });
 
 test("several files share a view in their own frames and keep their own references", { timeout: 180_000 }, async (t) => {
   const root = await project(t);
-  const { createService } = await createTestRuntime(t);
+  const { createService, runtimeRoot } = await createTestRuntime(t);
   const service = await createService({ projectRoot: root, viewId: "files", file: "box.stl", log: () => {} });
   await service.initialize();
   let state = service.getState();
@@ -120,6 +125,11 @@ test("several files share a view in their own frames and keep their own referenc
   assert.equal(state.topologyRevision, composedRevision);
   assert.deepEqual(state.documents[1].offset, [0, 0, 100]);
   assert.ok(!arrangeView(composed, state.documents, state.layout).nodes.some((node) => node.ghost));
+  // The compact summary says how each file was read and where it sits.
+  const { view } = await service.summary();
+  assert.equal(view.layout, "side");
+  assert.deepEqual(view.files[1], { id: "ref1", name: "open.stl", frame: state.documents[1].frame, offset: [0, 0, 100], rotate: [0, 0, 90] });
+  assert.equal(view.files[1].frame.units, "m");
   await assert.rejects(service.execute("set_file", { id: "ref1", offset: [0, 0] }), { code: "bad_placement" });
   await assert.rejects(service.execute("set_file", { id: "nope", style: "ghost" }), { code: "unknown_file" });
   await assert.rejects(service.execute("remove_file", { id: "main" }), { code: "main_file" });
@@ -149,8 +159,12 @@ test("several files share a view in their own frames and keep their own referenc
   assert.deepEqual(reopened.getState().documents.map(({ id, offset }) => [id, offset]), [["main", [0, 0, 0]], ["ref1", [0, 0, 100]]]);
   assert.equal(reopened.getState().topologyRevision, before.topologyRevision);
   await reopened.close();
+  // Pruning everything no saved setup shows keeps each file of this one: manifests, geometry files and sources.
+  const pruned = await pruneRuntime(runtimeRoot, { all: true, now: Date.now() + 60 * 60 * 1000 });
+  assert.deepEqual([pruned.removed.models, pruned.removed.inputs], [0, 0]);
   const again = await createService({ projectRoot: root, viewId: "files", log: () => {} });
   await again.initialize();
+  assert.equal(again.getState().error, "");
   assert.deepEqual(again.getState().documents.map(({ id }) => id), ["main", "ref1"], "and the saved setup still lists them");
 
   state = await again.execute("remove_file", { id: "ref1" });

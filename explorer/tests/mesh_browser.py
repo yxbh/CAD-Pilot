@@ -19,7 +19,8 @@ WORKBENCH = Path(__file__).resolve().parents[2]
 
 
 def make_scan(path: Path) -> int:
-    torus = trimesh.creation.torus(60, 20, major_sections=500, minor_sections=300)
+    # About 30,000 triangles: dense enough for a picking tree, light enough for software rendering on CI.
+    torus = trimesh.creation.torus(60, 20, major_sections=150, minor_sections=100)
     vertices = torus.vertices + np.random.default_rng(1).normal(0, 0.05, torus.vertices.shape)
     faces = torus.faces.copy()
     centres = vertices[faces].mean(axis=1)
