@@ -12,7 +12,7 @@ const frame = {
   units: { enum: MESH_UNITS, description: "Mesh files only: the unit their numbers are in. auto uses the file's declared unit, else metres for models under 2.5 units across, else millimetres." },
   up: { enum: MESH_UP_AXES, description: "Mesh files only: the axis that points up in the file. auto is Y for OBJ and GLB, Z otherwise. Shown Z-up either way." },
 };
-const fileId = { type: "string", description: "A file in the view, as listed in state documents: main, ref1, ref2 ..." };
+const fileId = { type: "string", description: "A file in the view, as state lists them under view.files: main, ref1, ref2 ..." };
 
 function command(description, properties = {}, required = [], policy = {}) {
   return {

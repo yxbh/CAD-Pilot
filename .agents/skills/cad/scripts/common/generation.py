@@ -36,7 +36,7 @@ from common.catalog import (
     source_from_path,
 )
 from common.cli_logging import CliLogger
-from common.generator_module import call_generator, load_generator
+from common.generator_module import GeneratorImportError, call_generator, load_generator
 from common.issued_refs import forget, mark, refs_issued_for
 from common.paths import command_line_path, relative_path
 from common.solid_check import KernelCheck, cheap_findings
@@ -194,20 +194,19 @@ def _resolve_cli_output_path(
     raw_output: str | Path | None,
     *,
     expected_suffixes: tuple[str, ...],
-    tool_name: str,
 ) -> Path | None:
     if raw_output is None:
         return None
     value = str(raw_output).strip()
     if not value:
-        raise StepInputError(f"{tool_name} --output must be a non-empty path")
+        raise StepInputError(f"--output must be a non-empty path")
     try:
         resolved = command_line_path(value)
     except ValueError:
-        raise StepInputError(f"{tool_name} --output must be relative to the design root or absolute on this system") from None
+        raise StepInputError(f"--output must be relative to the design root or absolute on this system") from None
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
-        raise StepInputError(f"{tool_name} --output must end in {joined}")
+        raise StepInputError(f"--output must end in {joined}")
     return resolved
 
 
@@ -279,7 +278,6 @@ def _validate_cli_output_override(
     *,
     output_path: Path,
     all_specs: Sequence[EntrySpec],
-    tool_name: str,
 ) -> None:
     resolved_output = output_path.resolve()
     for candidate in all_specs:
@@ -287,7 +285,7 @@ def _validate_cli_output_override(
             continue
         if resolved_output in _spec_output_paths(candidate):
             raise StepInputError(
-                f"{tool_name} --output would overwrite another CAD output: "
+                f"--output would overwrite another CAD output: "
                 f"{_display_path(output_path)} belongs to {candidate.source_ref}"
             )
 
@@ -297,16 +295,15 @@ def _apply_step_output_override(
     *,
     output_path: Path | None,
     all_specs: Sequence[EntrySpec],
-    tool_name: str,
 ) -> list[EntrySpec]:
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise StepInputError(f"{tool_name} --output can only be used with exactly one target")
+        raise StepInputError(f"--output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise StepInputError(f"{tool_name} --output can only be used with generated Python targets")
-    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs, tool_name=tool_name)
+        raise StepInputError(f"--output can only be used with generated Python targets")
+    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
     return [
         replace(
             spec,
@@ -322,16 +319,15 @@ def _apply_dxf_output_override(
     *,
     output_path: Path | None,
     all_specs: Sequence[EntrySpec],
-    tool_name: str,
 ) -> list[EntrySpec]:
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise StepInputError(f"{tool_name} --output can only be used with exactly one target")
+        raise StepInputError(f"--output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise StepInputError(f"{tool_name} --output can only be used with generated Python targets")
-    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs, tool_name=tool_name)
+        raise StepInputError(f"--output can only be used with generated Python targets")
+    _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs)
     return [replace(spec, dxf_path=output_path)]
 
 
@@ -546,7 +542,8 @@ def _warn_unlabelled_parts(script_path: Path, names: Sequence[str], *, logger: C
     count = f"{len(names)} part{'' if len(names) == 1 else 's'}"
     logger.warning(
         f"{count} in {_display_path(script_path)} had no label and {'was' if len(names) == 1 else 'were'} named {shown}. "
-        "Set .label on each part: .solids(), a Solid's .fillet() and Part(...) return unlabelled shapes."
+        "Set .label on each part: .solids(), a Solid's .fillet() and Part(...) return unlabelled shapes, and a type "
+        "name such as SOLID, COMPOUND or Shell, which imported shapes carry, counts as none."
     )
 
 
@@ -1244,17 +1241,16 @@ def _validate_step_target(
     spec: EntrySpec,
     *,
     direct_step_kind: str | None,
-    tool_name: str,
 ) -> None:
     if spec.step_path is None:
-        raise StepInputError(f"{tool_name} target has no STEP path: {spec.source_ref}")
+        raise StepInputError(f"target has no STEP path: {spec.source_ref}")
     if spec.source == "generated":
         metadata = spec.generator_metadata
         if metadata is None or not metadata.has_gen_step:
-            raise StepInputError(f"{tool_name} target does not define gen_step(): {spec.source_ref}")
+            raise StepInputError(f"target does not define gen_step(): {spec.source_ref}")
         return
     if direct_step_kind is None:
-        raise StepInputError(f"{tool_name} --kind is required for direct STEP/STP targets: {spec.source_ref}")
+        raise StepInputError(f"--kind is required for direct STEP/STP targets: {spec.source_ref}")
 
 
 def _existing_direct_step_targets(targets: Sequence[str]) -> list[str]:
@@ -1352,28 +1348,26 @@ def generate_step_targets(
     verbose: bool = False,
     check_solids: bool = True,
 ) -> int:
-    tool_name = "scripts/step"
     if direct_step_kind is not None and direct_step_kind not in {"part", "assembly"}:
-        raise ValueError(f"{tool_name} --kind must be 'part' or 'assembly'")
+        raise StepInputError("--kind must be 'part' or 'assembly'")
     if direct_step_kind is None:
         direct_targets = _existing_direct_step_targets(targets)
         if direct_targets:
             joined = ", ".join(direct_targets)
-            raise ValueError(f"{tool_name} --kind is required for direct STEP/STP targets: {joined}")
+            raise StepInputError(f"--kind is required for direct STEP/STP targets: {joined}")
     logger = CliLogger("scripts/step", verbose=verbose)
-    output_path = _resolve_cli_output_path(output, expected_suffixes=(".step",), tool_name=tool_name)
+    output_path = _resolve_cli_output_path(output, expected_suffixes=(".step",))
     all_specs, selected_specs = _selected_specs_for_targets(
         targets,
         direct_step_kind=direct_step_kind or "part",
         step_options=step_options,
     )
     for spec in selected_specs:
-        _validate_step_target(spec, direct_step_kind=direct_step_kind, tool_name=tool_name)
+        _validate_step_target(spec, direct_step_kind=direct_step_kind)
     selected_specs = _apply_step_output_override(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
-        tool_name=tool_name,
     )
     if step_options is not None and step_options.has_metadata:
         selected_specs = [_apply_step_options_to_spec(spec, step_options) for spec in selected_specs]
@@ -1398,9 +1392,8 @@ def generate_dxf_targets(
     output: str | Path | None = None,
     verbose: bool = False,
 ) -> int:
-    tool_name = "dxf"
     logger = CliLogger("scripts/dxf", verbose=verbose)
-    output_path = _resolve_cli_output_path(output, expected_suffixes=(".dxf",), tool_name=tool_name)
+    output_path = _resolve_cli_output_path(output, expected_suffixes=(".dxf",))
     all_specs, selected_specs = _selected_specs_for_targets(targets)
     for spec in selected_specs:
         _validate_dxf_target(spec)
@@ -1408,7 +1401,6 @@ def generate_dxf_targets(
         selected_specs,
         output_path=output_path,
         all_specs=all_specs,
-        tool_name=tool_name,
     )
     _run_selected_specs(
         selected_specs,
@@ -1443,11 +1435,15 @@ def run_tool_cli(
         help="Show detailed progress and timing information.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if output_help is not None:
-        if args.output is not None and len(args.targets) != 1:
-            parser.error("--output can only be used with exactly one target")
-        return action(args.targets, output=args.output, verbose=bool(args.verbose))
-    return action(args.targets, verbose=bool(args.verbose))
+    if output_help is not None and args.output is not None and len(args.targets) != 1:
+        parser.error("--output can only be used with exactly one target")
+    try:
+        if output_help is not None:
+            return action(args.targets, output=args.output, verbose=bool(args.verbose))
+        return action(args.targets, verbose=bool(args.verbose))
+    except (GeneratorImportError, StepInputError) as exc:
+        print(f"{parser.prog}: error: {exc}", file=sys.stderr)
+        return 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -15,7 +15,7 @@ from common.generation import generate_dxf_targets, run_tool_cli
 def main(argv: Sequence[str] | None = None) -> int:
     return run_tool_cli(
         argv,
-        prog="dxf",
+        prog="scripts/dxf",
         description="Generate explicit DXF targets from Python sources.",
         action=generate_dxf_targets,
         target_help="Explicit Python source file defining gen_dxf() to generate.",

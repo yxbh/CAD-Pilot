@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import io
 import shutil
 import sys
 import unittest
@@ -636,7 +637,7 @@ class CadGenerationTests(unittest.TestCase):
 
     def test_cli_output_takes_either_separator_and_rejects_another_systems_anchor(self) -> None:
         def resolve(value: str) -> Path:
-            return cad_generation._resolve_cli_output_path(value, expected_suffixes=(".step",), tool_name="scripts/step")
+            return cad_generation._resolve_cli_output_path(value, expected_suffixes=(".step",))
 
         with contextlib.chdir(self.temp_root):
             expected = (self.temp_root / "outputs" / "part.step").resolve()
@@ -1691,6 +1692,18 @@ class CadGenerationTests(unittest.TestCase):
         self.assertIn("topology", events)
         self.assertLess(events.index("3mf"), events.index("topology"))
         self.assertTrue(three_mf_path.exists())
+
+
+
+class ToolErrorTests(unittest.TestCase):
+    def test_a_tool_error_is_one_line_named_once(self) -> None:
+        def fails(targets, **_options):
+            raise cad_generation.StepInputError("--output must end in .dxf")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = cad_generation.run_tool_cli(["part.py"], prog="scripts/dxf", description="", action=fails, output_help="")
+        self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
 
 
 if __name__ == "__main__":
