@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .compensation import Compensation
+from .compensation import Compensation, condition_text
 from .orientation import HOLE_MIN_HEIGHT_MM, OrientationReport
 from .plan import ProjectPlan
 from .slicing import SliceReport
@@ -61,14 +61,14 @@ def compensation_lines(plan: ProjectPlan) -> list[str]:
     lines = ["X-Y compensation per part (Bambu's hole and contour compensation, mm per side):"]
     warnings: list[str] = []
     for part in plan.parts:
-        lines.append(f"  {part.spec.name} ({part.slot.key}): {', '.join(_compensation(c, plan.calibrating) for c in part.compensation)}")
+        lines.append(f"  {part.spec.name} ({part.slot.key}): {', '.join(_compensation(c, plan.calibration is not None) for c in part.compensation)}")
         for c in part.compensation:
             if c.changed:
-                was = ", ".join(f"{key} {then:g}" for key, (then, _) in c.changed.items())
-                now = ", ".join(f"{key} {value:g}" for key, (_, value) in c.changed.items())
+                was = ", ".join(condition_text(key, then) for key, (then, _) in c.changed.items())
+                now = ", ".join(condition_text(key, value) for key, (_, value) in c.changed.items())
                 warning = (
-                    f"  ! {part.slot.key} {c.kind} compensation was measured at {was}; this project slices at {now}, "
-                    "so the measured value may not hold: measure again at these settings or restore them"
+                    f"  ! {part.slot.key} {c.kind} compensation was measured with {was}; this project slices with {now}, "
+                    "so the measured value may not hold: measure again with these settings or restore them"
                 )
                 if warning not in warnings:
                     warnings.append(warning)
@@ -139,7 +139,7 @@ def plan_dict(plan: ProjectPlan, path: Path) -> dict:
         "name": plan.job.name,
         "bambu_studio": plan.version,
         "profile": plan.profile.as_dict(),
-        "calibration": plan.calibrating,
+        "calibration": plan.calibration,
         "elefant_foot_compensation": plan.settings.get("elefant_foot_compensation"),
         "filaments": [
             {"slot": s.number, "key": s.key, "preset": s.preset, "material": s.material, "colour": s.colour} for s in plan.slots
