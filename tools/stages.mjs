@@ -34,7 +34,7 @@ export async function runStages(stages, { cwd, logs, github = Boolean(process.en
   function run({ name, command, args }) {
     const start = performance.now();
     console.log(`▶ ${name}`);
-    const log = createWriteStream(path.join(logs, `${name.replaceAll(" ", "-")}.log`));
+    const log = createWriteStream(path.join(logs, `${name.replace(/[^\w.]+/g, "-")}.log`));
     return new Promise((resolve) => {
       // Its own process group (POSIX), so stopping the stage reaches everything it started. Output is read as UTF-8,
       // so Python is told to write it whatever the Windows code page.

@@ -128,7 +128,9 @@ From the workbench root, one command runs every check: the Python suites (workbe
 node tools/check.mjs
 ```
 
-Independent stages run at the same time: pytest on four workers, Explorer core tests, and a few browser scenarios at once. Each stage's output is printed when it ends, with pytest's slowest tests, followed by a summary; a failed stage makes the command exit nonzero, skips the stages that need it and lets the others finish. GitHub Actions runs the same command on macOS, Windows and Linux for pull requests and pushes to `main`, resolving dependencies afresh because the locks stay local.
+Independent stages run at the same time, sized from the machine's cores: pytest on up to four workers, Explorer core tests, and a few browser scenarios at once. Each stage's output is printed when it ends, with pytest's slowest tests, followed by a summary; a failed stage makes the command exit nonzero, skips the stages that need it and lets the others finish. Each stage's output is also kept in `.local/check/`.
+
+GitHub Actions checks pull requests and pushes to `main` on macOS, Windows and Linux, resolving dependencies afresh because the locks stay local. Each system runs `node tools/check.mjs --python` in one job and `--explorer <i>/4` in four more, which split the Explorer core suite and browser files by their measured CI time (the table in `explorer/scripts/test.mjs`). A final `checks` job passes only when every other job passed; it is the check branch protection requires.
 
 While working, `node tools/check.mjs --quick` leaves out the browser scenarios; run the full check before a pull request. For a single area, `uv run pytest -q -n 4 --dist loadscope` covers Python (drop the workers for one file), `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` exercises the maintained UI; both Explorer commands build it first when it is out of date. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations.
 
