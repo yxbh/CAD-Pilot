@@ -4,9 +4,10 @@ settings, and each plate's layout."""
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .bambu import BED_TEMPERATURE_KEYS, BambuStudio
+from .bambu import BED_TEMPERATURE_KEYS, BambuStudio, setting
 from .job import Job, PartSpec
 from .layout import Footprint, Rect, pack
 from .meshes import PrintMesh, load_mesh
@@ -113,11 +114,7 @@ def _keep_outs(settings: dict) -> list[Rect]:
     return rects
 
 
-def _number(value) -> float:
-    return float(value[0] if isinstance(value, list) else value)
-
-
-def _slots(job: Job, profile: PrintProfile, materials: dict[str, str]) -> tuple[list[Slot], dict[PartSpec, Slot]]:
+def _slots(job: Job, profile: PrintProfile, material: Callable[[str], str]) -> tuple[list[Slot], dict[PartSpec, Slot]]:
     slots: dict[tuple[str, str], Slot] = {}
     by_part = {}
     for spec in job.parts:
@@ -127,7 +124,7 @@ def _slots(job: Job, profile: PrintProfile, materials: dict[str, str]) -> tuple[
         filament = profile.filaments[key]
         colour = spec.colour or filament.colour
         if (key, colour) not in slots:
-            slots[(key, colour)] = Slot(len(slots) + 1, key, filament.preset, colour, materials[filament.preset])
+            slots[(key, colour)] = Slot(len(slots) + 1, key, filament.preset, colour, material(filament.preset))
         by_part[spec] = slots[(key, colour)]
     return list(slots.values()), by_part
 
@@ -136,8 +133,8 @@ def _tower(settings: dict, reach: Rect, keep_out: list[Rect]) -> Rect:
     """Where the prime tower goes: the printer's default spot, moved inside the area every nozzle
     reaches (the H2D's default sits outside its right nozzle's reach) and clear of the bed's
     excluded areas. The command line, unlike the app, does not move a tower that is out of place."""
-    x = _number(settings.get("wipe_tower_x", ["15"]))
-    y = _number(settings.get("wipe_tower_y", ["220"]))
+    x = float(setting(settings.get("wipe_tower_x", ["15"])))
+    y = float(setting(settings.get("wipe_tower_y", ["220"])))
     low, high = reach.x0 + TOWER_MARGIN_MM, reach.x1 - TOWER_MARGIN_MM - TOWER_SIZE_MM
     candidates = [min(max(x, low), high)] + [low + 5.0 * step for step in range(int(max(high - low, 0) // 5) + 1)]
     for candidate in candidates:
@@ -156,7 +153,7 @@ def _reach(settings: dict) -> Rect:
 
 
 def _max_height(settings: dict) -> float:
-    heights = [_number(settings["printable_height"])]
+    heights = [float(setting(settings["printable_height"]))]
     heights += [float(h) for h in settings.get("extruder_printable_height") or []]
     return min(heights)
 
@@ -244,8 +241,12 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> Projec
     system_process = presets.flat("process", profile.process)
     process = {**system_process, **profile.process_settings}
     checks = CheckSettings.from_settings({**machine, **process})
-    materials = {f.preset: str(presets.flat("filament", f.preset)["filament_type"][0]) for f in profile.filaments.values()}
-    slots, slot_of = _slots(job, profile, materials)
+
+    def material(preset: str) -> str:
+        # Only the filaments a job uses need presets in this installation.
+        return setting(presets.flat("filament", preset)["filament_type"])
+
+    slots, slot_of = _slots(job, profile, material)
 
     loaded: dict = {}
     oriented: dict = {}
@@ -263,19 +264,19 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> Projec
     interface = None
     if profile.support_interface is not None:
         filament = profile.filaments[profile.support_interface]
-        material = materials[filament.preset]
+        interface_material = material(filament.preset)
         for part in parts:
-            part.uses_interface = part.spec.support and part.check.needs_support and part.slot.material != material
+            part.uses_interface = part.spec.support and part.check.needs_support and part.slot.material != interface_material
         if any(part.uses_interface for part in parts):
             interface = next((s for s in slots if (s.key, s.colour) == (filament.key, filament.colour)), None)
             if interface is None:
-                interface = Slot(len(slots) + 1, filament.key, filament.preset, filament.colour, material)
+                interface = Slot(len(slots) + 1, filament.key, filament.preset, filament.colour, interface_material)
                 slots.append(interface)
             for part in parts:
                 if part.spec.support and not part.uses_interface:
                     # Support the check did not expect, or under the interface's own material, stays in
                     # the part's filament with the process's gaps: no second filament, no unplanned tower.
-                    part.object_settings.update({key: str(process.get(key, "")) for key in ZERO_GAP_INTERFACE})
+                    part.object_settings.update({key: setting(process[key]) for key in ZERO_GAP_INTERFACE if key in process})
                     part.object_settings["support_interface_filament"] = "0"
     for part in parts:
         if not part.spec.support:

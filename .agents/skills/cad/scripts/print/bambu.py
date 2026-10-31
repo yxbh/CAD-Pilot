@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -46,14 +46,21 @@ class CliRun:
 
     @property
     def crashed(self) -> bool:
-        return self.returncode < 0
+        # A signal on macOS and Linux; an NTSTATUS exception code such as 0xC0000005 on Windows.
+        return self.returncode < 0 or self.returncode >= 0xC0000000
 
     def failure(self) -> str:
         """Why the run failed: the function it crashed in, or the last error it logged."""
         if self.crashed:
             frame = crash_frame(self.pid)
-            return f"Bambu Studio crashed (signal {-self.returncode})" + (f" in {frame}" if frame else "")
+            how = f"signal {-self.returncode}" if self.returncode < 0 else f"exception {self.returncode:#x}"
+            return f"Bambu Studio crashed ({how})" + (f" in {frame}" if frame else "")
         return last_error(self.output) or f"Bambu Studio exited with code {self.returncode}"
+
+
+def setting(value) -> str:
+    """A Bambu setting's value as text: the first entry of a per-filament or per-nozzle list."""
+    return str(value[0] if isinstance(value, list) else value)
 
 
 def last_error(output: str) -> str:
@@ -120,6 +127,7 @@ class Presets:
 
     root: Path
     paths: dict[str, dict[str, str]]
+    _flat: dict = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def load(cls, root: Path) -> "Presets":
@@ -140,15 +148,17 @@ class Presets:
         """A preset as Bambu Studio reads it: its parents, then the presets it includes (Bambu's
         printers take their start, end and filament-change G-code from those), then its own keys."""
         self.require(kind, name)
-        if name in _seen:
-            raise BambuStudioError(f"Bambu {kind} preset {name!r} inherits from itself")
-        source = json.loads((self.root / self.paths[kind][name]).read_text(encoding="utf-8"))
-        seen = (*_seen, name)
-        result = self.flat(kind, source["inherits"], seen) if source.get("inherits") else {}
-        for included in source.get("include") or []:
-            result.update({key: value for key, value in self.flat(kind, included, seen).items() if key not in OWN_KEYS})
-        result.update({key: value for key, value in source.items() if key != "include"})
-        return result
+        if (kind, name) not in self._flat:
+            if name in _seen:
+                raise BambuStudioError(f"Bambu {kind} preset {name!r} inherits from itself")
+            source = json.loads((self.root / self.paths[kind][name]).read_text(encoding="utf-8"))
+            seen = (*_seen, name)
+            result = self.flat(kind, source["inherits"], seen) if source.get("inherits") else {}
+            for included in source.get("include") or []:
+                result.update({key: value for key, value in self.flat(kind, included, seen).items() if key not in OWN_KEYS})
+            result.update({key: value for key, value in source.items() if key != "include"})
+            self._flat[(kind, name)] = result
+        return dict(self._flat[(kind, name)])
 
     def preset_file(self, kind: str, name: str) -> dict:
         """A flattened system preset in the form --load-settings and --load-filaments take."""

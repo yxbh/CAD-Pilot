@@ -12,6 +12,7 @@ import numpy as np
 from scipy import ndimage
 from trimesh.graph import connected_components, face_adjacency
 
+from .bambu import setting
 from .meshes import PrintMesh
 
 
@@ -46,8 +47,7 @@ class CheckSettings:
     @classmethod
     def from_settings(cls, settings: Mapping, *, bridge_review_mm: float = DEFAULT_BRIDGE_REVIEW_MM) -> "CheckSettings":
         def number(key: str) -> float:
-            value = settings[key]
-            value = str(value[0] if isinstance(value, list) else value)
+            value = setting(settings[key])
             if value.endswith("%"):
                 return float(value[:-1]) / 100 * number("nozzle_diameter")
             return float(value)

@@ -84,7 +84,7 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 ## Slice check
 
-`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. A plate that fails is reported and the remaining plates are still sliced. The exit code is 1 when any plate failed. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
+`--slice` or `slice` slices every plate with Bambu Studio's command line, in a temporary data folder that leaves the app's own settings alone, and reports each plate's estimated time, filament per slot, support time, whether it printed a prime tower, and Bambu's warnings. A plate that fails is reported and the remaining plates are still sliced. The exit code is 1 when any plate failed or has crossing toolpaths, which the app only warns about. When the command line crashes on macOS, the report names the function it crashed in, from the system's crash report. Slicing opens no window. The times and weights are the slicer's estimates, not a measured print.
 
 `slice` also checks projects saved by Bambu Studio itself, which carry their full settings like the projects this tool writes.
 

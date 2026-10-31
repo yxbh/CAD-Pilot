@@ -236,15 +236,23 @@ def _format_transform(transform: tuple[float, ...] | None) -> str | None:
     return " ".join(format_number(value) for value in values)
 
 
-def shape_mesh(shape: object) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
-    """Every triangle of a meshed shape in its own coordinates: vertices, then vertex-index triples.
-    Each face keeps its own vertices, so faces meeting at an edge repeat those points."""
+def _shape_triangles(shape: object) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]], list[int]]:
+    """Vertices, vertex-index triples and each triangle's face hash."""
     vertices: list[tuple[float, float, float]] = []
     triangles: list[tuple[int, int, int]] = []
+    faces: list[int] = []
     for face_mesh in _iter_shape_face_meshes(shape):
         offset = len(vertices)
         vertices.extend(face_mesh.vertices)
         triangles.extend((a + offset, b + offset, c + offset) for a, b, c in face_mesh.triangles)
+        faces.extend([face_mesh.face_hash] * len(face_mesh.triangles))
+    return vertices, triangles, faces
+
+
+def shape_mesh(shape: object) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
+    """Every triangle of a meshed shape in its own coordinates: vertices, then vertex-index triples.
+    Each face keeps its own vertices, so faces meeting at an edge repeat those points."""
+    vertices, triangles, _ = _shape_triangles(shape)
     return vertices, triangles
 
 
@@ -293,20 +301,10 @@ def _append_mesh_object(
     default_color: ColorRGBA,
     face_colors: dict[int, ColorRGBA],
 ) -> None:
-    face_meshes = list(_iter_shape_face_meshes(shape))
-    if not face_meshes:
+    vertices, triangles, faces = _shape_triangles(shape)
+    if not triangles:
         raise RuntimeError(f"Cannot write empty 3MF mesh object: {name}")
-
-    vertices: list[tuple[float, float, float]] = []
-    triangles: list[tuple[int, int, int]] = []
-    triangle_materials: list[int] = []
-    for face_mesh in face_meshes:
-        offset = len(vertices)
-        vertices.extend(face_mesh.vertices)
-        triangles.extend((a + offset, b + offset, c + offset) for a, b, c in face_mesh.triangles)
-        triangle_materials.extend(
-            [materials.index(face_colors.get(face_mesh.face_hash, default_color))] * len(face_mesh.triangles)
-        )
+    triangle_materials = [materials.index(face_colors.get(face, default_color)) for face in faces]
     append_mesh_object(
         resources,
         object_id=object_id,

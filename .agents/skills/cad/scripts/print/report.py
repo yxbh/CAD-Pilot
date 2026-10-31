@@ -81,6 +81,7 @@ def slice_lines(report: SliceReport) -> list[str]:
         title = f"  plate {plate.plate} \"{plate.name}\""
         if plate.error:
             lines.append(f"{title}: FAILED: {plate.error}")
+            lines += [f"    ! FAILED: {conflict}" for conflict in plate.conflicts]
             continue
         total_seconds += plate.seconds or 0.0
         used = ", ".join(f"{_short(f.preset)} {f.colour} {f.grams:g} g" for f in plate.filaments)
@@ -92,6 +93,7 @@ def slice_lines(report: SliceReport) -> list[str]:
             extras.append("prime tower")
         lines.append(f"{title}: {duration(plate.seconds or 0.0)}; {used}" + (f"; {', '.join(extras)}" if extras else ""))
         lines += [f"    ! {warning}" for warning in plate.warnings]
+        lines += [f"    ! FAILED: {conflict}" for conflict in plate.conflicts]
     lines.append(f"  total: {duration(total_seconds)}, {total_grams:.1f} g" + ("" if report.ok else "; some plates FAILED"))
     return lines
 

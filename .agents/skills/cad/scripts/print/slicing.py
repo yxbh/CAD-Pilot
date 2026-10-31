@@ -39,6 +39,7 @@ class PlateSlice:
     support_seconds: float = 0.0
     prime_tower: bool = False
     warnings: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
     error: str | None = None
 
 
@@ -54,7 +55,8 @@ class SliceReport:
 
     @property
     def ok(self) -> bool:
-        return all(plate.error is None for plate in self.plates)
+        """Every plate sliced, with no crossing toolpaths (which the app only warns about)."""
+        return all(plate.error is None and not plate.conflicts for plate in self.plates)
 
     def as_dict(self) -> dict:
         data = asdict(self)
@@ -120,7 +122,7 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
                     _plate_result(entry, plates[number], settings)
             failed = int(result.get("plate_index") or target or pending[0])
             for first, second in CONFLICT.findall(run.output):
-                plates[failed].warnings.append(f"toolpaths of {first} and {second} cross")
+                plates[failed].conflicts.append(f"toolpaths of {first} and {second} cross")
             failure = ""
             if run.returncode != 0:
                 failure = (run.failure() if run.crashed else result.get("error_string") or run.failure()).strip()
