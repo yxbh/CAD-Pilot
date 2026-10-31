@@ -51,11 +51,16 @@ HOLE_MIN_HEIGHT_MM = 1.0
 # edge of an overhang there is nothing around it, and no step.
 OPEN_WALL_SHARE = 0.5
 # Each thin place is measured across the layer outline itself, on lines at this many headings through
-# up to CHORD_POINTS points along its middle, so its thickness does not depend on where the raster's
-# pixels fall. Points are measured CHORD_BATCH at a time, which bounds the memory it takes.
+# points along its middle, one in each square this share of the limit across, so its thickness does not
+# depend on where the raster's pixels fall and a short thin feature on a thicker wall has points of its
+# own. Points are measured CHORD_BATCH at a time, which bounds the memory it takes.
 CHORD_HEADINGS = 36
-CHORD_POINTS = 9
+CHORD_SPACING = 0.5
 CHORD_BATCH = 4096
+# A thin place's middle is its pixels at least as deep as their thin neighbours and at least this share
+# as deep as the deepest material near them: shallower peaks are raster steps at the tips of corners,
+# through which every chord is short.
+MIDDLE_DEPTH_SHARE = 0.5
 REPORTED = 5
 
 
@@ -412,19 +417,21 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     least about as long as the limit. Each comes with its thickness, the point where that was measured
     (on the material) and its outline's box.
 
-    The thickness is measured at points along the place's middle, its pixels at least as deep as their
-    thin neighbours, as the shortest chord across the outline through each, and is the median of those:
-    a point where thin walls meet or turn a corner reads long, and the walls themselves set the median.
-    A place it shows to be at least the limit thick is not thin. Where no chord is found, the raster's
-    own estimate stands, up to two pitches thin."""
+    The place is measured at points spaced along its middle (MIDDLE_DEPTH_SHARE says which pixels those
+    are), as the shortest chord across the outline through each. It is thin where any of those
+    chords is under the limit, and its thickness is the median of the chords that are: a wall at least
+    the limit thick is not thin while a thin rib or spur on it is, and points where thin walls meet or
+    turn a corner read long, so the walls themselves set the median. Where no chord is found at all, the
+    raster's own estimate stands, up to two pitches thin."""
     mask = winding != 0
     if not mask.any():
         return []
     distance = ndimage.distance_transform_edt(mask)
-    thin = mask & (ndimage.maximum_filter(distance, size=window) < (limit_px + 1) / 2)
+    nearby = ndimage.maximum_filter(distance, size=window)
+    thin = mask & (nearby < (limit_px + 1) / 2)
     if not thin.any():
         return []
-    middle = thin & (distance >= ndimage.maximum_filter(np.where(thin, distance, 0.0), size=3))
+    peak = distance >= ndimage.maximum_filter(np.where(thin, distance, 0.0), size=3)
     labels, _ = ndimage.label(thin, structure=np.ones((3, 3)))
     pixels = np.flatnonzero(thin)
     label = labels.ravel()[pixels]
@@ -440,27 +447,31 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     np.maximum.at(high_rows, label, rows)
     np.minimum.at(low_cols, label, cols)
     np.maximum.at(high_cols, label, cols)
-    places = np.flatnonzero(sizes * pitch * pitch >= limit * limit)
+    large = sizes * pitch * pitch >= limit * limit
+    places = np.flatnonzero(large)
     if not len(places):
         return []
 
-    # Each place's middle pixels in pixel order, grouped by one sort (every place has some: its deepest
-    # pixel is one), and up to CHORD_POINTS of them spread evenly through that order.
-    along = np.flatnonzero(middle.ravel()[pixels])
-    along = along[np.argsort(label[along], kind="stable")]
-    begin = np.searchsorted(label[along], places)
-    middles = np.searchsorted(label[along], places, "right") - begin
-    taken = np.minimum(middles, CHORD_POINTS)
-    owner = np.repeat(np.arange(len(places)), taken)
-    spacing = (middles - 1) / np.maximum(taken - 1, 1)
-    sample = along[begin[owner] + np.round(_within(taken) * spacing[owner]).astype(np.int64)]
+    middle = peak.ravel()[pixels] & ((MIDDLE_DEPTH_SHARE * nearby.ravel()[pixels] <= depth) | (depth == deepest[label]))
+    # In each square of a grid CHORD_SPACING of the limit across, each place's deepest middle pixel there
+    # (every place has one: its deepest pixel is a middle pixel), grouped by place.
+    side = max(1, round(CHORD_SPACING * limit_px))
+    along = np.flatnonzero(middle & large[label])
+    square = (rows[along] // side) * (thin.shape[1] // side + 1) + cols[along] // side
+    order = np.lexsort((-depth[along], square, label[along]))
+    along, square = along[order], square[order]
+    sample = along[np.diff(label[along], prepend=-1).astype(bool) | np.diff(square, prepend=-1).astype(bool)]
+    owner = np.searchsorted(places, label[sample])
+    taken = np.bincount(owner, minlength=len(places))
     points = np.column_stack([origin[0] + (cols[sample] + 0.5) * pitch, origin[1] + (rows[sample] + 0.5) * pitch])
     chords = _chords(segments, points, winding[rows[sample], cols[sample]], reach=2 * limit + 2 * pitch)
-    # Each place's median chord (the upper one of an even count; equal chords in order of x, then y);
-    # chords not found sort last and count for nothing.
-    measured = np.isfinite(chords)
-    order = np.lexsort((points[:, 1], points[:, 0], chords, owner))
-    median = order[np.cumsum(taken) - taken + np.bincount(owner, weights=measured, minlength=len(places)).astype(np.int64) // 2]
+    # Each place's median chord under the limit (the upper one of an even count; equal chords in order
+    # of x, then y); its other chords, and those not found, sort last and count for nothing.
+    under = chords < limit
+    found_any = np.bincount(owner, weights=np.isfinite(chords), minlength=len(places)) > 0
+    unders = np.bincount(owner, weights=under, minlength=len(places)).astype(np.int64)
+    order = np.lexsort((points[:, 1], points[:, 0], np.where(under, chords, np.inf), owner))
+    median = order[np.cumsum(taken) - taken + unders // 2]
 
     def x(col) -> float:
         return origin[0] + (float(col) + 0.5) * pitch
@@ -469,9 +480,9 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
         return origin[1] + (float(row) + 0.5) * pitch
 
     found = []
-    for index, chosen in zip(places.tolist(), median.tolist()):
-        thickness = float(chords[chosen]) if measured[chosen] else max(2 * float(deepest[index]) - 1, 1) * pitch
-        if thickness < limit:
+    for index, chosen, thin_chords, any_chord in zip(places.tolist(), median.tolist(), unders.tolist(), found_any.tolist()):
+        if thin_chords or not any_chord:
+            thickness = float(chords[chosen]) if thin_chords else max(2 * float(deepest[index]) - 1, 1) * pitch
             box = Rect(x(low_cols[index]), y(low_rows[index]), x(high_cols[index]), y(high_rows[index]))
             found.append((thickness, (float(points[chosen, 0]), float(points[chosen, 1])), box))
     return found
@@ -788,7 +799,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
         "pitch_mm": round(pitch, 3),
         "layers_sampled": int(len(heights)),
         "thin_places": len(walls),
-        "method": "layer outlines rasterised at layer centres; thickness is the median of the shortest chords across the outline through points along a thin place's middle",
+        "method": "layer outlines rasterised at layer centres; a thin place is measured by the shortest chord across the outline through points spaced along its middle, and its thickness is the median of those under the limit",
     }
     return walls, method, *holes.report(mesh, step)
 

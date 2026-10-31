@@ -184,6 +184,21 @@ def test_a_wall_just_over_the_limit_is_not_thin_at_any_angle(tmp_path):
     assert report.thin_walls == [] and not any("wall about" in flag for flag in report.flags)
 
 
+def test_a_thin_rib_or_spur_on_a_wall_just_over_the_limit_is_thin(tmp_path):
+    # The 0.86 and 0.9 mm walls are over the 0.84 mm limit; the 0.3 mm rib and 0.4 mm spur standing off them are not.
+    rib = Pos(-10, 0, 5) * (Box(12, 0.86, 6) + Pos(0, 4.43, 0) * Box(0.3, 8, 6))
+    spur = Pos(10, 0, 5) * Rot(0, 0, 20) * (Box(12, 0.9, 6) + Pos(2, 1.95, 0) * Box(0.4, 3, 6))
+    walls = check_orientation(_mesh(tmp_path, Pos(0, 0, 1) * Box(40, 30, 2) + rib + spur), SETTINGS).thin_walls
+    on_rib, on_spur = sorted(walls, key=lambda wall: wall.thickness_mm)
+    assert (on_rib.thickness_mm, on_spur.thickness_mm) == pytest.approx((0.3, 0.4), abs=0.01)
+    # Each is reported where it was measured: on the rib, and on the spur in the spur's own frame.
+    x, y, _ = on_rib.model_xyz_mm
+    assert abs(x + 10) <= 0.15 and 0.43 <= y <= 8.43
+    turn = np.radians(-20)
+    x, y = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]]) @ (np.array(on_spur.model_xyz_mm[:2]) - (10, 0))
+    assert abs(x - 2) <= 0.2 and 0.45 <= y <= 3.45
+
+
 def test_thin_walls_that_cross_or_turn_a_corner_are_measured_along_their_length(tmp_path):
     # Where two 0.5 mm walls cross, or 0.6 mm walls turn a corner, a chord across reads about 0.7-0.85 mm.
     cross = Pos(0, 0, 1) * Box(30, 30, 2) + Pos(0, 0, 5) * (Box(14, 0.5, 6) + Box(0.5, 14, 6))
