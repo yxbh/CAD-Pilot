@@ -478,12 +478,16 @@ def test_a_run_past_its_time_limit_is_stopped_and_reported(tmp_path):
     assert result.failure() == "Bambu Studio did not finish within 0.5 s"
 
 
-def test_a_timed_out_run_is_retried_plate_by_plate_and_blames_only_a_lone_plate(tmp_path):
+def test_a_timed_out_run_is_retried_plate_by_plate_until_a_lone_plate_times_out(tmp_path):
     studio = _ScriptedStudio({0: ("timeout", "", [], None), 1: (0, "", [1], {}), 2: ("timeout", "", [], None), 3: (0, "", [3], {})})
     report = slice_project(studio, _three_plates(tmp_path), timeout=1800)
-    assert studio.targets == [0, 1, 2, 3]
-    assert [plate.error for plate in report.plates] == [None, "Bambu Studio did not finish within 1800 s", None]
-    assert report.plates[0].seconds == 60.0 and not report.ok
+    # Plate 3 is not tried: a command line that hangs costs two time limits, not one a plate.
+    assert studio.targets == [0, 1, 2]
+    first, second, third = report.plates
+    assert first.seconds == 60.0 and first.error is None
+    assert second.error == "Bambu Studio did not finish within 1800 s"
+    assert third.error.startswith("not sliced: plate 2 alone ran past the 1800 s limit")
+    assert not report.ok
 
 
 def _cannot_slice(studio, project):

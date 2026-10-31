@@ -86,7 +86,8 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
     it cannot slice, may crash or run past ``timeout`` without saying where, and logs crossing
     toolpaths without their plate, so after any of those the plates not yet accounted for are
     sliced one at a time, and a crash, a timeout or crossing toolpaths is blamed only on the plate
-    of a one-plate run."""
+    of a one-plate run. Once a one-plate run also times out, the plates after it are reported
+    unsliced rather than tried, so a command line that hangs costs about two timeouts, not one a plate."""
     project = project.resolve()
     contents = read_project(project)
     settings = contents.settings
@@ -116,14 +117,23 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
             failed = int(data.get("plate_index") or 0)
             if result.returncode != 0 and not result.stopped and failed in plates and plates[failed].seconds is None:
                 plates[failed].error = (data.get("error_string") or result.failure()).strip()
+        stalled = None
         for number in [n for n in sorted(plates) if plates[n].seconds is None and plates[n].error is None]:
-            data, sliced, result = run(number)
             plate = plates[number]
+            if stalled is not None:
+                plate.error = (
+                    f"not sliced: plate {stalled} alone ran past the {timeout:g} s limit, so the plates after it were "
+                    "not tried; fix or remove that plate and slice again"
+                )
+                continue
+            data, sliced, result = run(number)
             plate.conflicts += [f"toolpaths of {first} and {second} cross" for first, second in CONFLICT.findall(result.output)]
             if number in sliced:
                 _plate_result(sliced[number], plate, settings)
             if (result.returncode != 0 or result.timed_out) and plate.seconds is None:
                 plate.error = (result.failure() if result.stopped else data.get("error_string") or result.failure()).strip()
+                if result.timed_out:
+                    stalled = number
             elif plate.seconds is None:
                 plate.error = "not sliced: Bambu Studio wrote no G-code for it"
     return SliceReport(
