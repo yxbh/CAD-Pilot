@@ -8,11 +8,12 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+
+from common.tests import cli_host
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[3]
 
@@ -107,15 +108,7 @@ class DesignChecksTests(unittest.TestCase):
         self.env = {**os.environ, "CAD_PILOT_CACHE": str(self.root / "cache")}
 
     def run_tool(self, tool: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(SCRIPTS_ROOT / tool), *args],
-            cwd=cwd or self.root,
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=300,
-        )
+        return cli_host.run(SCRIPTS_ROOT / tool, *args, cwd=cwd or self.root, env=self.env, timeout=300)
 
     def inspect_json(self, *args: str, expect: int = 0, cwd: Path | None = None) -> dict:
         result = self.run_tool("inspect", *args, cwd=cwd)
