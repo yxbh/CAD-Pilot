@@ -24,7 +24,7 @@ class GeneratorModuleTests(unittest.TestCase):
         (self.root / "review").mkdir()
         saved_path = list(sys.path)
         self.addCleanup(lambda: sys.path.__setitem__(slice(None), saved_path))
-        for name in ("widgets", "missing_vendor_package"):
+        for name in ("widgets", "widgets.parts", "missing_vendor_package"):
             self.addCleanup(sys.modules.pop, name, None)
 
     def write(self, relative: str, source: str) -> Path:
@@ -54,12 +54,14 @@ class GeneratorModuleTests(unittest.TestCase):
             module = load_generator(script)
         self.assertEqual(24.0, call_generator(module, "gen_step", script_path=script))
 
-    def test_the_project_folders_leave_the_import_path_afterwards(self) -> None:
-        script = self.write("review/model.py", "def gen_step():\n    return 1\n")
-        before = list(sys.path)
+    def test_the_project_folders_and_their_finders_leave_the_import_machinery_afterwards(self) -> None:
+        script = self.write("review/model.py", "import widgets\n\ndef gen_step():\n    return 1\n")
+        before = (list(sys.path), list(sys.path_hooks))
         with mock.patch.object(Path, "cwd", return_value=self.root):
             call_generator(load_generator(script), "gen_step", script_path=script)
-        self.assertEqual(before, sys.path)
+        self.assertEqual(before, (sys.path, sys.path_hooks))
+        root = str(self.root)
+        self.assertEqual([], [path for path in sys.path_importer_cache if isinstance(path, str) and path.startswith(root)])
 
     def test_an_edit_of_the_same_length_within_a_second_is_read(self) -> None:
         script = self.root / "review" / "edited.py"
@@ -104,13 +106,22 @@ class GeneratorModuleTests(unittest.TestCase):
             ]
         self.assertEqual([10, 99], widths)
 
-    def test_an_edited_src_module_is_read_again_by_the_next_load(self) -> None:
-        script = self.write("review/model.py", "from widgets import SIZE\n")
-        with mock.patch.object(Path, "cwd", return_value=self.root):
-            first = load_generator(script).SIZE
-            (self.root / "src" / "widgets" / "__init__.py").write_text("SIZE = 34.0\n")
-            second = load_generator(script).SIZE
-        self.assertEqual((12.0, 34.0), (first, second))
+    def test_project_modules_edited_within_the_same_second_are_read_again_by_the_next_load(self) -> None:
+        # Bytecode writing is forced on and both edits keep their length and mtime, so a cached .pyc would pass as
+        # current: the next load must still compile the package and its submodule from source.
+        package = self.root / "src" / "widgets"
+        script = self.write("review/model.py", "from widgets import SIZE\nfrom widgets.parts import WIDTH\n")
+        stamp = 1_700_000_000_000_000_000
+        seen = []
+        with mock.patch.object(sys, "dont_write_bytecode", False), mock.patch.object(Path, "cwd", return_value=self.root):
+            for size, width in (("12.0", "1.0"), ("34.0", "2.0")):
+                for path, text in ((package / "__init__.py", f"SIZE = {size}\n"), (package / "parts.py", f"WIDTH = {width}\n")):
+                    path.write_text(text)
+                    os.utime(path, ns=(stamp, stamp))
+                module = load_generator(script)
+                seen.append((module.SIZE, module.WIDTH))
+        self.assertEqual([(12.0, 1.0), (34.0, 2.0)], seen)
+        self.assertFalse((package / "__pycache__").exists())
 
     def test_the_tools_own_modules_are_kept_when_the_design_root_holds_them(self) -> None:
         import common.generator_module as loader

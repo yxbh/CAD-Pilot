@@ -38,7 +38,7 @@ Passing a generated assembly `.step` directly treats it as imported native STEP.
 
 ### Project imports and dependencies
 
-Run `scripts/step` from the design root. A generator imports modules beside it, at the design root and, in a `src/` layout, the project's own packages, with no `sys.path` code of its own; lazy imports inside `gen_step()` work too. Every load reads the generator and those modules from disk again, so two generators with same-named sibling modules each get their own. Third-party packages come from the interpreter running the tool: when the design project has its own environment with build123d, such as a uv project, run the tool with that interpreter (`uv run python <cad>/scripts/step ...` from the design root), so `gen_step()` finds the project's dependencies. A module the interpreter cannot import is reported as one line naming the module and the interpreter.
+Run `scripts/step` from the design root. A generator imports modules beside it, at the design root and, in a `src/` layout, the project's own packages, with no `sys.path` code of its own; lazy imports inside `gen_step()` work too. Every load compiles the generator and those modules from their source again, never from cached bytecode, so two generators with same-named sibling modules each get their own and an edit is picked up even within the same second. Third-party packages come from the interpreter running the tool: when the design project has its own environment with build123d, such as a uv project, run the tool with that interpreter (`uv run python <cad>/scripts/step ...` from the design root), so `gen_step()` finds the project's dependencies. A module the interpreter cannot import is reported as one line naming the module and the interpreter.
 
 ### Part names
 
