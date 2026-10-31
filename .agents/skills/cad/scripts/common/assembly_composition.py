@@ -1080,7 +1080,8 @@ def _source_topology_counts(topology_manifest_path: Path) -> dict[str, int]:
     manifest = read_step_topology_manifest_from_glb(topology_manifest_path)
     if manifest is None:
         raise AssemblyCompositionError(
-            f"Source GLB topology is missing: {relative_to_repo(topology_manifest_path)}"
+            f"Source GLB topology is missing or from an older version of the tools: "
+            f"{relative_to_repo(topology_manifest_path)}; generate that part again with scripts/step"
         )
     stats = manifest.get("stats")
     if not isinstance(stats, dict):
