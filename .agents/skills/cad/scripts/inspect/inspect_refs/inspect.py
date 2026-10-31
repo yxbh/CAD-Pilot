@@ -20,10 +20,11 @@ from common.step_targets import (
     ResolvedStepTarget,
     cad_path_from_target,
     cad_ref_error_payload,
+    cad_tokens,
     entry_target_from_target,
     resolve_step_target,
     step_path_from_target,
-    validate_step_topology_artifact,
+    step_topology,
 )
 
 from . import analysis
@@ -66,7 +67,7 @@ def inspect_cad_refs(
     plane_limit: int = 12,
     context_provider: EntryContextProvider | None = None,
 ) -> dict[str, object]:
-    parsed_tokens = syntax.parse_cad_tokens(text)
+    parsed_tokens = cad_tokens(text)
     if not parsed_tokens:
         raise CadRefError(
             "No @cad[...] token found. Expected @cad[<cad-path>] or @cad[<cad-path>#<selector>] "
@@ -210,10 +211,7 @@ def _load_step_context(
     *,
     profile: SelectorProfile,
 ) -> EntryContext:
-    artifact = validate_step_topology_artifact(
-        target,
-        require_selector=(profile != SelectorProfile.SUMMARY),
-    )
+    artifact = step_topology(target, require_selector=(profile != SelectorProfile.SUMMARY))
     if artifact.selector_bundle is None:
         manifest = artifact.manifest
         selector_index = None
@@ -482,7 +480,7 @@ def load_entry_context_for_target(
 
 
 def _parse_single_target_token(target: str) -> syntax.ParsedToken:
-    parsed_tokens = syntax.parse_cad_tokens(target)
+    parsed_tokens = cad_tokens(target)
     if len(parsed_tokens) == 1:
         return parsed_tokens[0]
     if len(parsed_tokens) > 1:

@@ -18,6 +18,7 @@ from common.glb_mesh_payload import (
     scene_glb_mesh_payload_key,
 )
 from common.render import REPO_ROOT, part_glb_path
+from common.glb_topology import STEP_TOPOLOGY_SCHEMA_VERSION
 from common.step_scene import ColorRGBA, LoadedStepScene, OccurrenceNode, SelectorBundle, occurrence_selector_id
 
 
@@ -27,7 +28,6 @@ FLOAT = 5126
 UNSIGNED_INT = 5125
 TRIANGLES = 4
 STEP_TOPOLOGY_EXTENSION = "STEP_topology"
-STEP_TOPOLOGY_SCHEMA_VERSION = 1
 GLB_MAGIC = 0x46546C67
 GLB_VERSION = 2
 
@@ -82,6 +82,22 @@ def export_assembly_glb_from_scene(
         selector_bundle=selector_bundle,
         include_selector_topology=include_selector_topology,
         entry_kind="assembly",
+    )
+
+
+def write_scene_glb(
+    scene: LoadedStepScene,
+    target_path: Path,
+    *,
+    selector_bundle: SelectorBundle,
+    entry_kind: str,
+) -> Path:
+    """A topology GLB for a STEP read from disk, written wherever the caller keeps it."""
+    return _HierarchicalGlbWriter(scene, color=None).write(
+        target_path,
+        selector_bundle=selector_bundle,
+        include_selector_topology=True,
+        entry_kind=entry_kind,
     )
 
 

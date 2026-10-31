@@ -87,6 +87,7 @@ class LoadedStepScene:
     glb_mesh_payloads: dict[tuple[object, ...], Any] = field(default_factory=dict)
     export_shape: Any | None = None
     doc: Any | None = None
+    unlabelled_parts: tuple[str, ...] = ()
 
 
 @dataclass

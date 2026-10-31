@@ -11,6 +11,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from common.catalog import StepImportOptions
 from common.generation import generate_step_targets
+from common.generator_module import GeneratorImportError
 from common.metadata import normalize_mesh_numeric
 
 
@@ -53,12 +54,12 @@ def _add_step_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--mesh-tolerance",
         type=float,
-        help="Positive shared mesh linear deflection for GLB, topology, STL, and 3MF artifacts.",
+        help="Finer meshes for GLB, topology, STL and 3MF: linear deflection as a fraction of each edge's size, below the 0.006 default.",
     )
     parser.add_argument(
         "--mesh-angular-tolerance",
         type=float,
-        help="Positive shared mesh angular deflection for GLB, topology, STL, and 3MF artifacts.",
+        help="Finer meshes for GLB, topology, STL and 3MF: angular deflection in radians, below the 0.1 default.",
     )
     parser.add_argument(
         "--no-solid-check",
@@ -104,14 +105,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.output is not None and len(args.targets) != 1:
         parser.error("--output can only be used with exactly one target")
-    return generate_step_targets(
-        args.targets,
-        direct_step_kind=args.kind,
-        step_options=_step_import_options_from_args(args, parser=parser),
-        output=args.output,
-        verbose=bool(args.verbose),
-        check_solids=bool(args.check_solids),
-    )
+    try:
+        return generate_step_targets(
+            args.targets,
+            direct_step_kind=args.kind,
+            step_options=_step_import_options_from_args(args, parser=parser),
+            output=args.output,
+            verbose=bool(args.verbose),
+            check_solids=bool(args.check_solids),
+        )
+    except GeneratorImportError as exc:
+        print(f"{parser.prog}: error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

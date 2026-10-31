@@ -36,6 +36,14 @@ python scripts/inspect refs path/to/assembly.step --facts --planes --positioning
 
 Passing a generated assembly `.step` directly treats it as imported native STEP. Pass the `.py` assembly source when source-level assembly composition must be preserved.
 
+### Project imports and dependencies
+
+Run `scripts/step` from the design root. A generator imports modules beside it, at the design root and, in a `src/` layout, the project's own packages, with no `sys.path` code of its own; lazy imports inside `gen_step()` work too. Every load compiles the generator and those modules from their source again, never from cached bytecode, so two generators with same-named sibling modules each get their own and an edit is picked up even within the same second. Third-party packages come from the interpreter running the tool: when the design project has its own environment with build123d, such as a uv project, run the tool with that interpreter (`uv run python <cad>/scripts/step ...` from the design root), so `gen_step()` finds the project's dependencies. A module the interpreter cannot import is reported as one line naming the module and the interpreter.
+
+### Part names
+
+Label every part you export. A placed part without a label is named after its group, as `kit 1` and `kit 2`, or takes its group's name when it is the only child, and `scripts/step` prints one warning listing them. Identical unlabelled copies still share one shape in the STEP; only their placements carry the names. `.solids()`, a `Solid`'s `.fillet()` and `Part(...)` return unlabelled shapes, so set labels after the last operation. `scripts/inspect parts` lists the names the STEP ended up with.
+
 ## Direct STEP/STP targets
 
 Use direct STEP/STP targets only when the generator is unavailable or the user explicitly identifies a STEP/STP file as the target:
@@ -45,11 +53,13 @@ python scripts/step --kind part path/to/imported.step
 python scripts/inspect refs path/to/imported.step --facts --planes --positioning
 ```
 
-Direct targets can use sidecar mesh flags, but generator targets remain preferred when a generator exists. Read `supported-exports.md` for STL and 3MF sidecars.
+Direct targets can use sidecar mesh flags, but generator targets remain preferred when a generator exists. Read `supported-exports.md` for STL and 3MF sidecars. To inspect a STEP, run `scripts/inspect` on it directly; it indexes any STEP itself.
 
 ## Adjacent inspection artifacts
 
-`scripts/step` generates the explicit STEP target and an adjacent hidden GLB with topology data (`.<name>.step.glb`). `scripts/inspect` reads `@cad` selectors and topology from it, so regenerate it with the STEP rather than editing or deleting it. Do not require a separate validation subcommand for it. The maintained CAD Explorer reads the STEP itself and does not need this file.
+`scripts/step` generates the explicit STEP target and an adjacent hidden GLB with topology data (`.<name>.step.glb`). `scripts/inspect` reads `@cad` selectors and topology from it while it matches the STEP, and otherwise indexes the STEP into its per-user cache, so a missing or stale GLB is never an error. Regenerate it with the STEP rather than editing it. The maintained CAD Explorer reads the STEP itself and does not need this file.
+
+When a rebuild renumbers faces and edges, `scripts/step` warns once if `scripts/inspect` handed out face or edge refs for the previous build; take fresh refs from the new build.
 
 Use `rendering-and-explorer.md` to show the generated STEP in the maintained CAD Explorer.
 

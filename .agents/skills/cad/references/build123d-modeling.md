@@ -155,6 +155,17 @@ On build123d 0.13, a stale edge fails in confusing ways:
 
 Reselect the edges from the final solid before changing a radius. When a fillet genuinely does not fit, `solid.max_fillet(edges, max_iterations=20)` estimates the largest radius the selected edges allow, to within its `tolerance` (0.1 mm by default). On build123d 0.13 the default 10 iterations often fail with `Failed to find the max value`, even on a plain box, so raise `max_iterations`; choosing a smaller radius than specified is a design decision, not a repair.
 
+## One welded body, then round it
+
+A part that should look and print as one piece needs one solid with one face per surface and rounded edges where hands meet it. `inspect hygiene` reports each place where it is not; see `inspection-and-validation.md`.
+
+- **Fuse first, round last.** Combine every piece of a part with `+` or one `BuildPart` before rounding, then select edges from the fused solid. Rounding pieces and fusing them afterwards leaves sharp edges and seams where the pieces meet, which no fillet ever saw. A `Compound([...])` of touching pieces is not a fused part: it stays several solids, and its edges fillet piece by piece.
+- **One face per surface.** `+`, `-` and `BuildPart` merge faces that lie on one surface. Raw OCP Booleans, `Compound`, `split` and imported geometry can leave such faces split, which shows as a seam across a flat face and splits its edges. `shape.clean()` merges them; rerun `inspect hygiene` and expect no `split-face` finding.
+- **Rounding convention.** Unless the project sets its own, propose a comfort radius as a provisional assumption (about 1 mm suits most hand-held FDM parts; ask when the edge is a grip, a lip or a child's toy), round every convex edge a hand meets to at least that radius, and record the radius as a named parameter. Leave or chamfer the edges on the print bed; the fdm-design skill covers overhangs. Check with `inspect hygiene --round <radius>`.
+- **When a fillet fails.** `BRep_API: command not done`, `StdFail_NotDone` or `Failed creating a fillet` usually means stale edges (above), several solids where one was meant, a radius larger than the smallest neighbouring face allows, or edges meeting at one corner rounded in separate calls. Fuse, reselect, and round the edges that meet at a corner in one `fillet` call; larger radii before smaller ones.
+- **Check result types.** `ShapeList` is a list of shapes, not a shape: it has no `.fillet` or `.volume`. `a & b` of bodies that only touch returns a zero-volume compound, not a solid. Read `.solids()` and each solid's `.volume` before using a result as a part.
+- **Labels after the last operation.** `.solids()`, a `Solid`'s `.fillet()` and `Part(...)` return unlabelled shapes; set `.label` on what you export, not on an intermediate. `scripts/step` names unlabelled parts after their group and warns.
+
 ## Lofts and sampled profiles
 
 A loft joins each section to the next by matching their edges and start points. A loft can be topologically valid and still twisted or rippled when those do not correspond. On build123d 0.13, polygon sections with shifted start vertices were aligned automatically, but identical periodic spline sections with shifted start points produced a valid solid whose volume differed from the straight extrusion.
