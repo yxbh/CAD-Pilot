@@ -12,8 +12,8 @@ from .bambu import BambuStudio, BambuStudioError
 from .bambu3mf import write_project
 from .job import JobError, load_job
 from .meshes import MeshError, load_mesh
-from .orientation import CheckSettings, check_orientation
-from .plan import PlanError, ProjectPlan, plan_project
+from .orientation import check_orientation
+from .plan import PlanError, ProjectPlan, check_settings, plan_project
 from .profile import PROFILE_PATH, ProfileError, load_profile
 from .report import check_lines, plan_dict, plan_lines, slice_lines
 from .slicing import SliceReport, slice_project
@@ -98,9 +98,7 @@ def _configured_studio() -> str | None:
 
 def _check(args: argparse.Namespace) -> int:
     profile = load_profile()
-    presets = BambuStudio.locate(profile.bambu_studio).presets()
-    settings = {**presets.flat("machine", profile.printer), **presets.flat("process", profile.process), **profile.process_settings}
-    checks = CheckSettings.from_settings(settings, bridge_review_mm=args.bridge_limit)
+    checks = check_settings(BambuStudio.locate(profile.bambu_studio).presets, profile, bridge_review_mm=args.bridge_limit)
     path = Path(args.file).resolve()
     mesh = load_mesh(path).oriented(tuple(args.rotate or (0.0, 0.0, 0.0)))
     report = check_orientation(mesh, checks)
@@ -135,7 +133,7 @@ def _coupon(args: argparse.Namespace) -> int:
 def _profile(args: argparse.Namespace) -> int:
     profile = load_profile()
     studio = BambuStudio.locate(profile.bambu_studio)
-    presets = studio.presets()
+    presets = studio.presets
     presets.require("machine", profile.printer)
     presets.require("process", profile.process)
     for filament in profile.filaments.values():
@@ -146,7 +144,7 @@ def _profile(args: argparse.Namespace) -> int:
 
 
 def _presets(args: argparse.Namespace) -> int:
-    presets = BambuStudio.locate(_configured_studio()).presets()
+    presets = BambuStudio.locate(_configured_studio()).presets
     words = [word.lower() for word in args.query]
     kinds = [args.kind] if args.kind else ["machine", "process", "filament"]
     found = {

@@ -45,6 +45,8 @@ def test_missing_profile_says_what_to_ask(tmp_path):
         ({"support": {"type": "everywhere"}}, "support type"),
         ({"support": {"type": "tree(auto)", "interface_filament": "TPU"}}, "interface_filament 'TPU'"),
         ({"nozzle": 0.4}, "unknown key"),
+        ({"process_settings": {"wall_loops": 5}}, 'wall_loops must be text as Bambu Studio writes it, such as "5"'),
+        ({"process_settings": {"wipe_tower_x": [40]}}, "wipe_tower_x must be text"),
     ],
 )
 def test_profile_errors_name_the_problem(change, message):

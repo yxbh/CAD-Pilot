@@ -7,7 +7,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .bambu import BED_TEMPERATURE_KEYS, BambuStudio, setting
+from .bambu import BED_TEMPERATURE_KEYS, BambuStudio, Presets, setting
 from .job import Job, PartSpec
 from .layout import Footprint, Rect, pack
 from .meshes import PrintMesh, load_mesh
@@ -19,10 +19,11 @@ EDGE_MARGIN_MM = 5.0
 PART_GAP_MM = 8.0
 # Bambu Studio moves a prime tower closer than this to the edge of the area every nozzle reaches.
 TOWER_MARGIN_MM = 15.0
-# Room kept for a prime tower and its brim: Bambu sizes the tower from the purge volume and the
-# tallest part, and this covers it for parts up to the H2D's full height.
-TOWER_SIZE_MM = 60.0
+# The app's default tower corner, which no preset sets.
+TOWER_DEFAULT_XY = (15.0, 220.0)
+# Bambu's automatic tower brim reaches 8 mm on tall plates.
 TOWER_BRIM_MM = 8.0
+TOWER_SEARCH_STEP_MM = 5.0
 MAX_PLATES = 36  # the most a Bambu Studio project holds; its command line crashes loading more
 # Bambu Studio's default purge between two filaments, and to load or unload one (mm³).
 PURGE_MM3 = 280
@@ -104,9 +105,11 @@ def _rect(points: list[str] | str) -> Rect:
 
 
 def _keep_outs(settings: dict) -> list[Rect]:
+    """The bed's excluded rectangles: four corners each, in one list or comma-joined strings. A lone
+    "0x0" means none; a fifth corner repeating the first only closes the outline."""
     rects = []
     for key in ("bed_exclude_area", "wrapping_exclude_area"):
-        points = [point for point in settings.get(key) or [] if point and point != "0x0"]
+        points = [point.strip() for entry in settings.get(key) or [] for point in entry.split(",") if point.strip()]
         for start in range(0, len(points) - len(points) % 4, 4):
             rect = _rect(points[start : start + 4])
             if rect.width > 0 and rect.depth > 0:
@@ -129,18 +132,33 @@ def _slots(job: Job, profile: PrintProfile, material: Callable[[str], str]) -> t
     return list(slots.values()), by_part
 
 
-def _tower(settings: dict, reach: Rect, keep_out: list[Rect]) -> Rect:
-    """Where the prime tower goes: the printer's default spot, moved inside the area every nozzle
-    reaches (the H2D's default sits outside its right nozzle's reach) and clear of the bed's
-    excluded areas. The command line, unlike the app, does not move a tower that is out of place."""
-    x = float(setting(settings.get("wipe_tower_x", ["15"])))
-    y = float(setting(settings.get("wipe_tower_y", ["220"])))
-    low, high = reach.x0 + TOWER_MARGIN_MM, reach.x1 - TOWER_MARGIN_MM - TOWER_SIZE_MM
-    candidates = [min(max(x, low), high)] + [low + 5.0 * step for step in range(int(max(high - low, 0) // 5) + 1)]
-    for candidate in candidates:
-        tower = Rect(candidate, y, candidate + TOWER_SIZE_MM, y + TOWER_SIZE_MM)
-        if not any(tower.grown(TOWER_BRIM_MM).overlaps(rect) for rect in keep_out):
-            return tower
+def _tower(settings: dict, reach: Rect, keep_out: list[Rect]) -> tuple[Rect, Rect]:
+    """Where the prime tower goes: the app's default corner, moved inside the area every nozzle
+    reaches and onto the bed (the H2D's default x sits outside its right nozzle's reach, the default
+    y beyond an A1 mini's bed), then to the nearest spot clear of the bed's excluded areas. The
+    command line, unlike the app, does not move a tower that is out of place. The tower is kept as
+    a square of the preset's tower width, which Bambu's ribbed tower stays within. Returns the
+    tower and the area it keeps clear with its brim."""
+    size = float(setting(settings.get("prime_tower_width", "35")))
+    brim = float(setting(settings.get("prime_tower_brim_width", "-1")))
+    brim = TOWER_BRIM_MM if brim < 0 else brim
+    x0, y0 = reach.x0 + TOWER_MARGIN_MM, reach.y0 + TOWER_MARGIN_MM
+    x1, y1 = reach.x1 - TOWER_MARGIN_MM - size, reach.y1 - TOWER_MARGIN_MM - size
+    if x1 < x0 or y1 < y0:
+        raise PlanError("the bed has no room for a prime tower")
+    default = settings.get("wipe_tower_x"), settings.get("wipe_tower_y")
+    x = float(setting(default[0])) if default[0] else TOWER_DEFAULT_XY[0]
+    y = float(setting(default[1])) if default[1] else TOWER_DEFAULT_XY[1]
+    x, y = min(max(x, x0), x1), min(max(y, y0), y1)
+
+    def steps(low: float, high: float) -> list[float]:
+        return [low + TOWER_SEARCH_STEP_MM * i for i in range(int((high - low) // TOWER_SEARCH_STEP_MM) + 1)] + [high]
+
+    spots = sorted({(x, y), *((cx, cy) for cx in steps(x0, x1) for cy in steps(y0, y1))}, key=lambda p: math.hypot(p[0] - x, p[1] - y))
+    for cx, cy in spots:
+        tower = Rect(cx, cy, cx + size, cy + size)
+        if not any(tower.grown(brim).overlaps(rect) for rect in keep_out):
+            return tower, tower.grown(brim)
     raise PlanError("the bed has no room for a prime tower clear of its excluded areas")
 
 
@@ -158,7 +176,17 @@ def _max_height(settings: dict) -> float:
     return min(heights)
 
 
-def _pack_plates(plan_parts: list[PartPlan], job: Job, area: Rect, keep_out: list[Rect], tower: Rect, interface: Slot | None) -> list[PlatePlan]:
+def _too_big(plan_parts: list[PartPlan], item: Footprint, area: Rect, beside_tower: bool) -> PlanError:
+    return PlanError(
+        f"{plan_parts[item.key[0]].spec.name} ({item.width:.1f} x {item.depth:.1f} mm as printed) does not fit the plate: "
+        f"its usable area is X {area.x0:g}..{area.x1:g} and Y {area.y0:g}..{area.y1:g} mm"
+        + (", less the prime tower's corner" if beside_tower else "")
+    )
+
+
+def _pack_plates(
+    plan_parts: list[PartPlan], job: Job, area: Rect, keep_out: list[Rect], tower: Rect, tower_keep_out: Rect, interface: Slot | None
+) -> list[PlatePlan]:
     def needs_tower(indices: set[int]) -> bool:
         slots = {plan_parts[i].slot.number for i in indices}
         if interface is not None and any(plan_parts[i].uses_interface for i in indices):
@@ -178,15 +206,16 @@ def _pack_plates(plan_parts: list[PartPlan], job: Job, area: Rect, keep_out: lis
     for plate, remaining in zip(job.plates, footprints):
         while remaining:
             reserve = needs_tower({item.key[0] for item in remaining})
-            placed, remaining = pack(remaining, area, keep_out + ([tower.grown(TOWER_BRIM_MM)] if reserve else []), PART_GAP_MM)
+            blocked = keep_out + ([tower_keep_out] if reserve else [])
+            placed, remaining = pack(remaining, area, blocked, PART_GAP_MM)
             if not placed:
-                item = remaining[0]
-                raise PlanError(
-                    f"{plan_parts[item.key[0]].spec.name} ({item.width:.1f} x {item.depth:.1f} mm) does not fit the usable plate area "
-                    f"X {area.x0:g}..{area.x1:g}, Y {area.y0:g}..{area.y1:g} mm"
-                    + (" beside the prime tower" if reserve else "")
-                )
+                # Even the largest part does not fit an empty plate.
+                raise _too_big(plan_parts, remaining[0], area, reserve)
             if remaining and not job.auto_plates:
+                for item in remaining:
+                    alone = needs_tower({item.key[0]})
+                    if not pack([item], area, keep_out + ([tower_keep_out] if alone else []), PART_GAP_MM)[0]:
+                        raise _too_big(plan_parts, item, area, alone)
                 names = ", ".join(sorted({plan_parts[item.key[0]].spec.name for item in remaining}))
                 raise PlanError(
                     f"plate {plate.name!r} is full: {names} do not fit beside the rest. Move them to another named plate."
@@ -229,18 +258,22 @@ def _project_settings(resolved: dict, profile: PrintProfile, slots: list[Slot], 
     changed = sorted(key for key, value in overrides.items() if key in system_process and system_process[key] != value)
     # One entry each for the process, every filament, then the printer.
     settings["different_settings_to_system"] = [";".join(changed), *[""] * len(slots), ""]
-    settings["inherits_group"] = ["", *[""] * len(slots), ""]
     return settings
 
 
+def check_settings(presets: Presets, profile: PrintProfile, **options) -> CheckSettings:
+    """The orientation checks' layer height, line width and support angle for this profile."""
+    settings = {**presets.flat("machine", profile.printer), **presets.flat("process", profile.process), **profile.process_settings}
+    return CheckSettings.from_settings(settings, **options)
+
+
 def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> ProjectPlan:
-    presets = studio.presets()
+    presets = studio.presets
     presets.require("machine", profile.printer)
     presets.require("process", profile.process)
-    machine = presets.flat("machine", profile.printer)
     system_process = presets.flat("process", profile.process)
     process = {**system_process, **profile.process_settings}
-    checks = CheckSettings.from_settings({**machine, **process})
+    checks = check_settings(presets, profile)
 
     def material(preset: str) -> str:
         # Only the filaments a job uses need presets in this installation.
@@ -298,8 +331,8 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> Projec
         if height > max_height:
             raise PlanError(f"{part.spec.name} is {height:.1f} mm tall in this orientation; the printer takes {max_height:g} mm")
     keep_out = _keep_outs(resolved)
-    tower = _tower(resolved, reach, keep_out)
-    plates = _pack_plates(parts, job, area, keep_out, tower, interface)
+    tower, tower_keep_out = _tower(resolved, reach, keep_out)
+    plates = _pack_plates(parts, job, area, keep_out, tower, tower_keep_out, interface)
     settings = _project_settings(resolved, profile, slots, interface, system_process, len(plates), tower)
     return ProjectPlan(job, profile, parts, slots, plates, settings, bed)
 

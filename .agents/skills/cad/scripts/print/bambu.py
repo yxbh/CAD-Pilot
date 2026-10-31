@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 
 
@@ -186,6 +187,7 @@ class BambuStudio:
             "or the BAMBU_STUDIO environment variable to the app or its executable."
         )
 
+    @cached_property
     def presets(self) -> Presets:
         return Presets.load(self.profiles)
 
@@ -207,7 +209,7 @@ class BambuStudio:
     def resolved_settings(self, printer: str, process: str, filaments: list[str]) -> dict:
         """The full project settings for these system presets, merged by Bambu Studio itself:
         it expands each filament's per-nozzle values, which a plain merge would get wrong."""
-        presets = self.presets()
+        presets = self.presets
         with tempfile.TemporaryDirectory(prefix="cad-print-") as temp:
             work = Path(temp)
             files: list[str] = []
@@ -229,8 +231,12 @@ class BambuStudio:
 
     def open(self, path: Path) -> None:
         """Open a project in the Bambu Studio app, reusing its window when it is already running."""
-        if sys.platform == "darwin" and self.app.suffix == ".app":
-            subprocess.run(["open", "-a", str(self.app), str(path)], check=True)
-        else:
-            subprocess.Popen([str(self.executable), str(path)], start_new_session=True)
+        try:
+            if sys.platform == "darwin" and self.app.suffix == ".app":
+                subprocess.run(["open", "-a", str(self.app), str(path)], check=True, capture_output=True, text=True)
+            else:
+                subprocess.Popen([str(self.executable), str(path)], start_new_session=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            detail = getattr(error, "stderr", "") or str(error)
+            raise BambuStudioError(f"Could not open {path} in Bambu Studio: {detail.strip()}") from error
 

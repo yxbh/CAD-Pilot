@@ -12,14 +12,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .bambu import BambuStudio
+from .bambu import BambuStudio, BambuStudioError, CliRun
 
 
 CONFLICT = re.compile(r"gcode path conflicts found between (.+?) and (.+?)\s*$", re.M)
-
-
-class SliceError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True)
@@ -67,9 +63,14 @@ class SliceReport:
 
 def project_contents(project: Path) -> tuple[dict, list[str]]:
     """A project's settings and its plate names, in plate order."""
-    with zipfile.ZipFile(project) as archive:
-        settings = json.loads(archive.read("Metadata/project_settings.config"))
-        config = ET.fromstring(archive.read("Metadata/model_settings.config"))
+    try:
+        with zipfile.ZipFile(project) as archive:
+            settings = json.loads(archive.read("Metadata/project_settings.config"))
+            config = ET.fromstring(archive.read("Metadata/model_settings.config"))
+    except (zipfile.BadZipFile, KeyError, ValueError, ET.ParseError) as error:
+        raise BambuStudioError(
+            f"{project} is not a Bambu Studio project ({error}); a plain 3MF has no plates or settings to slice"
+        ) from error
     names = []
     for plate in config.iter("plate"):
         values = {m.get("key"): m.get("value") for m in plate.findall("metadata")}
@@ -99,44 +100,48 @@ def _plate_result(entry: dict, plate: PlateSlice, settings: dict) -> None:
 
 
 def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) -> SliceReport:
-    """Slice every plate. The command line stops at the first plate it cannot slice, so the plates
-    after a failure are sliced one at a time to report each of them."""
+    """Slice every plate in one run when that goes cleanly. The command line stops at the first plate
+    it cannot slice, may crash without saying where, and logs crossing toolpaths without their
+    plate, so after any of those the plates not yet accounted for are sliced one at a time, and
+    only a one-plate run's failures are blamed on a plate."""
     project = project.resolve()
     settings, names = project_contents(project)
     plates = {number: PlateSlice(number, name) for number, name in enumerate(names, start=1)}
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="cad-slice-") as temp:
         work = Path(temp)
-        pending = sorted(plates)
-        target = 0
-        attempt = 0
-        while pending:
-            out = work / f"out-{attempt}"
+
+        def run(target: int) -> tuple[dict, dict[int, dict], CliRun]:
+            out = work / f"plate-{target}"
             out.mkdir()
-            run = studio.run(["--slice", str(target), "--outputdir", str(out), str(project)], work, timeout=timeout)
+            result = studio.run(["--slice", str(target), "--outputdir", str(out), str(project)], work, timeout=timeout)
             result_file = out / "result.json"
-            result = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else {}
-            for entry in result.get("sliced_plates", []):
-                number = int(entry.get("id", 0))
-                if number in plates and (out / f"plate_{number}.gcode").is_file():
+            data = json.loads(result_file.read_text(encoding="utf-8")) if result_file.is_file() else {}
+            sliced = {
+                int(entry.get("id", 0)): entry
+                for entry in data.get("sliced_plates", [])
+                if (out / f"plate_{int(entry.get('id', 0))}.gcode").is_file()
+            }
+            return data, sliced, result
+
+        data, sliced, result = run(0)
+        if not CONFLICT.search(result.output):
+            for number, entry in sliced.items():
+                if number in plates:
                     _plate_result(entry, plates[number], settings)
-            failed = int(result.get("plate_index") or target or pending[0])
-            for first, second in CONFLICT.findall(run.output):
-                plates[failed].conflicts.append(f"toolpaths of {first} and {second} cross")
-            failure = ""
-            if run.returncode != 0:
-                failure = (run.failure() if run.crashed else result.get("error_string") or run.failure()).strip()
-                if failed in plates and plates[failed].seconds is None:
-                    plates[failed].error = failure
-            resolved = [n for n in pending if plates[n].seconds is not None or plates[n].error is not None]
-            # Make progress even when a run explains nothing: the plate it was meant to slice fails.
-            stuck = target if target and target not in resolved else (pending[0] if not resolved else None)
-            if stuck is not None:
-                plates[stuck].error = f"not sliced: {failure or 'Bambu Studio wrote no G-code for it'}"
-                resolved.append(stuck)
-            pending = [n for n in pending if n not in resolved]
-            target = pending[0] if pending else 0
-            attempt += 1
+            failed = int(data.get("plate_index") or 0)
+            if result.returncode != 0 and not result.crashed and failed in plates and plates[failed].seconds is None:
+                plates[failed].error = (data.get("error_string") or result.failure()).strip()
+        for number in [n for n in sorted(plates) if plates[n].seconds is None and plates[n].error is None]:
+            data, sliced, result = run(number)
+            plate = plates[number]
+            plate.conflicts += [f"toolpaths of {first} and {second} cross" for first, second in CONFLICT.findall(result.output)]
+            if number in sliced:
+                _plate_result(sliced[number], plate, settings)
+            if result.returncode != 0 and plate.seconds is None:
+                plate.error = (result.failure() if result.crashed else data.get("error_string") or result.failure()).strip()
+            elif plate.seconds is None:
+                plate.error = "not sliced: Bambu Studio wrote no G-code for it"
     return SliceReport(
         project=project,
         version=str(settings.get("version", "")),

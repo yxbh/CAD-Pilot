@@ -11,6 +11,7 @@ from build123d import Box, Pos, export_step
 
 from print.bambu import BambuStudio, BambuStudioError, CliRun
 from print.bambu3mf import write_project
+from print.layout import Rect
 from print.job import parse_job
 from print.plan import plan_project
 from print.profile import parse_profile
@@ -35,7 +36,7 @@ LAUNCHER = Path(__file__).resolve().parents[1]
 def _installed() -> BambuStudio | None:
     try:
         studio = BambuStudio.locate()
-        studio.presets().require("machine", PROFILE["printer"])
+        studio.presets.require("machine", PROFILE["printer"])
         return studio
     except BambuStudioError:
         return None
@@ -93,7 +94,7 @@ def test_a_failing_plate_is_reported_and_the_rest_still_slice(tmp_path):
 
 @needs_bambu
 def test_flattened_presets_carry_what_they_include():
-    machine = STUDIO.presets().flat("machine", PROFILE["printer"])
+    machine = STUDIO.presets.flat("machine", PROFILE["printer"])
     # The H2D takes its start G-code from an included template; without it the command line refuses to slice.
     assert "M" in machine["machine_start_gcode"]
     assert machine["printer_model"] == "Bambu Lab H2D"
@@ -165,3 +166,76 @@ def test_a_crash_names_the_function_from_the_macos_crash_report(tmp_path, monkey
     assert bambu.crash_frame(4242, wait=0) == "Slic3r::FilamentGroup::calc_one_change_budget"
     assert bambu.crash_frame(1, wait=0) is None
     assert CliRun(-11, "", 4242).failure() == "Bambu Studio crashed (signal 11) in Slic3r::FilamentGroup::calc_one_change_budget"
+
+
+class _ScriptedStudio:
+    """Answers each --slice target from a script: (exit code, log, plates sliced, result.json or None)."""
+
+    def __init__(self, script):
+        self.script = script
+        self.targets: list[int] = []
+
+    def run(self, arguments, work, *, timeout):
+        target = int(arguments[arguments.index("--slice") + 1])
+        out = Path(arguments[arguments.index("--outputdir") + 1])
+        self.targets.append(target)
+        code, log, sliced, result = self.script[target]
+        entries = []
+        for number in sliced:
+            (out / f"plate_{number}.gcode").write_text("")
+            entries.append({"id": number, "total_predication": 60.0, "filaments": [], "feature_type_times": {}})
+        if result is not None:
+            (out / "result.json").write_text(json.dumps({**result, "sliced_plates": entries}))
+        return CliRun(code, log, 0)
+
+
+def _three_plates(tmp_path):
+    project = tmp_path / "three.3mf"
+    plates = "".join(f'<plate><metadata key="plater_id" value="{n}"/><metadata key="plater_name" value="P{n}"/></plate>' for n in (1, 2, 3))
+    with zipfile.ZipFile(project, "w") as archive:
+        archive.writestr("Metadata/model_settings.config", f"<config>{plates}</config>")
+        archive.writestr("Metadata/project_settings.config", json.dumps({"filament_settings_id": ["PETG"]}))
+    return project
+
+
+def test_a_crash_without_result_blames_no_plate_until_each_is_sliced_alone(tmp_path, monkeypatch):
+    from print import bambu
+
+    monkeypatch.setattr(bambu, "crash_frame", lambda pid, wait=5.0: "Slic3r::Somewhere")
+    studio = _ScriptedStudio({0: (-11, "", [], None), 1: (0, "", [1], {}), 2: (-11, "", [], None), 3: (0, "", [3], {})})
+    report = slice_project(studio, _three_plates(tmp_path))
+    assert studio.targets == [0, 1, 2, 3]
+    assert [plate.error for plate in report.plates] == [None, "Bambu Studio crashed (signal 11) in Slic3r::Somewhere", None]
+
+
+def test_crossing_toolpaths_in_a_many_plate_run_are_traced_to_their_plate(tmp_path):
+    conflict = "gcode path conflicts found between tee 1 and tee 2\n"
+    studio = _ScriptedStudio({0: (0, conflict, [1, 2, 3], {}), 1: (0, "", [1], {}), 2: (0, conflict, [2], {}), 3: (0, "", [3], {})})
+    report = slice_project(studio, _three_plates(tmp_path))
+    assert studio.targets == [0, 1, 2, 3]
+    assert [plate.conflicts for plate in report.plates] == [[], ["toolpaths of tee 1 and tee 2 cross"], []]
+    assert not report.ok
+
+
+def test_a_plain_3mf_is_not_a_project(tmp_path):
+    plain = tmp_path / "plain.3mf"
+    with zipfile.ZipFile(plain, "w") as archive:
+        archive.writestr("3D/3dmodel.model", "<model/>")
+    with pytest.raises(BambuStudioError, match="is not a Bambu Studio project"):
+        slice_project(_ScriptedStudio({}), plain)
+    (tmp_path / "text.3mf").write_text("not a zip")
+    with pytest.raises(BambuStudioError, match="is not a Bambu Studio project"):
+        slice_project(_ScriptedStudio({}), tmp_path / "text.3mf")
+
+
+@needs_bambu
+@pytest.mark.parametrize("printer", ["Bambu Lab X1 Carbon 0.4 nozzle", "Bambu Lab A1 mini 0.4 nozzle", "Bambu Lab P2S 0.4 nozzle", PROFILE["printer"]])
+def test_installed_beds_give_a_reachable_tower_clear_of_exclusions(printer):
+    from print.plan import _keep_outs, _reach, _tower
+
+    settings = STUDIO.presets.flat("machine", printer)
+    reach, keep_out = _reach(settings), _keep_outs(settings)
+    if printer.startswith("Bambu Lab X1"):
+        assert keep_out == [Rect(0, 0, 18, 28)]
+    tower, kept_clear = _tower(settings, reach, keep_out)
+    assert reach.contains(tower) and not any(kept_clear.overlaps(rect) for rect in keep_out)

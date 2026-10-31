@@ -122,6 +122,12 @@ def parse_profile(data: Mapping, *, where: str = "print profile") -> PrintProfil
     process_settings = data.get("process_settings", {})
     if not isinstance(process_settings, Mapping):
         raise ProfileError(f"{where} process_settings must be an object of Bambu setting names and values")
+    for key, value in process_settings.items():
+        # Bambu Studio reads its settings as text and silently ignores numbers or booleans.
+        if not (isinstance(value, str) or isinstance(value, list) and all(isinstance(v, str) for v in value)):
+            raise ProfileError(
+                f"{where} process_settings {key} must be text as Bambu Studio writes it, such as \"{value}\", not {value!r}"
+            )
     bambu_studio = data.get("bambu_studio")
     return PrintProfile(
         printer=_text(f"{where} printer", data["printer"]),

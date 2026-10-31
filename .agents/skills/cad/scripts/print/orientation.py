@@ -13,6 +13,7 @@ from scipy import ndimage
 from trimesh.graph import connected_components, face_adjacency
 
 from .bambu import setting
+from .layout import Rect
 from .meshes import PrintMesh
 
 
@@ -25,6 +26,9 @@ LIFTED_MM = 1.0
 REVIEW_TILT_DEG = 45.0
 # Undersides within this many degrees of horizontal count as flat ceilings.
 FLAT_DEG = 2.0
+# Meshing tilts a face's triangles by up to about half a degree, so a modelled 45 degree chamfer is
+# not past 45 degrees, nor a modelled 60 degree slope past the support angle.
+TILT_TOLERANCE_DEG = 1.0
 DEFAULT_BRIDGE_REVIEW_MM = 5.0
 # The wall check rasterises sampled layers; it caps pixels per layer and layers per part.
 WALL_PIXELS = 2_000_000
@@ -198,28 +202,57 @@ def _raster(segments: np.ndarray, pitch: float, pad: int = 2) -> tuple[np.ndarra
     return _fill(segments, (float(low[0]), float(low[1])), shape, pitch), (float(low[0]), float(low[1]))
 
 
-def _heights_above(mesh: PrintMesh, points: np.ndarray) -> np.ndarray:
-    """For each (x, y, z) point, the distance up to the next surface of the mesh (inf if none)."""
-    tri = mesh.triangles
-    low, high = tri[:, :, :2].min(axis=1), tri[:, :, :2].max(axis=1)
-    (x0, y0), (x1, y1), (x2, y2) = tri[:, 0, :2].T, tri[:, 1, :2].T, tri[:, 2, :2].T
-    det = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
-    usable = np.abs(det) > 1e-12
-    result = np.full(len(points), np.inf)
-    for index, (px, py, pz) in enumerate(points):
-        near = usable & (low[:, 0] <= px) & (px <= high[:, 0]) & (low[:, 1] <= py) & (py <= high[:, 1])
-        if not near.any():
-            continue
-        t, d = tri[near], det[near]
+class _VerticalRays:
+    """Rays straight up through a mesh. Triangles are bucketed once on an XY grid, so each ray tests
+    only the triangles over its cell."""
+
+    def __init__(self, mesh: PrintMesh) -> None:
+        tri = mesh.triangles
+        (x0, y0), (x1, y1), (x2, y2) = tri[:, 0, :2].T, tri[:, 1, :2].T, tri[:, 2, :2].T
+        det = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+        # Walls seen edge-on from above cannot be crossed by a vertical ray.
+        keep = np.flatnonzero(np.abs(det) > 1e-12)
+        self.tri, self.det = tri[keep], det[keep]
+        low, high = self.tri[:, :, :2].min(axis=1), self.tri[:, :, :2].max(axis=1)
+        self.origin = low.min(axis=0) if len(keep) else np.zeros(2)
+        extent = float((high.max(axis=0) - self.origin).max()) if len(keep) else 1.0
+        self.cell = max(float(np.median((high - low).max(axis=1))) if len(keep) else 1.0, extent / 512, 1e-3)
+        first = np.floor((low - self.origin) / self.cell).astype(np.int64)
+        last = np.floor((high - self.origin) / self.cell).astype(np.int64)
+        across, along = last[:, 0] - first[:, 0] + 1, last[:, 1] - first[:, 1] + 1
+        counts = across * along
+        owner = np.repeat(np.arange(len(keep)), counts)
+        local = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+        cx = first[owner, 0] + local % across[owner]
+        cy = first[owner, 1] + local // across[owner]
+        order = np.argsort(self._key(cx, cy), kind="stable")
+        self.keys, self.owner = self._key(cx, cy)[order], owner[order]
+
+    @staticmethod
+    def _key(cx: np.ndarray, cy: np.ndarray) -> np.ndarray:
+        return cx * (1 << 32) + cy
+
+    def heights_above(self, points: np.ndarray) -> np.ndarray:
+        """For each (x, y, z) point, the distance up to the next surface (inf if none)."""
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        result = np.full(len(points), np.inf)
+        cells = np.floor((points[:, :2] - self.origin) / self.cell).astype(np.int64)
+        keys = self._key(cells[:, 0], cells[:, 1])
+        start, stop = np.searchsorted(self.keys, keys, "left"), np.searchsorted(self.keys, keys, "right")
+        counts = stop - start
+        if not counts.sum():
+            return result
+        ray = np.repeat(np.arange(len(points)), counts)
+        candidate = self.owner[np.repeat(start, counts) + np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)]
+        t, d = self.tri[candidate], self.det[candidate]
+        px, py, pz = points[ray, 0], points[ray, 1], points[ray, 2]
         a = ((t[:, 1, 1] - t[:, 2, 1]) * (px - t[:, 2, 0]) + (t[:, 2, 0] - t[:, 1, 0]) * (py - t[:, 2, 1])) / d
         b = ((t[:, 2, 1] - t[:, 0, 1]) * (px - t[:, 2, 0]) + (t[:, 0, 0] - t[:, 2, 0]) * (py - t[:, 2, 1])) / d
         c = 1 - a - b
-        inside = (a >= -1e-9) & (b >= -1e-9) & (c >= -1e-9)
         z = a * t[:, 0, 2] + b * t[:, 1, 2] + c * t[:, 2, 2]
-        above = z[inside & (z > pz + 1e-4)]
-        if len(above):
-            result[index] = above.min() - pz
-    return result
+        hit = (a >= -1e-9) & (b >= -1e-9) & (c >= -1e-9) & (z > pz + 1e-4)
+        np.minimum.at(result, ray[hit], z[hit] - pz[hit])
+        return result
 
 
 def _anchor_pixels(segments: np.ndarray, origin: tuple[float, float], shape: tuple[int, int], pitch: float) -> np.ndarray:
@@ -233,7 +266,7 @@ def _anchor_pixels(segments: np.ndarray, origin: tuple[float, float], shape: tup
     return mask
 
 
-def _undersides(mesh: PrintMesh, flat: np.ndarray, adjacency: np.ndarray, shared_edges: np.ndarray) -> list[Underside]:
+def _undersides(mesh: PrintMesh, flat: np.ndarray, adjacency: np.ndarray, shared_edges: np.ndarray, rays: _VerticalRays) -> list[Underside]:
     """Each flat underside above the bed, measured on a raster: how far its points are from the
     edges where material below holds it, and the material above it, sampled with vertical rays."""
     found = []
@@ -284,7 +317,7 @@ def _undersides(mesh: PrintMesh, flat: np.ndarray, adjacency: np.ndarray, shared
             kind, span = "island", None
         middle = (origin[0] + (col + 0.5) * pitch, origin[1] + (row + 0.5) * pitch, z)
         order = np.argsort(-mesh.areas[group])[:24]
-        above = _heights_above(mesh, np.vstack([middle, mesh.triangles[group][order].mean(axis=1)]))
+        above = rays.heights_above(np.vstack([middle, mesh.triangles[group][order].mean(axis=1)]))
         thickness = round(float(above.min()), 2) if np.isfinite(above).any() else None
         found.append(
             Underside(kind, round(z, 2), area, None if span is None else round(span, 2), thickness, _round(mesh.model_point(middle)))
@@ -311,48 +344,83 @@ def _layer_heights(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.nd
     return centres[sorted(chosen)]
 
 
+def _union(a: Rect, b: Rect) -> Rect:
+    return Rect(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1))
+
+
+def _thin_places(mesh: PrintMesh, z: float, pitch: float, limit: float, limit_px: float, window: int) -> list[tuple[float, tuple[float, float], Rect]]:
+    """Places in the outline at height z thinner than the limit: pixels with no point deeper than half
+    the limit nearby, in groups at least about as long as the limit. Each comes with its thickness,
+    its deepest point (on the material, where the thickness is measured) and its outline's box."""
+    segments = _section(mesh, z)
+    if not len(segments):
+        return []
+    mask, origin = _raster(segments, pitch)
+    distance = ndimage.distance_transform_edt(mask)
+    thin = mask & (ndimage.maximum_filter(distance, size=window) < (limit_px + 1) / 2)
+    if not thin.any():
+        return []
+    labels, _ = ndimage.label(thin, structure=np.ones((3, 3)))
+    pixels = np.flatnonzero(thin)
+    label = labels.ravel()[pixels]
+    depth = distance.ravel()[pixels]
+    rows, cols = np.divmod(pixels, thin.shape[1])
+    sizes = np.bincount(label)
+    count = len(sizes)
+    order = np.lexsort((depth, label))
+    deepest = np.zeros(count, dtype=np.int64)
+    deepest[label[order]] = order  # the last write per label is its deepest pixel
+    low_rows, high_rows = np.full(count, thin.shape[0]), np.zeros(count, dtype=np.int64)
+    low_cols, high_cols = np.full(count, thin.shape[1]), np.zeros(count, dtype=np.int64)
+    np.minimum.at(low_rows, label, rows)
+    np.maximum.at(high_rows, label, rows)
+    np.minimum.at(low_cols, label, cols)
+    np.maximum.at(high_cols, label, cols)
+
+    def x(col) -> float:
+        return origin[0] + (float(col) + 0.5) * pitch
+
+    def y(row) -> float:
+        return origin[1] + (float(row) + 0.5) * pitch
+
+    places = []
+    for index in np.flatnonzero(sizes * pitch * pitch >= limit * limit):
+        pixel = deepest[index]
+        thickness = max(2 * float(depth[pixel]) - 1, 1) * pitch
+        box = Rect(x(low_cols[index]), y(low_rows[index]), x(high_cols[index]), y(high_rows[index]))
+        places.append((thickness, (x(cols[pixel]), y(rows[pixel])), box))
+    return places
+
+
 def _thin_walls(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndarray) -> tuple[list[ThinWall], dict]:
-    """Walls thinner than two line widths in sampled layer outlines: pixels with no point deeper
-    than half that width nearby, in groups at least about as long as the limit."""
+    """Walls thinner than two line widths in sampled layer outlines, grouped through consecutive
+    sampled layers."""
     limit = settings.min_wall_mm
     width, depth, _ = mesh.size
     pitch = max(settings.line_width / 4, math.sqrt(float(width * depth) / WALL_PIXELS))
     limit_px = limit / pitch
     window = 2 * math.ceil(limit_px / 2) + 1
     heights = _layer_heights(mesh, settings, flat_heights)
-    findings: list[tuple[float, float, float, float, float]] = []
-    for z in heights:
-        segments = _section(mesh, float(z))
-        if not len(segments):
-            continue
-        mask, origin = _raster(segments, pitch)
-        distance = ndimage.distance_transform_edt(mask)
-        thin = mask & (ndimage.maximum_filter(distance, size=window) < (limit_px + 1) / 2)
-        if not thin.any():
-            continue
-        labels, _ = ndimage.label(thin, structure=np.ones((3, 3)))
-        pixels = np.flatnonzero(thin)
-        label = labels.ravel()[pixels]
-        rows, cols = np.divmod(pixels, thin.shape[1])
-        sizes = np.bincount(label)
-        deepest = np.zeros(len(sizes))
-        np.maximum.at(deepest, label, distance.ravel()[pixels])
-        centre_rows = np.bincount(label, weights=rows) / np.maximum(sizes, 1)
-        centre_cols = np.bincount(label, weights=cols) / np.maximum(sizes, 1)
-        for index in np.flatnonzero(sizes * pitch * pitch >= limit * limit):
-            thickness = max(2 * float(deepest[index]) - 1, 1) * pitch
-            x = origin[0] + (centre_cols[index] + 0.5) * pitch
-            y = origin[1] + (centre_rows[index] + 0.5) * pitch
-            findings.append((thickness, float(z), x, y, float(sizes[index])))
     clusters: list[dict] = []
-    for thickness, z, x, y, _ in sorted(findings, key=lambda item: item[1]):
-        cluster = next((c for c in clusters if math.hypot(c["x"] - x, c["y"] - y) <= 2.0), None)
-        if cluster is None:
-            clusters.append({"x": x, "y": y, "z": [z, z], "thickness": thickness, "at": (x, y, z)})
-            continue
-        cluster["z"][1] = z
-        if thickness < cluster["thickness"]:
-            cluster.update(thickness=thickness, at=(x, y, z))
+    active: list[dict] = []
+    for z in heights:
+        found = _thin_places(mesh, float(z), pitch, limit, limit_px, window)
+        # A place continues a group only from the sampled layer just below, where its outline overlaps.
+        touched: list[dict] = []
+        for thickness, at, box in found:
+            cluster = next((c for c in active if box.overlaps(c["box"].grown(pitch))), None)
+            if cluster is None:
+                cluster = {"z": [float(z), float(z)], "thickness": thickness, "at": (*at, float(z))}
+                clusters.append(cluster)
+            cluster["z"][1] = float(z)
+            if thickness < cluster["thickness"]:
+                cluster.update(thickness=thickness, at=(*at, float(z)))
+            cluster["next"] = box if cluster not in touched else _union(cluster["next"], box)
+            if cluster not in touched:
+                touched.append(cluster)
+        for cluster in touched:
+            cluster["box"] = cluster.pop("next")
+        active = touched
     # A cluster stands for the layers between its samples, so add one sampling step to its extent.
     step = float(np.median(np.diff(heights))) if len(heights) > 1 else settings.layer_height
     walls = [
@@ -378,12 +446,12 @@ def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationRe
     tilt = np.degrees(np.arcsin(np.clip(-normals[:, 2], -1.0, 1.0)))
     on_bed = (normals[:, 2] < -math.cos(math.radians(FLAT_DEG))) & (z_high <= ON_BED_MM)
     bed_islands = _regions(mesh, on_bed, adjacency)
-    lifted = downward & ~on_bed & (tilt > REVIEW_TILT_DEG) & (z_low > ON_BED_MM) & (z_low <= LIFTED_MM)
     over = downward & ~on_bed
-    needs = over & (tilt > 90.0 - settings.support_threshold_deg)
+    needs = over & (tilt > 90.0 - settings.support_threshold_deg + TILT_TOLERANCE_DEG)
     flat = over & (tilt > 90.0 - FLAT_DEG)
+    lifted = flat & (z_low > ON_BED_MM) & (z_low <= LIFTED_MM)
     flat_heights = z_low[(np.abs(normals[:, 2]) > math.cos(math.radians(FLAT_DEG)))]
-    undersides = _undersides(mesh, flat, adjacency, shared_edges)
+    undersides = _undersides(mesh, flat, adjacency, shared_edges, _VerticalRays(mesh))
     walls, wall_check = _thin_walls(mesh, settings, flat_heights)
     report = OrientationReport(
         size_mm=_round(mesh.size),
@@ -391,7 +459,7 @@ def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationRe
         bed_contact_mm2=round(float(areas[on_bed].sum()), 2),
         bed_contact_islands=len(bed_islands),
         lifted_near_bed=_regions(mesh, lifted, adjacency)[:REPORTED],
-        overhang_review_mm2=round(float(areas[over & (tilt > REVIEW_TILT_DEG)].sum()), 2),
+        overhang_review_mm2=round(float(areas[over & (tilt > REVIEW_TILT_DEG + TILT_TOLERANCE_DEG)].sum()), 2),
         needs_support_mm2=round(float(areas[needs].sum()), 2),
         support_regions=_regions(mesh, needs, adjacency)[:REPORTED],
         undersides=undersides[:REPORTED],
