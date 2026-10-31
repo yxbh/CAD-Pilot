@@ -151,15 +151,16 @@ def _number(where: str, value: object) -> float:
     return float(value)
 
 
-def _measurement(where: str, data: object) -> Measurement:
+def _measurement(where: str, kind: str, data: object) -> Measurement:
     if not isinstance(data, Mapping):
         raise ProfileError(f"{where} must be an object with {', '.join(sorted(MEASUREMENT_KEYS))}")
     _unknown(where, data, MEASUREMENT_KEYS)
     missing = sorted(MEASUREMENT_KEYS - set(data))
     if missing:
         raise ProfileError(
-            f"{where}: missing {', '.join(missing)}. save-compensation records them from the coupon's project; save the "
-            "coupon's result again with it (see the cad skill's references/print.md)"
+            f"{where}: missing {', '.join(missing)}, which every measurement records from its coupon's project so that "
+            f"projects can be checked against it. Delete this \"{kind}\" entry from the file and measure it again (see "
+            "the cad skill's references/print.md, Hole and contour compensation)"
         )
     mm = _number(f"{where} mm", data["mm"])
     if abs(mm) >= MAX_COMPENSATION_MM:
@@ -184,7 +185,7 @@ def _compensation(where: str, data: object) -> dict[str, dict[str, Measurement]]
         if not isinstance(kinds, Mapping):
             raise ProfileError(f"{where} {printer!r} must be an object with hole and/or contour")
         _unknown(f"{where} {printer!r}", kinds, set(COMPENSATION_SETTINGS))
-        result[printer] = {kind: _measurement(f"{where} {printer!r} {kind}", value) for kind, value in kinds.items()}
+        result[printer] = {kind: _measurement(f"{where} {printer!r} {kind}", kind, value) for kind, value in kinds.items()}
     return result
 
 
@@ -274,7 +275,7 @@ def load_profile(overrides: Mapping | None = None, *, path: Path = PROFILE_PATH)
                 "profile or the BAMBU_STUDIO environment variable"
             )
         _unknown("project print settings", overrides, PROJECT_KEYS)
-    return parse_profile(_merge(dict(personal), overrides or {}), where=str(path) if not overrides else "print profile with project overrides")
+    return parse_profile(_merge(dict(personal), overrides or {}), where=str(path) if not overrides else f"{path} with project overrides")
 
 
 def record_compensation(filament: str, printer: str, measurements: Mapping[str, Measurement], *, write: bool, path: Path = PROFILE_PATH) -> PrintProfile:
