@@ -5,14 +5,13 @@ from pathlib import Path
 
 from common.assembly_spec import REPO_ROOT, find_step_path, resolve_cad_source_path
 from common.cad_ref_syntax import normalize_cad_path, parse_cad_tokens
+from common.cache import cache_path, prune, touch
 from common.glb_topology import read_step_topology_bundle_from_glb, read_step_topology_manifest_from_glb
-from common.render import existing_part_glb_path, part_glb_path, sha256_file
-from common.selector_types import SelectorBundle
+from common.render import existing_part_glb_path, sha256_file
+from common.selector_types import SelectorBundle, SelectorProfile
 
 
 STEP_SUFFIXES = (".step", ".stp")
-REGENERATE_STEP_COMMAND = "python scripts/step"
-REGENERATE_STEP_PROMPT = "Regenerate STEP artifacts with the following command using the CAD skill:"
 
 
 class CadRefError(RuntimeError):
@@ -52,38 +51,7 @@ class StepTopologyArtifact:
     selector_bundle: SelectorBundle | None = None
 
 
-class StepTopologyArtifactError(CadRefError):
-    def __init__(
-        self,
-        *,
-        code: str,
-        message: str,
-        cad_path: str,
-        step_path: Path,
-        glb_path: Path,
-        regenerate_command: str,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.cad_path = cad_path
-        self.step_path = step_path
-        self.glb_path = glb_path
-        self.regenerate_command = regenerate_command
-
-    def to_error(self) -> dict[str, object]:
-        return {
-            "code": self.code,
-            "message": str(self),
-            "cadPath": self.cad_path,
-            "stepPath": _relative_to_repo(self.step_path),
-            "glbPath": _relative_to_repo(self.glb_path),
-            "regenerateCommand": self.regenerate_command,
-        }
-
-
 def cad_ref_error_payload(exc: CadRefError) -> dict[str, object]:
-    if isinstance(exc, StepTopologyArtifactError):
-        return exc.to_error()
     return {"message": str(exc)}
 
 
@@ -177,108 +145,82 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
     raise CadRefError(f"CAD ref '{cad_path}' is not STEP-backed.")
 
 
-def validate_step_topology_artifact(
-    target: ResolvedStepTarget,
-    *,
-    glb_path: Path | None = None,
-    require_selector: bool = False,
-) -> StepTopologyArtifact:
-    resolved_glb_path = glb_path or existing_part_glb_path(target.step_path) or part_glb_path(target.step_path)
-    if not resolved_glb_path.is_file():
-        raise _topology_artifact_error(
-            code="missing_glb",
-            reason="STEP topology validation requires the generated GLB artifact, but it is missing",
-            cad_path=target.cad_path,
-            kind=target.kind,
-            source_path=target.source_path,
-            step_path=target.step_path,
-            glb_path=resolved_glb_path,
-        )
+TOPOLOGY_CACHE = "topology"
 
-    manifest = read_step_topology_manifest_from_glb(resolved_glb_path)
-    if manifest is None:
-        raise _topology_artifact_error(
-            code="missing_step_topology",
-            reason="STEP topology validation requires readable STEP_topology indexView in the GLB",
-            cad_path=target.cad_path,
-            kind=target.kind,
-            source_path=target.source_path,
-            step_path=target.step_path,
-            glb_path=resolved_glb_path,
-        )
+
+def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False) -> StepTopologyArtifact:
+    """The STEP's face and edge topology, for any STEP file.
+
+    A current sidecar from ``scripts/step`` is used as it is. Any other STEP,
+    or one whose sidecar is missing or stale, is read and indexed into the
+    user cache under its content hash, so the next call is a file read.
+    Nothing is written beside the STEP.
+    """
+    step_hash = sha256_file(target.step_path)
+    sidecar = existing_part_glb_path(target.step_path)
+    cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.glb")
+    for glb_path in (sidecar, cached):
+        artifact = _current_topology(target, glb_path, step_hash, require_selector=require_selector)
+        if artifact is not None:
+            if glb_path == cached:
+                touch(cached)
+            return artifact
     try:
-        schema_version = int(manifest.get("schemaVersion") or 0)
-    except (TypeError, ValueError):
-        schema_version = 0
-    if schema_version != 1:
-        raise _topology_artifact_error(
-            code="unsupported_step_topology",
-            reason="STEP topology validation requires STEP_topology schemaVersion 1 in the GLB",
-            cad_path=target.cad_path,
-            kind=target.kind,
-            source_path=target.source_path,
-            step_path=target.step_path,
-            glb_path=resolved_glb_path,
-        )
-    manifest_cad_ref = _manifest_cad_ref(manifest)
-    normalized_manifest_cad_ref = normalize_cad_path(manifest_cad_ref) if manifest_cad_ref else None
-    normalized_target_cad_path = normalize_cad_path(target.cad_path)
-    if (
-        normalized_manifest_cad_ref
-        and normalized_target_cad_path
-        and normalized_manifest_cad_ref != normalized_target_cad_path
-    ):
-        raise _topology_artifact_error(
-            code="cad_ref_mismatch",
-            reason=f"STEP topology GLB is for CAD ref {manifest_cad_ref!r}, not {target.cad_path!r}",
-            cad_path=target.cad_path,
-            kind=target.kind,
-            source_path=target.source_path,
-            step_path=target.step_path,
-            glb_path=resolved_glb_path,
-        )
-    step_hash = str(manifest.get("stepHash") or "").strip()
-    if not step_hash or step_hash != sha256_file(target.step_path):
-        raise _topology_artifact_error(
-            code="stale_step_topology",
-            reason="GLB STEP_topology is stale for the current STEP file",
-            cad_path=target.cad_path,
-            kind=target.kind,
-            source_path=target.source_path,
-            step_path=target.step_path,
-            glb_path=resolved_glb_path,
-        )
+        _build_topology(target, cached)
+    except Exception as exc:
+        raise CadRefError(f"Could not read the STEP file {_relative_to_repo(target.step_path)}: {exc}") from exc
+    prune(TOPOLOGY_CACHE, keep=cached)
+    artifact = _current_topology(target, cached, step_hash, require_selector=require_selector)
+    if artifact is None:
+        raise CadRefError(f"Could not index the STEP file {_relative_to_repo(target.step_path)}.")
+    return artifact
 
-    selector_bundle = None
-    if require_selector:
-        selector_bundle = read_step_topology_bundle_from_glb(resolved_glb_path)
-        if selector_bundle is None:
-            raise _topology_artifact_error(
-                code="missing_selector_topology",
-                reason="STEP topology validation requires readable STEP_topology selectorView in the GLB",
-                cad_path=target.cad_path,
-                kind=target.kind,
-                source_path=target.source_path,
-                step_path=target.step_path,
-                glb_path=resolved_glb_path,
-            )
 
+def _current_topology(
+    target: ResolvedStepTarget,
+    glb_path: Path | None,
+    step_hash: str,
+    *,
+    require_selector: bool,
+) -> StepTopologyArtifact | None:
+    if glb_path is None or not glb_path.is_file():
+        return None
+    manifest = read_step_topology_manifest_from_glb(glb_path)
+    if manifest is None or str(manifest.get("schemaVersion")) != "1" or manifest.get("stepHash") != step_hash:
+        return None
+    selector_bundle = read_step_topology_bundle_from_glb(glb_path) if require_selector else None
+    if require_selector and selector_bundle is None:
+        return None
     return StepTopologyArtifact(
         cad_path=target.cad_path,
         kind=target.kind,
         source_path=target.source_path,
         step_path=target.step_path,
-        glb_path=resolved_glb_path,
+        glb_path=glb_path,
         manifest=manifest,
         selector_bundle=selector_bundle,
     )
 
 
+def _build_topology(target: ResolvedStepTarget, glb_path: Path) -> None:
+    from common.atomic_replace import replacing
+    from common.glb import write_scene_glb
+    from common.step_scene import extract_selectors_from_scene, load_step_scene
+
+    scene = load_step_scene(target.step_path)
+    bundle = extract_selectors_from_scene(scene, cad_ref=target.cad_path, profile=SelectorProfile.ARTIFACT)
+    with replacing(glb_path) as temp_path:
+        write_scene_glb(scene, temp_path, selector_bundle=bundle, entry_kind=target.kind)
+
+
 def _direct_step_path(cad_path: str) -> Path | None:
-    for suffix in STEP_SUFFIXES:
-        candidate = (REPO_ROOT / f"{cad_path}{suffix}").resolve()
-        if candidate.is_file():
-            return candidate
+    # A leading "/" names an absolute path, or, when nothing is there, a path from the design root.
+    spellings = (cad_path, cad_path.lstrip("/")) if cad_path.startswith("/") else (cad_path,)
+    for spelling in spellings:
+        for suffix in STEP_SUFFIXES:
+            candidate = (REPO_ROOT / f"{spelling}{suffix}").resolve()
+            if candidate.is_file():
+                return candidate
     return None
 
 
@@ -290,33 +232,6 @@ def _raw_step_path(target: str) -> Path | None:
         return None
     resolved = path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
     return resolved if resolved.is_file() else None
-
-
-def _topology_artifact_error(
-    *,
-    code: str,
-    reason: str,
-    cad_path: str,
-    kind: str,
-    source_path: Path,
-    step_path: Path,
-    glb_path: Path,
-) -> StepTopologyArtifactError:
-    return StepTopologyArtifactError(
-        code=code,
-        cad_path=cad_path,
-        step_path=step_path,
-        glb_path=glb_path,
-        regenerate_command=REGENERATE_STEP_COMMAND,
-        message=(
-            f"{reason}: {_relative_to_repo(glb_path)}.\n"
-            f"{REGENERATE_STEP_PROMPT}"
-        ),
-    )
-
-
-def _manifest_cad_ref(manifest: dict[str, object]) -> str:
-    return str(manifest.get("cadRef") or manifest.get("cadPath") or "").strip()
 
 
 def _cad_path_lookup_candidates(cad_path: str) -> tuple[str, ...]:

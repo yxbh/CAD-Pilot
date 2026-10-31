@@ -85,6 +85,22 @@ def export_assembly_glb_from_scene(
     )
 
 
+def write_scene_glb(
+    scene: LoadedStepScene,
+    target_path: Path,
+    *,
+    selector_bundle: SelectorBundle,
+    entry_kind: str,
+) -> Path:
+    """A topology GLB for a STEP read from disk, written wherever the caller keeps it."""
+    return _HierarchicalGlbWriter(scene, color=None).write(
+        target_path,
+        selector_bundle=selector_bundle,
+        include_selector_topology=True,
+        entry_kind=entry_kind,
+    )
+
+
 def write_empty_glb(target_path: Path) -> Path:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     json_chunk = b'{"asset":{"version":"2.0"},"scenes":[{"nodes":[]}],"scene":0,"nodes":[]}'

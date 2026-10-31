@@ -1,5 +1,6 @@
 import contextlib
 import io
+import os
 import shutil
 import sys
 import unittest
@@ -565,68 +566,35 @@ class InspectRefsTests(unittest.TestCase):
         selection = result["tokens"][0]["selections"][0]
         self.assertEqual(["e1", "e2"], selection["detail"]["adjacentEdgeSelectors"])
 
-    def test_missing_glb_topology_is_an_inspect_error(self) -> None:
-        result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")
+    def test_step_without_current_topology_is_indexed_into_the_user_cache(self) -> None:
+        cases = {
+            "no sidecar": {},
+            "stale sidecar": {"current_hash": "new-step-hash"},
+            "unreadable sidecar": {"include_index": False},
+            "sidecar without selectors": {"include_selector": False},
+        }
+        for name, options in cases.items():
+            with self.subTest(name):
+                patch = (
+                    self._mock_glb_topology(_refs_manifest(self.cad_ref), **options)
+                    if options
+                    else mock.patch.object(step_targets, "find_step_path", return_value=self.step_path)
+                )
+                with patch, mock.patch.object(step_targets, "_build_topology") as build:
+                    result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}#f1]")
+                build.assert_called_once()
+                target, glb_path = build.call_args.args
+                self.assertEqual(self.step_path, target.step_path)
+                self.assertEqual(Path(os.environ["CAD_PILOT_CACHE"]) / "topology", glb_path.parent)
+                # The stand-in builder wrote nothing, so the result is an error, not a stale answer.
+                self.assertFalse(result["ok"])
+                self.assertIn("Could not index", result["errors"][0]["message"])
 
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("missing_glb", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
-        self.assertNotIn("scripts.step", error["message"])
-        self.assertIn("regenerateCommand", error)
-        self.assertEqual("python scripts/step", error["regenerateCommand"])
-
-    def test_missing_selector_topology_is_an_inspect_error(self) -> None:
-        with self._mock_glb_topology(_refs_manifest(self.cad_ref), include_selector=False):
-            result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}#f1]")
-
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("missing_selector_topology", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
-
-    def test_missing_step_topology_is_an_inspect_error(self) -> None:
-        with self._mock_glb_topology(_summary_manifest(self.cad_ref), include_index=False):
-            result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")
-
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("missing_step_topology", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
-
-    def test_unsupported_step_topology_is_an_inspect_error(self) -> None:
-        self._touch_glb()
-        manifest = {**_summary_manifest(self.cad_ref), "schemaVersion": 2}
-
-        with mock.patch.object(step_targets, "find_step_path", return_value=self.step_path), mock.patch.object(
-            step_targets,
-            "read_step_topology_manifest_from_glb",
-            return_value=manifest,
-        ):
-            result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")
-
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("unsupported_step_topology", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
-
-    def test_stale_glb_topology_is_an_inspect_error(self) -> None:
-        with self._mock_glb_topology(_refs_manifest(self.cad_ref), current_hash="new-step-hash"):
-            result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")
-
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("stale_step_topology", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
-
-    def test_cad_ref_mismatch_is_an_inspect_error(self) -> None:
+    def test_sidecar_for_another_cad_ref_is_used_for_the_same_step_bytes(self) -> None:
         with self._mock_glb_topology({**_refs_manifest("other/ref"), "stepHash": "step-hash-123"}):
             result = refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")
 
-        self.assertFalse(result["ok"])
-        error = result["errors"][0]
-        self.assertEqual("cad_ref_mismatch", error["code"])
-        self.assertIn("\nRegenerate STEP artifacts with the following command using the CAD skill:", error["message"])
+        self.assertTrue(result["ok"])
 
     def test_non_leaf_occurrence_detail_reports_children(self) -> None:
         with self._mock_glb_topology(_refs_manifest(self.cad_ref)):

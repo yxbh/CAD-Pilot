@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import re
 import runpy
 import shutil
@@ -126,12 +127,14 @@ def test_cli_exports_reopen(tmp_path, output_directory):
     destination.mkdir(parents=True, exist_ok=True)
     step_path = (Path(output_directory) / "plate.step").as_posix()
     scripts = ROOT / ".agents/skills/cad/scripts"
+    env = {**os.environ, "CAD_PILOT_CACHE": str(tmp_path / "cache")}
     built = subprocess.run(
         [
             sys.executable, str(scripts / "step"), "models/plate.py",
             "-o", step_path, "--stl", "plate.stl", "--3mf", "plate.3mf",
         ],
         cwd=project,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -144,6 +147,7 @@ def test_cli_exports_reopen(tmp_path, output_directory):
             "--facts", "--planes", "--positioning",
         ],
         cwd=project,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

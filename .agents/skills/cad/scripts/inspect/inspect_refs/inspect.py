@@ -23,7 +23,7 @@ from common.step_targets import (
     entry_target_from_target,
     resolve_step_target,
     step_path_from_target,
-    validate_step_topology_artifact,
+    step_topology,
 )
 
 from . import analysis
@@ -210,10 +210,7 @@ def _load_step_context(
     *,
     profile: SelectorProfile,
 ) -> EntryContext:
-    artifact = validate_step_topology_artifact(
-        target,
-        require_selector=(profile != SelectorProfile.SUMMARY),
-    )
+    artifact = step_topology(target, require_selector=(profile != SelectorProfile.SUMMARY))
     if artifact.selector_bundle is None:
         manifest = artifact.manifest
         selector_index = None

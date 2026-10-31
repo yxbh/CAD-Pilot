@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,7 @@ class IsolatedCadRoots:
         self.cad_root.mkdir(parents=True, exist_ok=True)
 
         patches = [
+            mock.patch.dict(os.environ, {"CAD_PILOT_CACHE": str(self.root / "cache")}),
             mock.patch.object(assembly_spec, "CAD_ROOT", self.cad_root),
             mock.patch.object(catalog, "CAD_ROOT", self.cad_root),
             mock.patch.object(render, "CAD_ROOT", self.cad_root),

@@ -30,14 +30,14 @@ Sidecar paths must be relative `.stl` or `.3mf` paths and are resolved beside th
 
 ## Mesh tolerance
 
-Use these flags when the default mesh density is wrong for the part:
+Meshes are fine by default: every edge is divided until the mesh is within 0.006 of that edge's size of the true surface, and within 0.1 radians of its direction. The two flags can only make meshes finer. A value at or above the default changes nothing, so a looser tolerance cannot shrink a file:
 
 ```bash
---mesh-tolerance FLOAT
---mesh-angular-tolerance FLOAT
+--mesh-tolerance FRACTION    # below 0.006, such as 0.0004 for small curved parts
+--mesh-angular-tolerance RAD # below 0.1
 ```
 
-Use tighter tolerances for small curved parts or visual fidelity. Use looser tolerances for large simple geometry when file size matters.
+Use them when facets show on small curved features in the slicer or in visual review.
 
 ## Workflow
 
@@ -50,8 +50,8 @@ Example:
 ```bash
 python scripts/step models/bracket.py \
   --stl meshes/bracket.stl \
-  --mesh-tolerance 0.2 \
-  --mesh-angular-tolerance 0.2
+  --mesh-tolerance 0.002 \
+  --mesh-angular-tolerance 0.05
 
 python scripts/inspect refs models/bracket.step --facts --planes --positioning
 ```

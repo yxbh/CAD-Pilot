@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from common.atomic_replace import replacing
+from common.part_names import tree_names
 from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc, step_file_hash
 
 
@@ -146,7 +147,7 @@ def create_bin_xcaf_doc() -> Any:
     return doc
 
 
-def _create_bin_xcaf_doc(to_export: Any) -> Any:
+def _create_bin_xcaf_doc(to_export: Any, names: dict[int, str]) -> Any:
     from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
     from OCP.TopLoc import TopLoc_Location
     from build123d.exporters3d import (
@@ -192,7 +193,7 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
         return (float(rgb.Red()), float(rgb.Green()), float(rgb.Blue()), float(color.wrapped.Alpha()))
 
     def leaf_shape_for_definition(unlocated: object, shape: object) -> object:
-        signature = (color_signature(getattr(shape, "color", None)), getattr(shape, "label", None) or None)
+        signature = (color_signature(getattr(shape, "color", None)), names.get(id(shape)))
         bucket = leaf_variants.setdefault(hash(unlocated), [])
         for native_shape, variants in bucket:
             # IsEqual includes orientation (location is already stripped).
@@ -240,7 +241,7 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
             # colour down to its children, and STEPCAF writes a coloured
             # sub-assembly occurrence as a presentation with no items, which
             # readers report as a parse error.
-            set_label_name(definition_label, getattr(shape, "label", None))
+            set_label_name(definition_label, names.get(id(shape)))
             for child in children:
                 child_definition = shape_definition_for_tree(child)
                 child_location = shape_location(child)
@@ -254,7 +255,7 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
                     child_definition,
                     child_location,
                 )
-                set_label_name(child_component, getattr(child, "label", None))
+                set_label_name(child_component, names.get(id(child)))
                 if not getattr(child, "children", None):
                     set_label_color(child_component, getattr(child, "color", None))
             return definition_label
@@ -262,7 +263,7 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
         unlocated = leaf_shape_for_definition(shape_without_location(shape), shape)
         definition_label = shape_tool.AddShape(unlocated, False)
         shape_definitions[key] = definition_label
-        set_label_name(definition_label, getattr(shape, "label", None))
+        set_label_name(definition_label, names.get(id(shape)))
         set_label_color(definition_label, getattr(shape, "color", None))
         return definition_label
 
@@ -271,7 +272,7 @@ def _create_bin_xcaf_doc(to_export: Any) -> Any:
         shape_tool.UpdateAssemblies()
         return doc
 
-    shape_tool.AddShape(to_export.wrapped, is_assembly)
+    set_label_name(shape_tool.AddShape(to_export.wrapped, is_assembly), names.get(id(to_export)))
 
     for node in PreOrderIter(to_export):
         if not node.label and node.color is None:
@@ -379,9 +380,18 @@ def export_xcaf_doc_step_scene(
 
 
 def export_build123d_step_scene(to_export: Any, output_path: Path) -> LoadedStepScene:
-    doc = _create_bin_xcaf_doc(to_export)
-    return export_xcaf_doc_step_scene(
-        doc,
-        output_path,
-        label=getattr(to_export, "label", None),
+    """Write a build123d shape or labelled assembly tree; unlabelled parts get fallback names.
+
+    The scene's ``unlabelled_parts`` lists the names given to parts that had
+    no label, so the caller can say which ones need one.
+    """
+    names, unlabelled = tree_names(
+        to_export,
+        root_name=Path(output_path).stem,
+        children=lambda node: list(getattr(node, "children", None) or ()),
+        label=lambda node: getattr(node, "label", None),
     )
+    doc = _create_bin_xcaf_doc(to_export, names)
+    scene = export_xcaf_doc_step_scene(doc, output_path, label=names[id(to_export)])
+    scene.unlabelled_parts = tuple(unlabelled)
+    return scene
