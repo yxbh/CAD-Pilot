@@ -365,7 +365,7 @@ function PartMesh({ placement, resources, faults, origin, section, clippingPlane
   );
 }
 
-function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, background, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
@@ -374,7 +374,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
   const activeView = useRef(active);
   activeView.current = active;
   const { invalidateReport, assertCaptureReady } = useRenderReports({
-    model, state, amount, stepPosition, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
+    model, state, amount, stepPosition, sectionPosition, active, background: background ?? null, placements, resources, controller, fitted, contextLost, onRendered, onError,
   });
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
