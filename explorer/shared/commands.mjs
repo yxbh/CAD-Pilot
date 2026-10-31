@@ -4,7 +4,9 @@ import { STEP_MODES } from "./placement.mjs";
 import { MESH_UNITS, MESH_UP_AXES } from "./mesh.mjs";
 
 export const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
-const ids = { type: "array", items: { type: "string" }, maxItems: 500 };
+// The most part ids one command takes.
+export const MAX_PART_IDS = 500;
+const ids = { type: "array", items: { type: "string" }, maxItems: MAX_PART_IDS };
 const revision = { type: "integer", minimum: 0 };
 const reference = { type: "string", maxLength: 16384 };
 const vector = (description) => ({ type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description });

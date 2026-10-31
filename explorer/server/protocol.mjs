@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS, viewAngle } from "../shared/view-settings.mjs";
-import { commandDefinition } from "../shared/commands.mjs";
+import { commandDefinition, MAX_PART_IDS } from "../shared/commands.mjs";
 import {
   defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
 } from "../shared/section.mjs";
@@ -94,7 +94,7 @@ export function changeView(state, model, name, input = {}) {
     return id;
   };
   const ids = () => {
-    if (!Array.isArray(input.ids) || input.ids.length > 500) throw new PrototypeError("bad_selection", "Expected at most 500 part IDs");
+    if (!Array.isArray(input.ids) || input.ids.length > MAX_PART_IDS) throw new PrototypeError("bad_selection", `Expected at most ${MAX_PART_IDS} part IDs`);
     return [...new Set(input.ids.map(requireId))];
   };
   // Whether a reload kept the view is news only until the next view change.

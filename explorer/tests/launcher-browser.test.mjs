@@ -151,6 +151,11 @@ test("capture draws in the background into the project at any size and rejects o
   assert.deepEqual(await pngSize(path.join(project, "reviews", "view.png")), [1280, 800]);
   const small = (await explorer("capture", "reviews/small.png", "--size", "320x200", "--background", "#ffffff")).json();
   assert.deepEqual([small.width, small.height], [320, 200]);
+  // Each capture reports the camera that drew it, in the shape render and state use; one aspect, one framing.
+  const { camera } = captured.json();
+  assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
+  assert.ok(camera.viewHeight > 0);
+  assert.ok(Math.abs(small.camera.viewHeight - camera.viewHeight) < 1e-6 * camera.viewHeight, JSON.stringify([small.camera, camera]));
   assert.deepEqual(await pngSize(path.join(project, "reviews", "small.png")), [320, 200]);
   // Simultaneous captures take turns, each with its own size and backdrop.
   const [red, blue] = await Promise.all([

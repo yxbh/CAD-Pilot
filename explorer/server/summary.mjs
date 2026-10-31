@@ -55,7 +55,10 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "", 
   // Added files whose copy was gone from Explorer's storage and that could not be read again from the project.
   const dropped = state.droppedFiles ?? [];
   if (dropped.length) {
-    const how = (entry) => entry.file ? `${entry.name}: add it back with add_file file=${entry.file}` : `${entry.name}: it was uploaded, so upload it again`;
+    const how = (entry) => !entry.file ? `${entry.name}: it was uploaded, so upload it again`
+      : entry.reason === "missing" ? `${entry.name}: ${entry.file} is no longer in the project, so ask where it is now and add that with add_file`
+        : entry.reason === "changed" ? `${entry.name}: ${entry.file} has changed since it was added, and add_file file=${entry.file} would show what it holds now`
+          : `${entry.name}: add it back with add_file file=${entry.file}`;
     note = `Left out of the view because Explorer no longer has a copy (${dropped.map(how).join("; ")}). ${note}`.trim();
   }
   return {
