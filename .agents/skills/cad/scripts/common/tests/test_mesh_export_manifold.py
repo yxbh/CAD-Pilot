@@ -180,7 +180,7 @@ class MeshExportManifoldTests(unittest.TestCase):
 
     def problems(self, name: str) -> list[str]:
         """What the run reported about this fixture's solids; a report about none of the run's fixtures fails."""
-        lines = lines_naming(self.runs[name], list(FIXTURES))
+        lines = lines_naming(self.runs[name])
         problems = {model: [line for line in found if any(problem in line for problem in SOLID_PROBLEMS)] for model, found in lines.items()}
         self.assertEqual([], problems.get(None, []), "every report names its fixture")
         return problems.get(name, [])
@@ -208,9 +208,10 @@ class MeshExportManifoldTests(unittest.TestCase):
 
     def test_folded_handle_is_reported_but_still_exported(self) -> None:
         self.assertExported("teacup_folded")
-        (problem,) = self.problems("teacup_folded")
+        problems = self.problems("teacup_folded")
+        self.assertEqual(1, len(problems), problems)
         self.assertRegex(
-            problem,
+            problems[0],
             r"warning: teacup_folded/teacup_folded\.py is not a sound solid: \d+ self-intersections?, where its surfaces cross or fold",
         )
 

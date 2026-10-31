@@ -246,7 +246,7 @@ class StepSolidCheckTests(unittest.TestCase):
         # Only scripts/step's own reports: libraries a generator loads (fontconfig on Linux, for one) warn too.
         reports = {
             model: [line for line in lines if line.startswith(("[scripts/step] warning:", "[scripts/step] notice:"))]
-            for model, lines in lines_naming(run, [*MODELS, "handle_pair"]).items()
+            for model, lines in lines_naming(run).items()
         }
         self.assertEqual([], reports.get(None, []), "every report names its model")
         return reports.get(name, [])

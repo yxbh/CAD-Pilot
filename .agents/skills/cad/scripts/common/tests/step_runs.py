@@ -39,7 +39,7 @@ def generate(project: Path, names: list[str], *options: str) -> subprocess.Compl
         env=STRETCHED_BUDGETS,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=600 * len(names),
     )
 
 
@@ -53,8 +53,9 @@ def generate_by_options(project: Path, options: dict[str, tuple[str, ...]]) -> d
     return {name: run.result() for names, run in runs.items() for name in names}
 
 
-def lines_naming(run: subprocess.CompletedProcess, names: list[str]) -> dict[str, list[str]]:
-    """The run's report lines by the model each names, under None for lines that name none of ``names``."""
+def lines_naming(run: subprocess.CompletedProcess) -> dict[str | None, list[str]]:
+    """The run's report lines by the model each names, under None for lines that name none of the run's own models."""
+    names = [Path(arg).parent.name for arg in run.args[2:] if arg.endswith(".py")]
     lines = collections.defaultdict(list)
     for line in run.stderr.splitlines():
         lines[next((name for name in names if source(name) in line), None)].append(line)
