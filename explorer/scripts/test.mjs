@@ -53,8 +53,11 @@ if (options.values.list) {
 // running suites at the same time, so they must not rebuild into the same folder.
 if (!options.values["no-build"]) await buildExplorer();
 
-// With --durations, each run also reports its files' times (scripts/durations-reporter.mjs) and the file gets them all.
+// With --durations, each run also reports its files' times (scripts/durations-reporter.mjs). Core files run several at
+// a time, so a run's times are scaled to its wall-clock time: each file is recorded at the share of its shard's time it
+// accounts for, which is what the shards are balanced by.
 const reports = options.values.durations ? await mkdtemp(path.join(tmpdir(), "explorer-durations-")) : null;
+const walls = {};
 // A test that sets no timeout of its own fails after two minutes, so a hang names itself instead of holding a CI job
 // until the job's own limit.
 function run(name, files, concurrency) {
@@ -63,7 +66,9 @@ function run(name, files, concurrency) {
     "--test-reporter=spec", "--test-reporter-destination=stdout",
     "--test-reporter=./scripts/durations-reporter.mjs", `--test-reporter-destination=${path.join(reports, `${name}.json`)}`,
   ] : [];
+  const start = performance.now();
   const result = spawnSync(process.execPath, ["--test", "--test-timeout=120000", ...reporters, ...concurrency, ...files.map((file) => `tests/${file}`)], { cwd, stdio: "inherit" });
+  walls[name] = (performance.now() - start) / 1000;
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
@@ -79,11 +84,15 @@ const statuses = [
 ];
 if (reports) {
   const seconds = {};
-  // A run that was stopped may have left no report, or part of one; its exit status already fails the check.
-  for (const name of await readdir(reports)) {
+  for (const [name, wall] of Object.entries(walls)) {
+    let measured;
     try {
-      Object.assign(seconds, JSON.parse(await readFile(path.join(reports, name), "utf8")).seconds);
-    } catch {}
+      ({ seconds: measured } = JSON.parse(await readFile(path.join(reports, `${name}.json`), "utf8")));
+    } catch {
+      continue; // A run that was stopped may have left no report, or part of one; its exit status fails the check.
+    }
+    const total = Object.values(measured).reduce((sum, value) => sum + value, 0);
+    for (const [file, value] of Object.entries(measured)) seconds[file] = total ? (value * wall) / total : 0;
   }
   await writeFile(options.values.durations, `${JSON.stringify({ platform: process.platform, seconds })}\n`);
   await rm(reports, { recursive: true, force: true });
