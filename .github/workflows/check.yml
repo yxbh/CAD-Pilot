@@ -2,64 +2,50 @@ name: Check
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
-
-concurrency:
-  # A newer push supersedes a pull request's run. Every push to main is checked: each commit gets its own group,
-  # because a group keeps only one pending run and a third quick push would otherwise replace the second's.
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
     shell: bash
 
-# Each system runs its checks in several jobs: each runs a share of the Python test files and a share of the Explorer's,
-# both split by each file's measured time on that system's runners, so a run takes as long as its slowest job rather
-# than the sum. macOS runs five, as many macOS jobs as an account may run at once; Linux six; Windows, whose runners
-# are the slowest to set up and to draw in software, seven.
 jobs:
-  check:
-    name: check ${{ matrix.share }}/${{ matrix.shares }} (${{ matrix.os }})
+  measure:
+    name: measure (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
-        share: [1, 2, 3, 4, 5, 6, 7]
-        exclude:
-          - { os: macos-latest, share: 6 }
-          - { os: macos-latest, share: 7 }
-          - { os: ubuntu-latest, share: 7 }
-        include:
-          - { os: macos-latest, shares: 5 }
-          - { os: windows-latest, shares: 7 }
-          - { os: ubuntu-latest, shares: 6 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      # exec, so a cancelled run's signal reaches the check runner, which stops its stages and prints their output.
-      - run: exec node tools/check.mjs --share ${{ matrix.share }}/${{ matrix.shares }}
-      - if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: check-logs-${{ matrix.share }}-${{ matrix.os }}
-          path: .local/check/
-          include-hidden-files: true
-          if-no-files-found: ignore
-
-  # The one check branch protection requires: it passes only when every job above passed.
-  checks:
-    if: always()
-    needs: [check]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - run: |
-          echo "check: ${{ needs.check.result }}"
-          test "${{ needs.check.result }}" = success
+      - name: cores and bytecode state
+        run: |
+          uv run --no-sync python -c "import os, sys; print('cores', os.cpu_count(), 'dont_write', sys.dont_write_bytecode, os.environ.get('PYTHONDONTWRITEBYTECODE'))"
+          find .venv -name '*.pyc' | wc -l
+      - name: cold import build123d (writes bytecode)
+        run: time uv run --no-sync python -c "import build123d"
+      - name: warm import build123d
+        run: |
+          time uv run --no-sync python -c "import build123d"
+          time uv run --no-sync python -c "import build123d"
+      - name: four cold imports at once (fresh venv bytecode removed)
+        run: |
+          find .venv -name '__pycache__' -type d -prune -exec rm -rf {} +
+          time (for i in 1 2 3 4; do uv run --no-sync python -c "import build123d, trimesh, PIL.Image" & done; wait)
+      - name: four warm imports at once
+        run: time (for i in 1 2 3 4; do uv run --no-sync python -c "import build123d, trimesh, PIL.Image" & done; wait)
+      - name: compile all bytecode
+        run: |
+          find .venv -name '__pycache__' -type d -prune -exec rm -rf {} +
+          time uv sync --inexact --compile-bytecode
+      - name: warm import closure
+        run: |
+          find .venv -name '__pycache__' -type d -prune -exec rm -rf {} +
+          time uv run --no-sync python -c "import build123d, trimesh, ezdxf, PIL.Image, playwright.sync_api"
+      - name: explorer build
+        run: time node explorer/scripts/build.mjs
+      - name: cache-sized dist
+        run: du -sh explorer/dist
