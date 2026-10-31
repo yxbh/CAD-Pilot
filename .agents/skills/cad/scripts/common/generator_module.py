@@ -208,6 +208,10 @@ def missing_module_message(exc: ModuleNotFoundError, *, display_path: str) -> st
 
 def load_generator(script_path: Path, *, display_path: str | None = None) -> ModuleType:
     """The generator's module, freshly executed so module state never carries between reads."""
+    from common.occt_messages import occt_messages_to_stderr
+
+    # Design code may read a STEP through OCCT itself, before the workbench reads or writes any.
+    occt_messages_to_stderr()
     resolved = script_path.resolve()
     name = _module_name(resolved)
     module_spec = importlib.util.spec_from_file_location(name, resolved, loader=_SourceLoader(name, str(resolved)))

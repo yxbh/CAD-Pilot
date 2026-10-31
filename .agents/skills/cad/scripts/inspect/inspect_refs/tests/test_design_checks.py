@@ -197,7 +197,7 @@ class DesignChecksTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertIn(message, json.loads(result.stdout)["errors"][0]["message"])
 
-    def test_the_step_reader_s_complaints_go_to_stderr_not_before_the_json(self) -> None:
+    def test_the_step_reader_s_complaints_go_to_stderr_not_stdout(self) -> None:
         self.generate("box", NAMED_LIKE_ITS_FILE)
         step_text = (self.root / "out" / "box.step").read_text()
         broken, count = re.subn(r"(ADVANCED_FACE\('[^']*',\()#\d+", r"\g<1>#999999", step_text, count=1)
@@ -206,6 +206,11 @@ class DesignChecksTests(unittest.TestCase):
         result = self.run_tool("inspect", "parts", "broken.step")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertTrue(json.loads(result.stdout)["ok"])
+        self.assertIn("Unresolved Reference", result.stderr)
+        # A design that reads the STEP itself, before the workbench reads or writes one.
+        (self.root / "uses.py").write_text("from build123d import import_step\n\ndef gen_step():\n    return import_step('broken.step')\n")
+        result = self.run_tool("step", "uses.py", "-o", "out/uses.step")
+        self.assertNotIn("Unresolved Reference", result.stdout)
         self.assertIn("Unresolved Reference", result.stderr)
 
     def test_refs_to_a_step_inside_the_root_are_reported_from_the_root(self) -> None:

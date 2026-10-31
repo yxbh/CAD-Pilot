@@ -256,9 +256,10 @@ class KernelCheck:
             if message is None:
                 self._process.wait()
                 if finished < total:
-                    # Stdout can end before the stderr reader has taken the worker's last line, whatever it says.
+                    # Stdout can end before the stderr reader has taken the worker's last line, whatever it says. The exit
+                    # code goes with it, since that line can be one of OCCT's messages rather than the worker's reason.
                     self._stderr_reader.join(timeout=5)
-                    detail = self._stderr[-1] if self._stderr else f"exit code {self._process.returncode}"
+                    detail = f"exit code {self._process.returncode}" + (f": {self._stderr[-1]}" if self._stderr else "")
                     result.failure = f"the check stopped unexpectedly ({detail})"
                     result.unchecked = total - finished
                 return result
