@@ -7,6 +7,7 @@ from fnmatch import fnmatch
 from pathlib import Path, PurePosixPath
 
 from .metadata import GeneratorMetadata, normalize_mesh_numeric, parse_generator_metadata
+from .paths import relative_path
 
 
 REPO_ROOT = Path.cwd().resolve()
@@ -499,10 +500,8 @@ def _resolve_configured_artifact_path(
         if not isinstance(raw_value, str) or not raw_value.strip():
             raise CadSourceError(f"{_relative_to_repo(base_path)} {field_name} must be a non-empty string")
         value = raw_value.strip()
-        if "\\" in value:
-            raise CadSourceError(f"{_relative_to_repo(base_path)} {field_name} must use POSIX '/' separators")
-        pure = PurePosixPath(value)
-        if pure.is_absolute() or any(part in {"", "."} for part in pure.parts):
+        pure = relative_path(value)
+        if pure is None:
             raise CadSourceError(f"{_relative_to_repo(base_path)} {field_name} must be relative")
         resolved = (base_path.parent.resolve() / Path(*pure.parts)).resolve()
     suffix = resolved.suffix.lower()

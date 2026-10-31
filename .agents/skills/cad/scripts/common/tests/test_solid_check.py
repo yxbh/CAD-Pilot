@@ -241,7 +241,8 @@ class StepSolidCheckTests(unittest.TestCase):
         run = self.runs[name]
         self.assertEqual(0, run.returncode, run.stdout + run.stderr)
         self.assertTrue((self.project / f"{name}.step").is_file())
-        return [line for line in run.stderr.splitlines() if "warning:" in line or "notice:" in line]
+        # Only scripts/step's own reports: libraries a generator loads (fontconfig on Linux, for one) warn too.
+        return [line for line in run.stderr.splitlines() if line.startswith(("[scripts/step] warning:", "[scripts/step] notice:"))]
 
     def test_fold_found_on_the_written_step(self) -> None:
         problems = self.problems("lettered_block")

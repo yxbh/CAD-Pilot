@@ -52,7 +52,9 @@ def _load_source(path: Path):
     sys.path.insert(0, str(path.parent.resolve()))
     spec = importlib.util.spec_from_file_location(f"cad_explorer_sequence_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Compile the source itself: a cached .pyc is checked only against the source's whole-second mtime and its
+    # size, so an edit of the same length within a second would otherwise run the old code.
+    exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
     for name in ("gen_step", "gen_assembly"):
         if not callable(getattr(module, name, None)):
             raise SequenceError(f"{path} must define {name}()")

@@ -3,7 +3,9 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import sys
 import textwrap
 
 import pytest
@@ -157,3 +159,13 @@ def test_check_shapes_must_be_shapes(tmp_path):
     step.write_text("ISO-10303-21; END-ISO-10303-21;", encoding="utf-8")
     with pytest.raises(assembly.SequenceError, match="build123d shapes"):
         assembly.build_document(tmp_path / "source" / "design.py", step, False, 1.0)
+
+
+def test_an_edit_of_the_same_length_within_a_second_is_read(tmp_path, monkeypatch):
+    # A cached .pyc is matched on whole-second mtime and size, so loading must not reuse one.
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    source = tmp_path / "design.py"
+    for value in ("first", "later"):
+        source.write_text(f"def gen_step():\n    return {value!r}\n\ndef gen_assembly():\n    return {{}}\n", encoding="utf-8")
+        os.utime(source, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+        assert assembly._load_source(source).gen_step() == value
