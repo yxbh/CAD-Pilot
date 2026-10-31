@@ -40,13 +40,13 @@ runs:
       # No audit or funding requests: CI only needs the packages installed.
       run: npm --prefix explorer install --no-audit --no-fund
       shell: bash
-    # The built page, from the last job that built these sources with that day's packages: the build checks the stamp it
-    # leaves against its own inputs (explorer/scripts/incremental-build.mjs) and builds again if any differ, so the key
-    # only has to name them closely enough to be found.
+    # The built page, as the first job to build these sources with this package tree saved it: the build checks the stamp
+    # it leaves against its own inputs (explorer/scripts/incremental-build.mjs) and builds again if any differ, so the
+    # key only has to name them closely enough to be found.
     - uses: actions/cache@v6
       with:
         path: explorer/dist
-        key: explorer-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}-${{ hashFiles('explorer/index.html', 'explorer/tsconfig.json', 'explorer/vite.config.ts', 'explorer/src/**', 'explorer/shared/**', 'explorer/tests/*.test.ts') }}
+        key: explorer-dist-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/node_modules/.package-lock.json') }}-${{ hashFiles('explorer/index.html', 'explorer/package.json', 'explorer/tsconfig.json', 'explorer/vite.config.ts', 'explorer/scripts/incremental-build.mjs', 'explorer/src/**', 'explorer/shared/**', 'explorer/tests/*.test.ts') }}
     # The renderer and the browser scenarios launch only the headless shell, and the runner images already carry the
     # libraries it needs on Linux (install-deps adds only fonts there).
     - uses: actions/cache@v6
