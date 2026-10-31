@@ -87,7 +87,8 @@ export async function runStages(stages, { cwd, logs, github = Boolean(process.en
   const summary = await Promise.all(results.values());
   for (const [signal, handler] of handlers) process.removeListener(signal, handler);
   console.log("\nSummary");
-  for (const { name, status, detail } of summary) console.log(`  ${MARK[status]} ${name.padEnd(18)} ${detail}`);
+  const width = Math.max(18, ...summary.map(({ name }) => name.length));
+  for (const { name, status, detail } of summary) console.log(`  ${MARK[status]} ${name.padEnd(width)} ${detail}`);
   console.log(`Total ${seconds(start)}; stage logs in ${path.relative(cwd, logs) || logs}`);
   // An exit code rather than process.exit(), so piped output is flushed before the process ends.
   process.exitCode = interrupted ? SIGNAL_EXIT[interrupted] : summary.every((result) => result.status === "passed") ? 0 : 1;
