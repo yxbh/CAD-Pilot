@@ -13,6 +13,9 @@ runs:
       with:
         # Downloading the wheels from PyPI takes less time than restoring them from an Actions cache, and saving one.
         enable-cache: false
+        # uv's own cache beside the checkout, so it links rather than copies into .venv: on Windows runners the default
+        # cache folder is on a slower drive, which makes uv sync several times slower.
+        cache-local-path: ${{ runner.temp }}/uv-cache
         # The newest Python the CAD dependencies publish wheels for; a runner's default can be newer.
         python-version: "3.14"
     - run: uv sync
