@@ -57,7 +57,7 @@ def test_frames_come_from_the_file_its_format_or_its_size(tmp_path):
     small = binary_stl(tmp_path / "small.stl", BOX.vertices / 100, BOX.faces)
     assert mesh.load(small).frame["units"] == "m", "Under 2.5 units across reads as metres"
     assert mesh.load(small, units="mm").frame["units"] == "mm"
-    assert "units=" in mesh.load(small).frame["note"]
+    assert "Open it again with other units" in mesh.load(small).frame["note"]
     large = binary_stl(tmp_path / "large.stl", BOX.vertices, BOX.faces)
     assert mesh.load(large).frame["units"] == "mm"
     with pytest.raises(mesh.MeshError):
@@ -269,3 +269,8 @@ def test_sizes_by_part_and_unknown_parts(tmp_path, capsys):
     assert result["parts"][0]["volume"] == pytest.approx(6000)
     assert measure.main([str(path), "--part", "Missing", "size"]) == 1
     assert "Parts: Base, Lid" in capsys.readouterr().err
+    # Options may follow the measurement's name, and part names take * and ? as the viewer's patterns do.
+    assert [part["name"] for part in run(capsys, path, "size", "--part", "L?d")["parts"]] == ["Lid"]
+    assert sorted(part["name"] for part in run(capsys, path, "size", "--units", "mm", "--part", "*")["parts"]) == ["Base", "Lid"]
+    assert measure.main([str(path), "size", "--part", "[Lid]"]) == 1, "brackets are literal, not a character class"
+    capsys.readouterr()

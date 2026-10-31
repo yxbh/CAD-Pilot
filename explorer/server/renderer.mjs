@@ -59,17 +59,23 @@ export async function sweepProfiles(root = os.tmpdir(), alive = (pid) => {
   }
 }
 
-// Commands over Chromium's debugging pipe: NUL-terminated JSON on fds 3 (to the browser) and 4 (from it).
+// Commands over Chromium's debugging pipe: NUL-terminated JSON on fds 3 (to the browser) and 4 (from it). Once the
+// pipe breaks or the browser exits, commands in flight and any sent later fail at once.
 function devtools(browser) {
   const pending = new Map();
   let buffer = "";
   let next = 0;
-  // A browser that crashes can reset its pipes; that fails the commands in flight, not this process.
+  let failure = null;
   const broken = (error) => {
-    for (const waiter of pending.values()) waiter.reject(error);
+    failure ??= error;
+    for (const waiter of pending.values()) waiter.reject(failure);
     pending.clear();
   };
-  for (const stream of browser.stdio.slice(2)) stream?.on("error", broken);
+  // A browser that crashes or exits resets or closes its pipes; that fails the commands in flight, not this process.
+  // The browser's exit, which usually follows at once, gives the better reason, so a lost pipe waits a moment for it.
+  const lost = (error) => { setTimeout(() => broken(error), 1000).unref?.(); };
+  for (const stream of browser.stdio.slice(2)) stream?.on("error", lost);
+  browser.stdio[4].on("close", () => lost(new Error("the browser closed its debugging pipe")));
   browser.stdio[4].on("data", (chunk) => {
     buffer += chunk.toString("utf8");
     for (let end = buffer.indexOf("\0"); end >= 0; end = buffer.indexOf("\0")) {
@@ -84,18 +90,24 @@ function devtools(browser) {
       else waiter.resolve(message.result);
     }
   });
-  return (method, params = {}, timeout = 15_000) => new Promise((resolve, reject) => {
+  const send = (method, params = {}, timeout = 15_000) => new Promise((resolve, reject) => {
+    if (failure) return reject(failure);
     const id = ++next;
     const timer = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out`)); }, timeout);
     pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
     browser.stdio[3].write(`${JSON.stringify({ id, method, params })}\0`);
   });
+  return { send, broken };
 }
 
-// Why a renderer stopped: its exit status, and the last error Chromium printed (page console output is not a reason).
+// Why a renderer stopped: its exit status, and the last error Chromium logged (page console output is not a reason),
+// or else the last line something other than Chromium's own log printed, such as the system loader naming a missing
+// library.
 function stopReason(code, signal, stderr) {
   const status = signal ? `signal ${signal}` : `exit code ${code}`;
-  const error = stderr.split(/\r?\n/).filter((line) => /ERROR|FATAL/.test(line) && !/CONSOLE|CVDisplayLink|GPU stall/.test(line)).at(-1);
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const logged = lines.filter((line) => /^\[[^\]]*:(ERROR|FATAL):/.test(line) && !/CONSOLE|CVDisplayLink|GPU stall/.test(line)).at(-1);
+  const error = logged ?? lines.filter((line) => !line.startsWith("[")).at(-1);
   return error ? `${status}: ${error.replace(/^\[[^\]]*\]\s*/, "").slice(0, 300)}` : status;
 }
 
@@ -158,23 +170,26 @@ export function createHeadlessRenderer({
     browser.removed = browser.exited.then(() => removeProfile(profile));
     removals.add(browser.removed);
     void browser.removed.then(() => removals.delete(browser.removed));
-    const send = devtools(browser);
+    const pipe = devtools(browser);
     child = browser;
     browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString("utf8")).slice(-8000); });
     browser.once("exit", (code, signal) => {
+      // A browser that exits while it is starting fails that start with its reason, not after a command times out.
+      const reason = stopReason(code, signal, stderr);
+      const stopped = new PrototypeError("renderer_failed", `The headless renderer stopped (${reason})`, 503);
+      pipe.broken(stopped);
       if (child !== browser) return;
       child = null;
-      const reason = stopReason(code, signal, stderr);
       log(`Explorer headless renderer stopped: ${reason}`);
-      onExit(new PrototypeError("renderer_failed", `The headless renderer stopped (${reason})`, 503));
+      onExit(stopped);
     });
     try {
       await new Promise((resolve, reject) => {
         browser.once("spawn", resolve);
         browser.once("error", (error) => reject(new PrototypeError("renderer_failed", `Headless renderer did not start: ${error.message}`, 503)));
       });
-      await send("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
-        throw new PrototypeError("renderer_failed", `Headless renderer did not open the viewer: ${error.message}`, 503);
+      await pipe.send("Target.createTarget", { url: `${url}?renderer=headless` }).catch((error) => {
+        throw error instanceof PrototypeError ? error : new PrototypeError("renderer_failed", `Headless renderer did not open the viewer: ${error.message}`, 503);
       });
     } catch (error) {
       if (child === browser) child = null;

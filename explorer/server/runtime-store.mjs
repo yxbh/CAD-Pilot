@@ -47,7 +47,9 @@ export async function markUsed(...files) {
 }
 
 // Snapshots are named by content hash. A source snapshot may have any extension; a model cache is <hash>.json, and
-// any other file with the same hash beside it (such as binary geometry) belongs to it and goes with it.
+// any other file with the same hash beside it (such as binary geometry) belongs to it and goes with it. A group
+// without its model cache (geometry whose publish was interrupted, or whose cache is gone) is an orphan that nothing
+// can show. A group counts as used as recently as its most recently used file.
 const hashed = /^([a-f0-9]{64})\.[a-z0-9]+$/;
 function snapshotsIn(items, kind, primary) {
   const groups = new Map();
@@ -55,11 +57,12 @@ function snapshotsIn(items, kind, primary) {
     const stem = hashed.exec(item.name)?.[1];
     if (stem) groups.set(stem, [...(groups.get(stem) ?? []), item]);
   }
-  return [...groups.values()].flatMap((files) => {
+  return [...groups.values()].map((files) => {
     const main = files.find((item) => primary(item.name));
-    if (!main) return [];
-    const companions = files.filter((item) => item !== main);
-    return [{ ...main, kind, companions, bytes: files.reduce((total, item) => total + item.bytes, 0) }];
+    return {
+      ...(main ?? files[0]), kind, orphan: !main, members: files,
+      mtimeMs: Math.max(...files.map((item) => item.info.mtimeMs)), bytes: files.reduce((total, item) => total + item.bytes, 0),
+    };
   });
 }
 
@@ -70,45 +73,61 @@ export async function pruneRuntime(root, { all = false, dryRun = false, now = Da
   let freedBytes = 0;
   let keptBytes = 0;
   const gone = new Set();
-  const remove = async (kind, item, extra = []) => {
-    removed[kind]++;
-    gone.add(item.file);
-    freedBytes += item.bytes;
-    if (!dryRun) for (const file of [item.file, ...extra]) await rm(file, { recursive: true, force: true });
+  // Another process may reuse a file between its listing and its removal (a load reopening an identical snapshot
+  // refreshes its time first): a file touched since it was listed is in use again and stays.
+  const touchedSince = async (files) => {
+    for (const { file, info } of files) {
+      const current = info && await stat(file).catch(() => null);
+      if (current && current.mtimeMs > info.mtimeMs) return true;
+    }
+    return false;
   };
-  const recent = (item) => now - item.info.mtimeMs < retention.minAgeMs;
+  const remove = async (kind, files, bytes) => {
+    if (await touchedSince(files)) {
+      keptBytes += bytes;
+      return;
+    }
+    removed[kind]++;
+    freedBytes += bytes;
+    for (const { file } of files) gone.add(file);
+    if (!dryRun) for (const { file } of files) await rm(file, { recursive: true, force: true });
+  };
+  const recent = (mtimeMs) => now - mtimeMs < retention.minAgeMs;
+  // Folders a conversion or a one-shot render was using when its process ended.
+  const staging = (items, prefix) => items.filter(({ name }) => name.startsWith(prefix));
 
   const models = await entries(path.join(root, "models"));
-  for (const item of models.filter(({ name }) => name.startsWith(".import-"))) if (!recent(item)) await remove("staging", item);
+  for (const item of staging(models, ".import-")) if (!recent(item.info.mtimeMs)) await remove("staging", [item], item.bytes);
   const snapshots = [
     ...snapshotsIn(await entries(path.join(root, "inputs")), "inputs", () => true),
     ...snapshotsIn(models, "models", (name) => name.endsWith(".json")),
-  ].sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
+  ].sort((a, b) => b.mtimeMs - a.mtimeMs);
   let budget = retention.maxSnapshotBytes;
   for (const item of snapshots) {
-    const used = keep.has(`${item.kind}/${item.name}`);
-    const fresh = !all && now - item.info.mtimeMs < retention.keepDays * day && budget >= item.bytes;
-    if (used || recent(item) || fresh) {
+    const used = !item.orphan && keep.has(`${item.kind}/${item.name}`);
+    const fresh = !all && !item.orphan && now - item.mtimeMs < retention.keepDays * day && budget >= item.bytes;
+    if (used || recent(item.mtimeMs) || fresh) {
       if (!used) budget -= item.bytes;
       keptBytes += item.bytes;
-    } else await remove(item.kind, item, item.companions.map(({ file }) => file));
+    } else await remove(item.kind, item.members, item.bytes);
   }
 
-  const captures = (await entries(path.join(root, "captures"))).filter(({ name }) => name.endsWith(".png"))
-    .sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
+  const captureEntries = await entries(path.join(root, "captures"));
+  for (const item of staging(captureEntries, ".render-")) if (!recent(item.info.mtimeMs)) await remove("staging", [item], item.bytes);
+  const captures = captureEntries.filter(({ name }) => name.endsWith(".png")).sort((a, b) => b.info.mtimeMs - a.info.mtimeMs);
   for (const [index, item] of captures.entries()) {
     const fresh = !all && index < retention.keepCaptures && now - item.info.mtimeMs < retention.captureDays * day;
-    if (fresh || recent(item)) keptBytes += item.bytes;
-    else await remove("captures", item, [`${item.file}.json`]);
+    if (fresh || recent(item.info.mtimeMs)) keptBytes += item.bytes;
+    else await remove("captures", [item, { file: `${item.file}.json`, info: null }], item.bytes);
   }
 
   // A copied reference descriptor is useless once its model cache is gone.
-  const liveModels = new Set(snapshots.filter((item) => item.kind === "models" && !gone.has(item.file)).map(({ name }) => name));
+  const liveModels = new Set(snapshots.filter((item) => item.kind === "models" && !item.orphan && !gone.has(item.file)).map(({ name }) => name));
   for (const item of (await entries(path.join(root, "references"))).filter(({ name }) => name.endsWith(".json"))) {
     let topology = "";
     try { topology = JSON.parse(await readFile(item.file, "utf8")).topologyRevision; } catch { /* unreadable: orphaned */ }
-    if (liveModels.has(`${topology}.json`) || recent(item)) keptBytes += item.bytes;
-    else await remove("references", item);
+    if (liveModels.has(`${topology}.json`) || recent(item.info.mtimeMs)) keptBytes += item.bytes;
+    else await remove("references", [item], item.bytes);
   }
   return { root, dryRun, removed, freedBytes, keptBytes };
 }

@@ -124,7 +124,7 @@ export type ViewState = {
   camera: CameraState | null;
   // True once the person moved the camera; otherwise the view is fitted from cameraPreset.
   cameraPinned: boolean;
-  source: { file: string; generatedAt: string; size: number };
+  source: { file: string; generatedAt: string; size: number; sha256: string };
   viewKept: boolean | null;
 };
 export type Placement = { node: ModelNode; part: Part; matrix: number[]; bounds: Bounds; offset: number[] | null };

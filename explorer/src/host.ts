@@ -73,8 +73,10 @@ function meshLoader() {
     return response.arrayBuffer();
   };
   return async (kind: RendererKind): Promise<Model> => {
-    // The server gives a viewer page time to mesh a model it has fetched before drawing it in the background.
-    const model = await request<Model>(`model?kind=${kind}`);
+    // The server gives a viewer page in front time to mesh a model it has fetched before drawing it in the
+    // background; a hidden tab draws nothing, so it says it is hidden.
+    const visible = typeof document !== "undefined" && document.visibilityState === "visible" ? 1 : 0;
+    const model = await request<Model>(`model?kind=${kind}&visible=${visible}`);
     const revisionOf = (documentId?: string) => model.documents?.find((document) => document.id === documentId)?.topologyRevision ?? model.topologyRevision;
     const wanted = new Set(model.parts.filter((part) => part.buffers).map((part) => revisionOf(part.documentId)));
     for (const revision of files.keys()) if (!wanted.has(revision)) files.delete(revision);

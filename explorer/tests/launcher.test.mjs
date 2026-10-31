@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -98,6 +98,21 @@ test("render flags spell the same view actions as do", () => {
   assert.throws(() => renderOptions({ outlines: "maybe" }), /on or off/);
 });
 
+test("open reads --units and --up, and each command refuses options it does not read", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-flags-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const opened = [];
+  const open = async (location, file, options) => { opened.push([file, options]); return {}; };
+  await run(["open", "outputs/pin.stl", "--units", "mm", "--up", "y"], { cwd: directory, open });
+  await run(["open", "outputs/pin.stl"], { cwd: directory, open });
+  assert.deepEqual(opened, [["outputs/pin.stl", { units: "mm", up: "y" }], ["outputs/pin.stl", {}]]);
+  await assert.rejects(run(["open", "outputs/pin.stl", "units=mm"], { cwd: directory, open }), /open takes one file; say how to read a mesh with --units and --up/);
+  await assert.rejects(run(["open", "--units", "mm"], { cwd: directory, open }), /name the file/);
+  await assert.rejects(run(["state", "--units", "mm"], { cwd: directory }), /state does not take --units/);
+  await assert.rejects(run(["capture", "--hide", "lid", "--step", "2"], { cwd: directory }), /capture does not take --hide or --step/);
+  assert.equal(opened.length, 2);
+});
+
 // A stand-in viewer: just enough of the HTTP protocol for the launcher to find, stop and confirm it.
 async function fakeViewer(t, { checkout, pid }) {
   const token = randomBytes(24).toString("hex");
@@ -140,4 +155,18 @@ test("open restarts a viewer that another workbench checkout started, keeping on
   assert.equal(foreign.server.listening, false, "the other checkout's viewer was stopped, not left competing");
   assert.ok(foreignCheckout({ explorerRoot: "/other" }, "/this") && !foreignCheckout({ explorerRoot: "/this" }, "/this"));
   assert.ok(foreignCheckout({}, "/this"), "a viewer from before checkouts were recorded is replaced too");
+});
+
+test("the same checkout reached through a link or spelled in another case is not another checkout", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-spelling-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const checkout = path.join(directory, "Workbench", "explorer");
+  await mkdir(checkout, { recursive: true });
+  await symlink(path.join(directory, "Workbench"), path.join(directory, "linked"), process.platform === "win32" ? "junction" : "dir");
+  assert.equal(foreignCheckout({ explorerRoot: path.join(directory, "linked", "explorer") }, checkout), false);
+  // macOS and Windows folders usually ignore case; there another spelling names the same folder.
+  const otherCase = path.join(directory, "WORKBENCH", "explorer");
+  const ignoresCase = await stat(otherCase).then(() => true, () => false);
+  assert.equal(foreignCheckout({ explorerRoot: otherCase }, checkout), !ignoresCase);
+  assert.equal(foreignCheckout({ explorerRoot: path.join(directory, "elsewhere", "explorer") }, checkout), true);
 });

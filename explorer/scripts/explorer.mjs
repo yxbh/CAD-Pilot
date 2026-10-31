@@ -15,9 +15,10 @@ export { actionInput };
 export const USAGE = `Usage: node <workbench>/explorer/scripts/explorer.mjs <command> [arguments] [--view <name>]
 Run from the design project's root folder. Results are printed as JSON.
 
-  open [file] [units=m] [up=y]
+  open [file] [--units m] [--up y]
                         Start or reuse this project's viewer, load the file, confirm it was drawn and print its URL.
-                        STEP, STL, OBJ, 3MF, PLY and GLB open directly; units and up say how to read a mesh file
+                        STEP, STL, OBJ, 3MF, PLY and GLB open directly; --units mm|cm|m|in|ft|um and --up z|y say how
+                        to read a mesh file
   state [--full]        Summarize the shown model (file, revision, generated time) and view; --full adds every detail
   actions               List the view actions accepted by "do"
   do <action> [input]   Run a view action. Give its input as key=value pairs, which survive any shell,
@@ -42,6 +43,13 @@ const UNAVAILABLE = new Set(["add_reference_to_chat", "save_camera"]);
 const actionNames = () => Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas && !UNAVAILABLE.has(name));
 const valued = new Set(["--view", "--size", "--units", "--up", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide"]);
 const switches = new Set(["--full", "--dry-run", "--all", "--copilot"]);
+// The flags each command reads (--view, which names the setup, goes with every command); any other is refused rather
+// than silently ignored.
+const COMMAND_FLAGS = {
+  open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full"], stop: [], inspect: [], actions: [],
+  prune: ["dry-run", "all", "copilot"],
+  render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide"],
+};
 
 function parseArguments(argv) {
   const positional = [];
@@ -131,9 +139,11 @@ async function viewer(location) {
 
 const megabytes = (bytes) => Math.round(bytes / 1048576 * 10) / 10;
 
-export async function run(argv, { cwd = process.cwd(), inspect } = {}) {
+export async function run(argv, { cwd = process.cwd(), inspect, open = openViewer } = {}) {
   const { command, args, viewId, flags } = parseArguments(argv);
   if (command === "help") return USAGE;
+  const unread = Object.keys(flags).filter((flag) => flags[flag] !== undefined && COMMAND_FLAGS[command] && !COMMAND_FLAGS[command].includes(flag));
+  if (unread.length) throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.`);
   if (command === "actions") {
     return actionNames().map((name) => {
       const { description, inputSchema } = COMMANDS[name];
@@ -155,7 +165,12 @@ export async function run(argv, { cwd = process.cwd(), inspect } = {}) {
     if (args.length !== 2) throw new PrototypeError("bad_arguments", "render needs a model file and a .png output inside the project");
     return renderOnce({ project: location.project, file: args[0], output: args[1], runtimeRoot: location.runtimeRoot, options: renderOptions(flags) });
   }
-  if (command === "open") return openViewer(location, args[0], actionInput(args.slice(1)));
+  if (command === "open") {
+    if (args.length > 1) throw new PrototypeError("bad_arguments", "open takes one file; say how to read a mesh with --units and --up");
+    const options = Object.fromEntries(["units", "up"].filter((flag) => flags[flag] !== undefined).map((flag) => [flag, flags[flag]]));
+    if (!args.length && Object.keys(options).length) throw new PrototypeError("bad_arguments", "--units and --up say how to read the file that open loads; name the file");
+    return open(location, args[0], options);
+  }
   if (command === "stop") return stopViewer(location);
   const { record } = await viewer(location);
   const detail = flags.full ? "full" : "summary";
@@ -169,7 +184,7 @@ export async function run(argv, { cwd = process.cwd(), inspect } = {}) {
     if (flags.full) return { ...result, ...saved };
     return {
       path: result.path, ...saved, width: result.width, height: result.height, model: result.modelName,
-      revision: revisionLabel(result.documentRevision), viewRevision: result.revision,
+      revision: revisionLabel(result.source.sha256), viewRevision: result.revision,
     };
   }
   if (command === "do") {

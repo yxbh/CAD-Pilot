@@ -1,9 +1,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
@@ -91,7 +89,7 @@ export const viewKeyFor = (project, viewId) => hash(`${project}\n${viewId}`).sli
 
 // port/token let a launcher keep one address per setup across restarts; onShutdown enables POST api/shutdown for that host.
 // renderer starts the background page that draws views when no visible tab does (null leaves rendering to open pages).
-// A transient service (a one-shot render) saves no setup and keeps its captures in a private temporary folder.
+// A transient service (a one-shot render) saves no setup and keeps its captures in a private folder of its own.
 export async function createExplorerServer({
   projectRoot = workbenchRoot, viewId = "default", file, fileOptions = {}, runtimeRoot = defaultRuntimeRoot,
   addReferenceToChat, log = (message) => process.stderr.write(`${message}\n`),
@@ -125,22 +123,27 @@ async function startOwnedService({
   const modelDir = path.join(runtimeRoot, "models");
   const uploadDir = path.join(runtimeRoot, "inputs");
   await Promise.all([viewDir, modelDir, uploadDir].map((dir) => mkdir(dir, { recursive: true })));
-  const captureDir = transient ? await mkdtemp(path.join(os.tmpdir(), "cad-explorer-render-")) : path.join(runtimeRoot, "captures");
-  await mkdir(captureDir, { recursive: true });
+  // A one-shot render keeps its image in a private folder inside the store, which storage cleanup removes if the
+  // render's process ends before it can.
+  await mkdir(path.join(runtimeRoot, "captures"), { recursive: true });
+  const captureDir = transient ? await mkdtemp(path.join(runtimeRoot, "captures", ".render-")) : path.join(runtimeRoot, "captures");
   const stateFile = path.join(viewDir, `${viewKey}.json`);
   const reviews = new ReviewStore(path.join(runtimeRoot, "reviews", viewKey));
   const saved = transient ? null : await readOptionalJson(stateFile);
-  // The main file's record keeps its historical top-level fields; added files are listed under references.
+  // The main file's record keeps its historical top-level fields; added files are listed under references. Each
+  // names its project file (empty for an upload) and how it was read, so it can be read again if its copy is gone.
   const savedDocument = (record, id) => ({
     id, model: null, modelCache: record?.modelCache ?? "", inputFile: record?.inputFile ?? "", inputName: record?.inputName ?? "",
     measuredCleanup: record?.measuredCleanup === undefined ? undefined : validateMeasuredCleanup(record.measuredCleanup),
+    file: typeof record?.file === "string" ? record.file : "", options: record?.options ?? {},
   });
   const savedSection = saved?.state?.section;
   if (savedSection !== undefined) {
     try { validateSection(savedSection); }
     catch (error) { throw new PrototypeError("invalid_saved_section", `Invalid saved section settings: ${error.message}`, 422); }
   }
-  let state = { ...initialState(), ...saved?.state };
+  // Files a restore left out are reported by the start that left them out, not by later ones.
+  let state = { ...initialState(), ...saved?.state, droppedFiles: [] };
   delete state.autoAdd;
   // The files in the view, main first; the model composed from them that the page fetches; and that model arranged
   // as state places the files, which commands are checked against. A failed explicit startup import must not
@@ -159,7 +162,8 @@ async function startOwnedService({
   let lastHeadless = null;
   // Why the current view could not be drawn, until a renderer draws one.
   let renderProblem = "";
-  // The model a viewer page last fetched, and when: it is still meshing until it reports that model drawn.
+  // The model a viewer page last fetched, and whether that page was in front: it is still meshing until it reports
+  // that model drawn.
   let viewerFetch = null;
   let headlessCaptures = Promise.resolve();
   const clients = new Map();
@@ -179,7 +183,7 @@ async function startOwnedService({
   const send = (res, name, data) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
   const emit = (name, data) => { for (const res of clients.keys()) send(res, name, data); };
   const viewerCount = () => [...clients.values()].filter((client) => client.kind === "viewer").length;
-  const record = ({ modelCache, inputFile, inputName, measuredCleanup }) => ({ modelCache, inputFile, inputName, measuredCleanup });
+  const record = ({ modelCache, inputFile, inputName, measuredCleanup, file, options }) => ({ modelCache, inputFile, inputName, measuredCleanup, file, options });
   const saveView = (next, files = documents) => transient ? Promise.resolve() : atomicJson(stateFile, {
     state: next, ...record(files[0]), references: files.slice(1).map((file) => ({ id: file.id, ...record(file) })),
   });
@@ -293,9 +297,15 @@ async function startOwnedService({
 
   async function importDocument(id, snapshot, options) {
     const imported = await prepareModelSnapshot({ ...snapshot, uploadDir, modelDir, python, options });
-    await markUsed(imported.inputFile, path.join(modelDir, imported.modelCache));
-    return { ...imported, id };
+    const file = snapshot.resolved && isInside(project, snapshot.resolved) ? path.relative(project, snapshot.resolved).split(path.sep).join("/") : "";
+    return { ...imported, id, file, options: meshOptions(options) };
   }
+
+  // Refreshing a saved file's snapshot before reading it keeps a prune in another process from removing it meanwhile.
+  const touchSnapshot = async ({ inputFile, modelCache }) => {
+    if (!/^[a-f0-9]{64}\.json$/.test(modelCache)) return;
+    await markUsed(inputFile, path.join(modelDir, modelCache), meshGeometryFile(modelDir, modelCache.slice(0, 64)));
+  };
 
   // A saved file's entry with its saved style and placement, or the defaults when those no longer validate.
   function entryFor(document) {
@@ -307,21 +317,34 @@ async function startOwnedService({
     }
   }
 
-  // Added files come back from their caches, whichever way the view starts; one that is gone leaves the rest.
+  // Added files come back from their caches, whichever way the view starts. One whose copy is gone from the store is
+  // read again from its project file when that is still there; otherwise it is left out, and state says which.
   async function restoreAddedFiles() {
     const restored = [];
+    const dropped = [];
     for (const document of documents.slice(1)) {
       if (document.model) { restored.push(document); continue; }
+      const name = document.inputName || document.id;
       try {
-        const loaded = await readSaved(document.modelCache, document.inputName || document.id);
+        await touchSnapshot(document);
+        const loaded = await readSaved(document.modelCache, name);
         Object.assign(loaded, importDiagnostics(loaded));
         if (document.measuredCleanup?.topologyRevision === loaded.topologyRevision) loaded.cleanup = { ...document.measuredCleanup.counts };
-        loaded.source = { ...loaded.source, name: document.inputName || loaded.source.name };
-        await markUsed(document.inputFile, path.join(modelDir, document.modelCache));
+        loaded.source = { ...loaded.source, name };
         restored.push({ ...document, model: loaded });
-      } catch (error) { log(`Explorer left ${document.inputName || document.id} out of the view: ${publicError(error)}`); }
+      } catch (error) {
+        try {
+          if (!document.file) throw error;
+          const resolved = await validateModelPath(path.resolve(project, document.file), project);
+          restored.push(await importDocument(document.id, { resolved, displayName: name }, document.options));
+          log(`Explorer read ${document.file} again: ${publicError(error)}`);
+        } catch (failure) {
+          log(`Explorer left ${name} out of the view: ${publicError(failure)}`);
+          dropped.push({ id: document.id, name, file: document.file });
+        }
+      }
     }
-    return restored;
+    return { restored, dropped };
   }
 
   async function loadSnapshot(snapshot, source, options = {}) {
@@ -331,8 +354,8 @@ async function startOwnedService({
     try {
       const imported = await importDocument(MAIN_DOCUMENT, snapshot, options);
       // Files added beside the main one stay, also when the viewer starts with a file, so regenerating and opening
-      // the design again keeps its comparison.
-      const added = await restoreAddedFiles();
+      // the design again keeps its comparison. The start's own restore may already have left some out.
+      const { restored: added, dropped } = await restoreAddedFiles();
       const loaded = [imported, ...added];
       const entries = [documentEntry(MAIN_DOCUMENT, imported), ...added.map(entryFor)];
       const layout = added.length && LAYOUTS.includes(state.layout) ? state.layout : "overlay";
@@ -341,7 +364,8 @@ async function startOwnedService({
       // A mesh has triangles, not CAD faces or edges, so it opens picking points.
       const mode = imported.model.kind === "mesh" && ["face", "edge"].includes(state.selectionMode) ? { selectionMode: "point" } : {};
       await commit(loadedView(state, model, arrangeView(composed, entries, layout), {
-        assembly, ...viewIdentity(composed), documents: entries, layout, ...mode, source, loading: false, error: "",
+        assembly, ...viewIdentity(composed), documents: entries, layout, ...mode, source: { ...source, sha256: imported.model.source.sha256 },
+        droppedFiles: [...(initialized ? [] : state.droppedFiles), ...dropped], loading: false, error: "",
       }), { documents: loaded, view: composed });
       schedulePrune();
       return state;
@@ -377,7 +401,7 @@ async function startOwnedService({
       return showFiles(documents, state.documents, input.mode, { fitNonce: state.fitNonce + 1, camera: null, cameraPinned: false });
     }
     const index = state.documents.findIndex((entry) => entry.id === input.id);
-    if (index < 0) throw new PrototypeError("unknown_file", `This view has no file "${String(input.id)}"; state lists its documents`);
+    if (index < 0) throw new PrototypeError("unknown_file", `This view has no file "${String(input.id)}"; state lists the view's files under view.files`);
     if (name === "remove_file") {
       if (index === 0) throw new PrototypeError("main_file", "The main file stays in the view; open another with load_file", 409);
       return showFiles(documents.filter((_, item) => item !== index), state.documents.filter((_, item) => item !== index), state.layout);
@@ -388,7 +412,8 @@ async function startOwnedService({
   // Arranging files keeps the composed model and its identity; only adding or removing one composes it again.
   async function showFiles(loaded, entries, layout, patch = {}) {
     const composed = loaded === documents ? view : composeView(loaded, entries);
-    const next = followView({ ...state, ...patch, documents: entries, layout, viewKept: null }, arrangeView(composed, entries, layout));
+    const changed = loaded === documents ? {} : { droppedFiles: [] };
+    const next = followView({ ...state, ...patch, ...changed, documents: entries, layout, viewKept: null }, arrangeView(composed, entries, layout));
     await commit({ ...next, ...viewIdentity(composed) }, loaded === documents ? undefined : { documents: loaded, view: composed });
     return state;
   }
@@ -416,8 +441,9 @@ async function startOwnedService({
     if (error) waiter.reject(error);
     else waiter.resolve(report);
   }
+  // A waiter that started the background renderer has given any open page its grace: the renderer's failure is its own.
   function failHeadless(error) {
-    for (const waiter of [...renderWaiters]) if (dependsOnHeadless(waiter.by)) settle(waiter, error);
+    for (const waiter of [...renderWaiters]) if (waiter.started || dependsOnHeadless(waiter.by)) settle(waiter, error);
     for (const [id, pending] of captures) {
       if (pending.kind !== "headless") continue;
       clearTimeout(pending.timer); captures.delete(id); pending.reject(error);
@@ -429,26 +455,28 @@ async function startOwnedService({
     if (by !== "viewer" && headlessConnected() && drawn(lastHeadless)) return { ...lastHeadless, kind: "headless" };
     return null;
   }
-  const viewerMeshing = () => viewerFetch?.topologyRevision === state.topologyRevision && lastRendered?.topologyRevision !== state.topologyRevision;
+  // Only a page in front meshes and draws: a hidden tab fetches the model but draws nothing until it is shown again.
+  const viewerMeshing = () => viewerFetch?.visible && viewerFetch.topologyRevision === state.topologyRevision
+    && lastRendered?.topologyRevision !== state.topologyRevision;
 
   // Resolves once a renderer has drawn this revision. With no open (or no answering) viewer page, the background
-  // renderer is started, so a hidden or closed tab never leaves a view unconfirmed.
+  // renderer is started, so a hidden or closed tab never leaves a view unconfirmed. Once it has started, the
+  // background renderer's failure to start or its crash settles the wait: an open page has had its grace.
   function waitForRender(revision, { by = "any" } = {}) {
     if (revision !== state.revision) return Promise.reject(new PrototypeError("superseded_view", "A newer view command superseded this one", 409));
     const done = renderedBy(by);
     if (done) return Promise.resolve(done);
     return new Promise((resolve, reject) => {
-      const waiter = { revision, topologyRevision: state.topologyRevision, by, resolve, reject, timer: null, grace: null };
+      const waiter = { revision, topologyRevision: state.topologyRevision, by, resolve, reject, timer: null, grace: null, started: false };
       renderWaiters.add(waiter);
       waiter.timer = setTimeout(() => settle(waiter, new PrototypeError("renderer_timeout", headless?.running
         ? `The background renderer did not draw the view within ${renderTimeoutMs / 1000} s. Retry, or open ${origin}/${token}/ to look.`
         : `No renderer drew the view within ${renderTimeoutMs / 1000} s. Open ${origin}/${token}/ and retry.`, 408)), renderTimeoutMs);
       const start = () => {
         const background = headlessRenderer();
-        void background?.ensure().catch((error) => {
-          if (dependsOnHeadless(by)) settle(waiter, error);
-          else log(`Explorer headless renderer: ${publicError(error)}`);
-        });
+        if (!background) return;
+        waiter.started = true;
+        void background.ensure().catch((error) => settle(waiter, error));
       };
       if (by === "viewer") return;
       if (dependsOnHeadless(by)) return start();
@@ -614,18 +642,18 @@ async function startOwnedService({
       if (route === "api/state" && req.method === "GET") return respond(200, url.searchParams.get("detail") === "summary" ? await summary() : getState());
       if (route === "api/model" && req.method === "GET") {
         if (!view) throw new PrototypeError("not_ready", "Model is not ready", 409);
-        if (url.searchParams.get("kind") === "viewer") viewerFetch = { topologyRevision: view.topologyRevision };
+        // A viewer page says whether it is in front: only then is it about to mesh and draw what it fetched.
+        if (url.searchParams.get("kind") === "viewer") viewerFetch = { topologyRevision: view.topologyRevision, visible: url.searchParams.get("visible") === "1" };
         return respond(200, view);
       }
-      // Mesh geometry is served as its cached binary file, only for meshes in the current view.
+      // Mesh geometry is served from the verified bytes loaded with the view, only for meshes in the current view, so
+      // storage cleanup never breaks a running view.
       const geometryRoute = /^api\/geometry\/([a-f0-9]{64})$/.exec(route);
       if (geometryRoute && req.method === "GET") {
-        if (!documents.some((document) => document.model?.kind === "mesh" && document.model.topologyRevision === geometryRoute[1])) {
-          throw new PrototypeError("not_found", "No mesh with that identity is in the view", 404);
-        }
-        const file = meshGeometryFile(modelDir, geometryRoute[1]);
-        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": (await stat(file)).size, "cache-control": "no-store" });
-        createReadStream(file).on("error", () => res.destroy()).pipe(res);
+        const bytes = documents.find((document) => document.model?.kind === "mesh" && document.model.topologyRevision === geometryRoute[1])?.model.geometryBytes;
+        if (!bytes) throw new PrototypeError("not_found", "No mesh with that identity is in the view", 404);
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": bytes.length, "cache-control": "no-store" });
+        res.end(bytes);
         return;
       }
       if (route === "api/events" && req.method === "GET") {
@@ -801,44 +829,56 @@ async function startOwnedService({
   server.on("error", (error) => log(`Explorer server: ${publicError(error)}`));
   origin = `http://127.0.0.1:${server.address().port}`;
 
+  // The saved setup as it was left: its files from their caches and its view. A StaleCacheError means the main
+  // file's cache is a STEP preview from before exact edge selection, which only a new conversion can bring back.
+  async function restoreSaved() {
+    const main = documents[0];
+    await touchSnapshot(main);
+    const cached = await readSaved(saved.modelCache, saved.inputName || "The saved model");
+    Object.assign(cached, importDiagnostics(cached));
+    // Normalize historical warning strings before adding newly measured counts.
+    if (main.measuredCleanup?.topologyRevision === cached.topologyRevision) {
+      cached.cleanup = { ...main.measuredCleanup.counts };
+    } else if (main.measuredCleanup) {
+      log("Discarding saved cleanup counts for a different topology revision.");
+      main.measuredCleanup = undefined;
+    }
+    main.inputName = saved.inputName || state.modelName || cached.source.name;
+    cached.source = { ...cached.source, name: main.inputName };
+    const { restored: added, dropped } = await restoreAddedFiles();
+    const restored = [{ ...main, model: cached }, ...added];
+    const entries = restored.map(entryFor);
+    const layout = LAYOUTS.includes(state.layout) ? state.layout : "overlay";
+    const composed = composeView(restored, entries);
+    const arranged = arrangeView(composed, entries, layout);
+    let section = savedSection ?? defaultSection(displayedWorldBounds(arranged, state) ?? arranged.bounds);
+    const support = sectionSupport(arranged);
+    if (section.enabled && !support.supported) {
+      log(`Section view was turned off: ${support.message}`);
+      section = { ...section, enabled: false };
+    }
+    const next = followView({ ...state, section, documents: entries, layout, droppedFiles: dropped }, arranged);
+    await commit({ ...next, loading: false, error: "", ...viewIdentity(composed), viewKept: null }, { documents: restored, view: composed });
+  }
+
   async function initialize() {
     try {
-      if (file) await execute("load_file", { ...fileOptions, file });
-      else if (saved?.modelCache && /^[a-f0-9]{64}\.json$/.test(saved.modelCache)) {
-        let cached;
-        try { cached = await readSaved(saved.modelCache, saved.inputName || "The saved model"); }
+      const hasSaved = typeof saved?.modelCache === "string" && /^[a-f0-9]{64}\.json$/.test(saved.modelCache);
+      if (file) {
+        // Starting with a file reloads the saved setup: restored first, so the same file regenerated with the same
+        // parts keeps the person's view, exactly as a reload into a running viewer does.
+        if (hasSaved) {
+          try { await restoreSaved(); }
+          catch (error) { log(`Explorer did not restore the saved view before loading ${file}: ${publicError(error)}`); }
+        }
+        await execute("load_file", { ...fileOptions, file });
+      } else if (hasSaved) {
+        try { await restoreSaved(); }
         catch (error) {
           if (!(error instanceof StaleCacheError)) throw error;
           if (!/^[a-f0-9]{64}$/.test(error.sha256 || "")) throw new PrototypeError("invalid_snapshot", "Saved STEP snapshot identity is invalid", 422);
           log("Rebuilding the saved prototype snapshot for exact CAD face and edge selection. Old selections are cleared; previous reference snapshots are retained.");
           await loadFile(path.join(uploadDir, `${error.sha256}.step`), saved.inputName || state.modelName, true);
-        }
-        if (cached) {
-          const main = documents[0];
-          Object.assign(cached, importDiagnostics(cached));
-          // Normalize historical warning strings before adding newly measured counts.
-          if (main.measuredCleanup?.topologyRevision === cached.topologyRevision) {
-            cached.cleanup = { ...main.measuredCleanup.counts };
-          } else if (main.measuredCleanup) {
-            log("Discarding saved cleanup counts for a different topology revision.");
-            main.measuredCleanup = undefined;
-          }
-          main.inputName = saved.inputName || state.modelName || cached.source.name;
-          cached.source = { ...cached.source, name: main.inputName };
-          await markUsed(main.inputFile, path.join(modelDir, main.modelCache));
-          const restored = [{ ...main, model: cached }, ...await restoreAddedFiles()];
-          const entries = restored.map(entryFor);
-          const layout = LAYOUTS.includes(state.layout) ? state.layout : "overlay";
-          const composed = composeView(restored, entries);
-          const arranged = arrangeView(composed, entries, layout);
-          let section = savedSection ?? defaultSection(displayedWorldBounds(arranged, state) ?? arranged.bounds);
-          const support = sectionSupport(arranged);
-          if (section.enabled && !support.supported) {
-            log(`Section view was turned off: ${support.message}`);
-            section = { ...section, enabled: false };
-          }
-          const next = followView({ ...state, section, documents: entries, layout }, arranged);
-          await commit({ ...next, loading: false, error: "", ...viewIdentity(composed), viewKept: null }, { documents: restored, view: composed });
         }
       } else await execute("load_demo");
     } catch (error) {
@@ -853,6 +893,8 @@ async function startOwnedService({
     initialize: () => initialization ??= initialize().finally(() => { initialized = true; }),
     execute,
     getState,
+    // The model as the view arranges it, for a host that resolves part names against its tree.
+    getModel: () => model,
     summary,
     confirmRendered,
     captureImage,

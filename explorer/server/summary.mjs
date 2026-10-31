@@ -39,17 +39,23 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "" }
   };
   let note = "";
   if (!state.modelName || state.loading) note = state.loading ? "The model is still loading." : "";
-  else if (problem && !drawn) note = `The model loaded, but no renderer could draw it: ${problem} Open ${url} to see it.`;
+  else if (problem && !drawn) note = `The model loaded, but no renderer could draw it: ${problem}${problem.includes(url) ? "" : ` Open ${url} to see it.`}`;
   else if (!viewers) note = `No viewer page is open${drawn === "headless" ? "; the view was drawn in the background" : ""}. Open ${url} to see it.`;
   else if (!seen) note = "An open viewer page has not drawn this revision yet; it may be hidden or in the background.";
   if (changedOnDisk) note = `${state.source.file} changed on disk after it was loaded; run open again to show the new file. ${note}`.trim();
+  // Added files whose copy was gone from Explorer's storage and that could not be read again from the project.
+  const dropped = state.droppedFiles ?? [];
+  if (dropped.length) {
+    const how = (entry) => entry.file ? `${entry.name}: add it back with add_file file=${entry.file}` : `${entry.name}: it was uploaded, so upload it again`;
+    note = `Left out of the view because Explorer no longer has a copy (${dropped.map(how).join("; ")}). ${note}`.trim();
+  }
   return {
     application: "CAD Explorer",
     url,
     model: state.modelName ? {
       name: state.modelName,
       ...(state.source.file ? { file: state.source.file } : {}),
-      revision: revisionLabel(state.documentRevision),
+      revision: revisionLabel(state.source.sha256),
       ...(state.source.generatedAt ? { generatedAt: state.source.generatedAt } : {}),
       parts: state.parts.length,
       ...(files.length === 1 && files[0].frame ? { frame: files[0].frame } : {}),
