@@ -32,6 +32,7 @@ import tempfile
 import threading
 import traceback
 import warnings
+import weakref
 from pathlib import Path
 
 _HOST = Path(__file__).resolve()
@@ -257,6 +258,9 @@ def _serve() -> None:
     os.dup2(2, 1)
     import build123d  # noqa: F401  (loaded once for every command)
 
+    # Python adds weakref.finalize's exit handler, which tempfile's folders use, only with the first one made: made here,
+    # so that a command making one is not taken for a command adding an exit handler of its own.
+    weakref.finalize(_serve, lambda: None).detach()
     restore = _library_state()
     for line in sys.stdin:
         returncode, stop = _run(json.loads(line), restore)
