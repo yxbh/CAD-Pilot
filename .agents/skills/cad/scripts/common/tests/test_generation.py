@@ -1,13 +1,18 @@
+import argparse
 import contextlib
 import hashlib
 import io
+import os
 import shutil
 import sys
+import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from common import generation as cad_generation
+from common import issued_refs
 from common import render as cad_render
 from common import catalog as cad_catalog
 from common.catalog import StepImportOptions
@@ -1695,15 +1700,54 @@ class CadGenerationTests(unittest.TestCase):
 
 
 
+class IssuedRefsWarningTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temp = tempfile.TemporaryDirectory(prefix="cad-issued-refs-")
+        self.addCleanup(temp.cleanup)
+        patcher = mock.patch.dict(os.environ, {"CAD_PILOT_CACHE": str(Path(temp.name) / "cache")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.spec = types.SimpleNamespace(cad_ref="plate", step_path=Path(temp.name) / "plate.step")
+
+    def report(self, previous_manifest, step_hash: str) -> mock.Mock:
+        logger = mock.Mock()
+        cad_generation._report_selector_manifest_change(self.spec, previous_manifest, {"stepHash": step_hash}, logger=logger)
+        return logger
+
+    def test_refs_from_a_build_whose_topology_cannot_be_read_are_reported_once(self) -> None:
+        # A sidecar from older tools, or none at all, leaves nothing to compare the new numbering with.
+        issued_refs.mark(self.spec.step_path, "old-hash")
+
+        self.assertIn("may no longer name the same geometry", self.report(None, "new-hash").warning.call_args.args[0])
+        self.assertIsNone(issued_refs.issued_step_hash(self.spec.step_path))
+        self.report(None, "newer-hash").warning.assert_not_called()
+
+    def test_the_same_bytes_or_no_refs_say_nothing(self) -> None:
+        self.report(None, "new-hash").warning.assert_not_called()
+        issued_refs.mark(self.spec.step_path, "same-hash")
+        self.report(None, "same-hash").warning.assert_not_called()
+        self.assertEqual("same-hash", issued_refs.issued_step_hash(self.spec.step_path))
+
+
 class ToolErrorTests(unittest.TestCase):
     def test_a_tool_error_is_one_line_named_once(self) -> None:
-        def fails(targets, **_options):
-            raise cad_generation.StepInputError("--output must end in .dxf")
+        # A problem with the inputs, whichever part of generation finds it.
+        for error in (
+            cad_generation.StepInputError,
+            cad_generation.CadSourceError,
+            cad_generation.AssemblySpecError,
+            cad_generation.AssemblyCompositionError,
+        ):
+            with self.subTest(error.__name__):
+                def fails(_args):
+                    raise error("--output must end in .dxf")
 
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = cad_generation.run_tool_cli(["part.py"], prog="scripts/dxf", description="", action=fails, output_help="")
-        self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
+                parser = argparse.ArgumentParser(prog="scripts/dxf")
+                parser.add_argument("targets", nargs="+")
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    status = cad_generation.run_cli(parser, ["part.py"], fails)
+                self.assertEqual((2, "scripts/dxf: error: --output must end in .dxf\n"), (status, stderr.getvalue()))
 
 
 if __name__ == "__main__":

@@ -10,8 +10,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common.catalog import StepImportOptions
-from common.generation import StepInputError, generate_step_targets
-from common.generator_module import GeneratorImportError
+from common.generation import generate_step_targets, run_cli
 from common.metadata import normalize_mesh_numeric
 
 
@@ -102,21 +101,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.output is not None and len(args.targets) != 1:
-        parser.error("--output can only be used with exactly one target")
-    try:
-        return generate_step_targets(
+    return run_cli(
+        parser,
+        argv,
+        lambda args: generate_step_targets(
             args.targets,
             direct_step_kind=args.kind,
             step_options=_step_import_options_from_args(args, parser=parser),
             output=args.output,
             verbose=bool(args.verbose),
             check_solids=bool(args.check_solids),
-        )
-    except (GeneratorImportError, StepInputError) as exc:
-        print(f"{parser.prog}: error: {exc}", file=sys.stderr)
-        return 2
+        ),
+    )
 
 
 if __name__ == "__main__":
