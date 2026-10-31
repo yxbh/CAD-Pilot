@@ -1,6 +1,5 @@
-// Refreshes the per-platform test-file times CI's jobs are split by: explorer/tests/durations.json, which
-// explorer/scripts/test.mjs shares the Explorer's test files by, and tests/durations.json, which conftest.py shares the
-// Python test files by. They come from what CI's jobs recorded (their check logs keep a .durations.json per test
+// Refreshes the per-platform test-file times tools/shares.mjs splits CI's jobs by: explorer/tests/durations.json for the
+// Explorer's test files and tests/durations.json for the Python ones. They come from what CI's jobs recorded (their check logs keep a .durations.json per test
 // stage): those of the latest successful check run on main, or the mean over the runs given, since a file's time on one
 // runner can be a third off its time on another. Needs the GitHub CLI, signed in.
 import { execFileSync } from "node:child_process";

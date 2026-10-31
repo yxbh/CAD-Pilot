@@ -65,7 +65,7 @@ def test_the_python_files_are_those_pytest_collects(tmp_path):
     collected.touch()
     run = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "files_only", "-p", "no:cacheprovider"],
-        cwd=ROOT, env={**os.environ, "PYTHONPATH": str(tmp_path), "COLLECTED": str(collected)},
+        cwd=ROOT, env={**os.environ, "PYTHONPATH": str(tmp_path), "COLLECTED": str(collected), "PYTEST_ADDOPTS": ""},
         capture_output=True, text=True, timeout=120,
     )
     assert run.returncode == pytest.ExitCode.NO_TESTS_COLLECTED, run.stdout + run.stderr

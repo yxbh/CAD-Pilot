@@ -1,15 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { buildExplorer } from "./incremental-build.mjs";
+import { isBrowser, testFiles } from "./test-files.mjs";
 
 const USAGE = "Usage: node scripts/test.mjs core|browser|<test file>... [--no-build] [--durations <file>]";
 const cwd = fileURLToPath(new URL("../", import.meta.url));
-const tests = (await readdir(new URL("../tests/", import.meta.url))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
-const isBrowser = (file) => file.endsWith("-browser.test.mjs");
+const tests = testFiles();
 let options;
 try {
   options = parseArgs({ allowPositionals: true, options: { "no-build": { type: "boolean" }, durations: { type: "string" } } });
@@ -17,7 +17,7 @@ try {
   options = null;
 }
 // core or browser runs every file of that kind; CI's jobs name their share of the files (tools/shares.mjs).
-const named = options?.positionals ?? [];
+const named = [...new Set(options?.positionals)];
 const kind = named.length === 1 && ["core", "browser"].includes(named[0]) ? named[0] : null;
 if (!named.length || !(kind || named.every((file) => tests.includes(file)))) {
   console.error(USAGE);
@@ -49,8 +49,8 @@ function run(name, files, filesAtOnce, concurrency) {
 }
 // Browser scenarios render WebGL, in software where there is no GPU, and build Python fixtures, so only a few files
 // run at once: a quarter of the cores, at most three. Each test process starts one Python host and Chromium for its
-// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its
-// whole share of the files shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
+// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process with a
+// single host. Core files run as many at once as Node runs by default, one fewer than the cores.
 const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
 // Node 22 knows the one-process option only by its experimental name.

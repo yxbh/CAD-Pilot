@@ -2,11 +2,13 @@
 // each a check stage: its Python tests, its Explorer browser scenarios and its other Explorer tests, so it takes about as
 // long as its slowest lane plus the build. Each file weighs what it added to its lane's time on that platform's runners
 // (tests/durations.json and explorer/tests/durations.json, which tools/durations.mjs refreshes from CI); the files go
-// longest first, each to a job where it leaves the slowest job quickest, and among those to the one with the least in
-// its own lane, so that each lane is spread evenly. A file not measured yet counts as the median of its lane.
+// longest first, each to a job where it leaves the slowest job quickest; among those to the one with the least in its
+// own lane, so that each lane is spread evenly, and then the least in all, so that lanes' heaviest files part. A file
+// not measured yet counts as the median of its lane.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isBrowser, testFiles } from "../explorer/scripts/test-files.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const read = (file) => readFileSync(path.join(root, file), "utf8");
@@ -29,11 +31,10 @@ export function pythonTestFiles() {
   return files.sort();
 }
 
-// The Explorer's test files, named as explorer/scripts/test.mjs takes them.
-export const explorerTestFiles = () => readdirSync(path.join(root, "explorer", "tests")).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
+export const explorerTestFiles = testFiles;
 
 const LANES = ["python", "core", "browser"];
-const laneOf = (suite, file) => (suite === "python" ? "python" : file.endsWith("-browser.test.mjs") ? "browser" : "core");
+const laneOf = (suite, file) => (suite === "python" ? "python" : isBrowser(file) ? "browser" : "core");
 
 export function shares(count, { platform = process.platform, python = pythonTestFiles(), explorer = explorerTestFiles() } = {}) {
   const measured = {
@@ -53,10 +54,12 @@ export function shares(count, { platform = process.platform, python = pythonTest
   for (const { lane, file, seconds } of files) {
     const slowest = Math.max(...jobs.map((job) => slowestLane(job.load)));
     const after = (job) => ({ ...job.load, [lane]: job.load[lane] + seconds });
-    const cost = (job) => [Math.max(slowest, slowestLane(after(job))), after(job)[lane]];
+    const total = (load) => Object.values(load).reduce((sum, seconds) => sum + seconds, 0);
+    const cost = (job) => [Math.max(slowest, slowestLane(after(job))), after(job)[lane], total(after(job))];
     const chosen = jobs.reduce((best, job) => {
-      const [[run, own], [bestRun, bestOwn]] = [cost(job), cost(best)];
-      return run < bestRun || (run === bestRun && own < bestOwn) ? job : best;
+      const [mine, theirs] = [cost(job), cost(best)];
+      const first = mine.findIndex((value, index) => value !== theirs[index]);
+      return first >= 0 && mine[first] < theirs[first] ? job : best;
     });
     chosen.load = after(chosen);
     chosen[lane].push(file);
