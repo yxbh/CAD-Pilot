@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "pyyaml"]
+dev = ["pytest", "pytest-xdist", "pyyaml"]
 
 [tool.uv]
 package = false

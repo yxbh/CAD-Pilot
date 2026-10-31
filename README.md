@@ -128,9 +128,16 @@ From the workbench root, one command runs every check: the Python suites (workbe
 node tools/check.mjs
 ```
 
-Independent stages run at the same time. Each stage's output is printed when it ends, followed by a summary; a failed stage makes the command exit nonzero, skips the stages that need it and lets the others finish. GitHub Actions runs the same command on macOS, Windows and Linux for pull requests and pushes to `main`, resolving dependencies afresh because the locks stay local.
+Independent stages run at the same time: pytest on four workers, Explorer core tests, and a few browser scenarios at once. Each stage's output is printed when it ends, with pytest's slowest tests, followed by a summary; a failed stage makes the command exit nonzero, skips the stages that need it and lets the others finish. GitHub Actions runs the same command on macOS, Windows and Linux for pull requests and pushes to `main`, resolving dependencies afresh because the locks stay local.
 
-For a smaller loop, `uv run pytest -q` covers Python, `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` exercises the maintained UI; both Explorer commands build it first when it is out of date. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations.
+While working, `node tools/check.mjs --quick` leaves out the browser scenarios; run the full check before a pull request. For a single area, `uv run pytest -q -n 4 --dist loadscope` covers Python (drop the workers for one file), `npm --prefix explorer run test:core` covers non-browser Explorer checks, and `npm --prefix explorer run test:browser` exercises the maintained UI; both Explorer commands build it first when it is out of date. See the [Explorer check matrix](explorer/README.md#validation) for targeted regressions and limitations.
+
+Keep new tests cheap:
+
+- Tests run in parallel, so each one creates its own temporary folders and runtime roots and never relies on another test's files or order. pytest keeps a module's or class's tests on one worker, so build an expensive fixture once in `setUpClass` or a module-scoped fixture, and run its independent pieces concurrently there, as the solid-check and mesh tests do.
+- Use the smallest geometry that shows the behaviour; a CAD subprocess costs seconds of imports before any modelling.
+- Wait on a condition (state, a locator, a file), never a fixed sleep, and bound work by what it does, such as CPU time or call counts, rather than wall time that other suites share.
+- Test a behaviour at the cheapest level that shows it; keep a browser scenario for what only a real page can show.
 
 Python checks cover sample geometry, direct cad CLI generation/inspection, STEP/STL/3MF round trips, output paths with spaces, skill provenance, the cad skill's common/export behavior and CLIs, the print handoff and the maintained STEP converter. Print checks that need Bambu Studio skip when it is not installed. Previous passing runs do not establish the state of a new environment. Audit Explorer dependencies when reviewing updates; a clean audit is not a security certification.
 
