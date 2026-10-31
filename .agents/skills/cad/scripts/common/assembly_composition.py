@@ -11,7 +11,8 @@ from common.assembly_spec import (
     multiply_transforms,
 )
 from common.glb import read_step_topology_manifest_from_glb
-from common.render import existing_part_glb_path, part_glb_path, relative_to_repo, sha256_file
+from common.cache import sha256_file
+from common.render import existing_part_glb_path, part_glb_path, relative_to_repo
 
 
 ASSEMBLY_COMPOSITION_SCHEMA_VERSION = 1

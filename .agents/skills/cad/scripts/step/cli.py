@@ -10,7 +10,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common.catalog import StepImportOptions
-from common.generation import generate_step_targets
+from common.generation import StepInputError, generate_step_targets
 from common.generator_module import GeneratorImportError
 from common.metadata import normalize_mesh_numeric
 
@@ -114,7 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             verbose=bool(args.verbose),
             check_solids=bool(args.check_solids),
         )
-    except GeneratorImportError as exc:
+    except (GeneratorImportError, StepInputError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
 

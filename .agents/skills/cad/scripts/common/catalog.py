@@ -182,16 +182,6 @@ def find_source_by_cad_ref(cad_ref: str, root: Path | None = None) -> CadSource 
     return source_by_cad_ref(root).get(normalized or "")
 
 
-def find_source_by_source_ref(source_ref: str, root: Path | None = None) -> CadSource | None:
-    normalized = normalize_source_ref(source_ref)
-    if not normalized:
-        return None
-    for source in iter_cad_sources(root):
-        if source.source_ref == normalized:
-            return source
-    return None
-
-
 def find_source_by_path(path: Path, root: Path | None = None) -> CadSource | None:
     resolved_path = path.resolve()
     for source in iter_cad_sources(root):
@@ -248,15 +238,6 @@ def normalize_cad_ref(raw_ref: str) -> str | None:
     if suffix in {".py", *STEP_SUFFIXES}:
         normalized = str(PurePosixPath(normalized).with_suffix(""))
     return normalized
-
-
-def artifact_path_for_step_path(step_path: Path, suffix: str) -> Path:
-    return step_path.resolve().with_suffix(suffix)
-
-
-def hidden_artifact_path_for_step_path(step_path: Path, suffix: str) -> Path:
-    base = step_path.resolve()
-    return base.with_name(f".{base.stem}{suffix}").resolve()
 
 
 def explorer_directory_for_step_path(step_path: Path) -> Path:

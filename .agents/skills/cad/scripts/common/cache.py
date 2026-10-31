@@ -7,6 +7,7 @@ platform's user cache folder.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import time
@@ -25,6 +26,15 @@ def cache_root() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches" / "cad-pilot"
     return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "cad-pilot"
+
+
+def sha256_file(path: Path) -> str:
+    """The file's content hash, the name its cache entries go by."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def cache_path(kind: str, name: str) -> Path:

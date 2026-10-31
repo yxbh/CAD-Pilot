@@ -44,16 +44,18 @@ function validateDocument(document) {
 }
 
 // Part patterns, wherever a person names parts (sequence steps, a render's hidden parts): labels resolve against
-// every node, with * and ? as the only wildcards, and a group label stands for all of its parts. A group holding
-// every part (the top-level assembly, or a wrapper around it) never matches: a step that moved the whole model would
-// have nothing to arrive at, and a pattern such as "Anchor *" written for parts must not catch an "Anchor v3" root.
-// Returns a resolver from patterns to the part occurrences' node ids and the patterns that matched nothing.
+// every part and every group someone labelled, as the cad skill's matcher resolves them, with * and ? as the only
+// wildcards, and a group label stands for all of its parts. A group nobody labelled shows a made-up name, which never
+// matches. A group holding every part (the top-level assembly, or a wrapper around it) never matches either: a step
+// that moved the whole model would have nothing to arrive at, and a pattern such as "Anchor *" written for parts
+// must not catch an "Anchor v3" root. Returns a resolver from patterns to the part occurrences' node ids and the
+// patterns that matched nothing.
 export function partResolver(model) {
   const children = new Map();
   for (const node of model.nodes) if (node.parentId) children.set(node.parentId, [...(children.get(node.parentId) ?? []), node]);
   const leavesOf = (node) => node.partId ? [node.id] : (children.get(node.id) ?? []).flatMap(leavesOf);
   const partCount = model.nodes.filter((node) => node.partId).length;
-  const candidates = model.nodes.filter((node) => node.partId || leavesOf(node).length < partCount);
+  const candidates = model.nodes.filter((node) => node.partId || (node.labelled !== false && leavesOf(node).length < partCount));
   const resolve = (patterns) => {
     const nodeIds = [];
     const unresolved = [];

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import math
 import re
 import time
@@ -55,6 +54,9 @@ from common.glb_mesh_payload import (
     scene_glb_mesh_payload,
     transform_normal_from_occ as _transform_normal_from_occ,
 )
+from common.cache import sha256_file
+from common.metadata import DEFAULT_MESH_ANGULAR_TOLERANCE
+from common.part_names import own_label
 from common.selector_types import SelectorBundle, SelectorProfile
 
 
@@ -64,8 +66,14 @@ ColorRGBA = tuple[float, float, float, float]
 
 @dataclass(frozen=True)
 class SelectorOptions:
+    """How a STEP is meshed and described for its topology index; the defaults are the one setting every index uses.
+
+    ``scripts/step`` refines them only when its mesh flags ask for finer meshes, so a STEP indexed beside its
+    generator and the same bytes indexed anywhere else describe the same faces.
+    """
+
     linear_deflection: float = 0.006
-    angular_deflection: float = 0.6
+    angular_deflection: float = DEFAULT_MESH_ANGULAR_TOLERANCE
     relative: bool = True
     edge_deflection: float | None = None
     edge_deflection_ratio: float = 0.00075
@@ -240,6 +248,17 @@ def _apply_transform_vector(transform: tuple[float, ...], vector: list[float]) -
             (transform[8] * x) + (transform[9] * y) + (transform[10] * z),
         )
     )
+
+
+def _placed_bbox(scene: "LoadedStepScene", node: "OccurrenceNode", prototype: dict[str, Any]) -> dict[str, Any]:
+    """An occurrence's exact box: its part's box moved, or, when the placement turns it off the axes, measured again."""
+    transform = node.transform
+    turned = any(
+        sum(1 for column in range(3) if abs(transform[4 * row + column]) > 1e-12) != 1 for row in range(3)
+    )
+    if not turned or node.prototype_key not in scene.prototype_shapes:
+        return _transform_bbox(prototype["bbox"], transform)
+    return _bbox_from_shape(scene_occurrence_shape(scene, node))
 
 
 def _transform_bbox(box: dict[str, Any], transform: tuple[float, ...]) -> dict[str, Any]:
@@ -658,19 +677,7 @@ def _decode_step_unicode_escapes(text: str) -> str:
 
 
 def _normalize_label_name(raw_name: object) -> str | None:
-    if raw_name is None:
-        return None
-    text = " ".join(_decode_step_unicode_escapes(str(raw_name)).split())
-    if not text:
-        return None
-    lowered = text.lower()
-    if lowered.startswith("open cascade step translator"):
-        return None
-    if lowered in {"assembly", "solid", "compound", "compsolid", "shell", "face", "wire", "edge", "vertex"}:
-        return None
-    if text.isdigit():
-        return None
-    return text
+    return None if raw_name is None else own_label(_decode_step_unicode_escapes(str(raw_name)))
 
 
 def _label_name(label: object) -> str | None:
@@ -978,7 +985,7 @@ def load_step_scene(step_path: Path) -> LoadedStepScene:
 
 def _scene_step_hash(scene: LoadedStepScene) -> str:
     if scene.step_hash is None:
-        scene.step_hash = _step_hash(scene.step_path)
+        scene.step_hash = sha256_file(scene.step_path)
     return scene.step_hash
 
 
@@ -1027,12 +1034,6 @@ def scene_occurrence_shape(scene: LoadedStepScene, node: OccurrenceNode) -> Any:
     if node.prototype_key is None or node.prototype_key not in scene.prototype_shapes:
         raise RuntimeError(f"Occurrence {occurrence_selector_id(node)} has no prototype shape")
     return _located_shape(scene.prototype_shapes[node.prototype_key], node.location)
-
-
-def scene_occurrence_prototype_shape(scene: LoadedStepScene, node: OccurrenceNode) -> Any:
-    if node.prototype_key is None or node.prototype_key not in scene.prototype_shapes:
-        raise RuntimeError(f"Occurrence {occurrence_selector_id(node)} has no prototype shape")
-    return scene.prototype_shapes[node.prototype_key]
 
 
 def scene_export_shape(scene: LoadedStepScene) -> Any:
@@ -1175,7 +1176,6 @@ def _extract_refs_prototype(
         for edge_ordinal in edge_ordinals:
             edge_face_ordinals.setdefault(edge_ordinal, []).append(face_ordinal)
 
-    face_boxes: dict[int, dict[str, Any]] = {}
     face_meshes: dict[int, dict[str, Any]] = {}
     total_face_area = 0.0
     faces: list[dict[str, Any]] = []
@@ -1183,7 +1183,6 @@ def _extract_refs_prototype(
         face = TopoDS.Face(face_map.FindKey(face_ordinal))
         surface = BRepAdaptor_Surface(face)
         geometry = _extract_face_geometry(face)
-        face_boxes[face_ordinal] = geometry["bbox"]
         face_meshes[face_ordinal] = geometry
         total_face_area += geometry["area"]
         face_data = {
@@ -1207,7 +1206,7 @@ def _extract_refs_prototype(
             face_data["params"] = params
         faces.append(face_data)
 
-    global_box = _merge_bbox(list(face_boxes.values())) if face_boxes else _bbox_from_shape(root_shape)
+    global_box = _bbox_from_shape(root_shape)  # exact, so a part's size never depends on how finely it was meshed
     diag = max(global_box["diag"], 1e-9)
     edge_deflection = options.edge_deflection if options.edge_deflection is not None else diag * options.edge_deflection_ratio
     edge_deflection = max(edge_deflection, 1e-7)
@@ -1291,8 +1290,7 @@ def _extract_refs_prototype(
     for shape_entry in shape_entries:
         shape = shape_entry["shape"]
         face_ordinals = shape_entry.get("faceOrdinals", [])
-        boxes = [face_boxes[ordinal] for ordinal in face_ordinals if ordinal in face_boxes]
-        bbox = _merge_bbox(boxes) if boxes else _bbox_from_shape(shape)
+        bbox = _bbox_from_shape(shape)
         shape_entry["bbox"] = bbox
         shape_entry["area"] = sum(faces[ordinal - 1]["area"] for ordinal in face_ordinals)
         if shape_entry["kind"] == "solid":
@@ -1333,18 +1331,6 @@ def _relative_step_path(step_path: Path) -> str:
         return resolved.relative_to(REPO_ROOT).as_posix()
     except ValueError:
         return resolved.as_posix()
-
-
-def _step_hash(step_path: Path) -> str:
-    digest = hashlib.sha256()
-    with step_path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def step_file_hash(step_path: Path) -> str:
-    return _step_hash(step_path.expanduser().resolve())
 
 
 def _normalize_selector_options(options: SelectorOptions | None) -> SelectorOptions:
@@ -1582,7 +1568,7 @@ def extract_selectors_from_scene(
             summary_shape_count += int(prototype.get("shapeCount") or 0)
             summary_face_count += int(prototype.get("faceCount") or 0)
             summary_edge_count += int(prototype.get("edgeCount") or 0)
-            bbox = _transform_bbox(prototype["bbox"], node.transform)
+            bbox = _placed_bbox(scene, node, prototype)
             entry_bbox_boxes.append(bbox)
             return {
                 "bbox": bbox,
@@ -1731,7 +1717,7 @@ def extract_selectors_from_scene(
                 edge_rows[global_edge_row][13] = segment_start
                 edge_rows[global_edge_row][14] = len(edge_proxy_ids) - segment_start
 
-        bbox = _transform_bbox(prototype["bbox"], node.transform)
+        bbox = _placed_bbox(scene, node, prototype)
         entry_bbox_boxes.append(bbox)
         return {
             "bbox": bbox,

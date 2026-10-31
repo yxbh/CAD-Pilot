@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
-import json
 import shutil
 import sys
 from collections.abc import Callable, Mapping
@@ -72,6 +71,10 @@ from common.step_scene import (
 )
 
 GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
+
+
+class StepInputError(ValueError):
+    """A target or output path on the command line that cannot be generated; reported in one line."""
 
 
 @dataclass(frozen=True)
@@ -197,14 +200,14 @@ def _resolve_cli_output_path(
         return None
     value = str(raw_output).strip()
     if not value:
-        raise ValueError(f"{tool_name} --output must be a non-empty path")
+        raise StepInputError(f"{tool_name} --output must be a non-empty path")
     try:
         resolved = command_line_path(value)
     except ValueError:
-        raise ValueError(f"{tool_name} --output must be relative to the design root or absolute on this system") from None
+        raise StepInputError(f"{tool_name} --output must be relative to the design root or absolute on this system") from None
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
-        raise ValueError(f"{tool_name} --output must end in {joined}")
+        raise StepInputError(f"{tool_name} --output must end in {joined}")
     return resolved
 
 
@@ -217,14 +220,14 @@ def _resolve_step_option_output_path(
 ) -> Path:
     value = str(raw_output or "").strip()
     if not value:
-        raise ValueError(f"{field_name} must be a non-empty path")
+        raise StepInputError(f"{field_name} must be a non-empty path")
     pure = relative_path(value)
     if pure is None:
-        raise ValueError(f"{field_name} must be relative")
+        raise StepInputError(f"{field_name} must be relative")
     resolved = (base_step_path.resolve().parent / Path(*pure.parts)).resolve()
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
-        raise ValueError(f"{field_name} must end in {joined}")
+        raise StepInputError(f"{field_name} must end in {joined}")
     return resolved
 
 
@@ -283,7 +286,7 @@ def _validate_cli_output_override(
         if candidate.source_ref == spec.source_ref:
             continue
         if resolved_output in _spec_output_paths(candidate):
-            raise ValueError(
+            raise StepInputError(
                 f"{tool_name} --output would overwrite another CAD output: "
                 f"{_display_path(output_path)} belongs to {candidate.source_ref}"
             )
@@ -299,10 +302,10 @@ def _apply_step_output_override(
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise ValueError(f"{tool_name} --output can only be used with exactly one target")
+        raise StepInputError(f"{tool_name} --output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise ValueError(f"{tool_name} --output can only be used with generated Python targets")
+        raise StepInputError(f"{tool_name} --output can only be used with generated Python targets")
     _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs, tool_name=tool_name)
     return [
         replace(
@@ -324,10 +327,10 @@ def _apply_dxf_output_override(
     if output_path is None:
         return list(selected_specs)
     if len(selected_specs) != 1:
-        raise ValueError(f"{tool_name} --output can only be used with exactly one target")
+        raise StepInputError(f"{tool_name} --output can only be used with exactly one target")
     spec = selected_specs[0]
     if spec.source != "generated":
-        raise ValueError(f"{tool_name} --output can only be used with generated Python targets")
+        raise StepInputError(f"{tool_name} --output can only be used with generated Python targets")
     _validate_cli_output_override(spec, output_path=output_path, all_specs=all_specs, tool_name=tool_name)
     return [replace(spec, dxf_path=output_path)]
 
@@ -651,14 +654,6 @@ def _ensure_step_ready(step_path: Path) -> None:
             "Fetch Git LFS objects before generating CAD artifacts.\n"
             "For Vercel Git deployments, enable Git LFS in Project Settings > Git and redeploy."
         )
-
-
-def _read_json_payload(path: Path) -> dict[str, object] | None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
 
 
 def _report_selector_manifest_change(
@@ -1159,6 +1154,14 @@ def _generate_step_outputs_for_cli(
     )
 
 
+def _target_path(target: str) -> Path:
+    """A target as typed: relative to the design root with either separator, or absolute on this system."""
+    try:
+        return command_line_path(target)
+    except ValueError:
+        return Path(target)  # names nothing here, so it is reported with the other targets not found
+
+
 def _selected_specs_for_targets(
     targets: Sequence[str],
     *,
@@ -1170,8 +1173,7 @@ def _selected_specs_for_targets(
     unresolved_targets: list[str] = []
     for target in targets:
         target_text = str(target or "").strip()
-        target_path = Path(target_text)
-        resolved = target_path.resolve() if target_path.is_absolute() else (Path.cwd() / target_path).resolve()
+        resolved = _target_path(target_text)
         source = (
             source_from_path(
                 resolved,
@@ -1190,7 +1192,7 @@ def _selected_specs_for_targets(
         return _expand_specs_with_file_dependencies(explicit_specs), explicit_specs
 
     unresolved = ", ".join(unresolved_targets)
-    raise FileNotFoundError(
+    raise StepInputError(
         "CAD target path not found or not a supported source file: "
         f"{unresolved}. Pass a Python generator or STEP/STP file path."
     )
@@ -1238,18 +1240,6 @@ def _entries_by_step_path(specs: Sequence[EntrySpec]) -> dict[Path, EntrySpec]:
     }
 
 
-def _refreshed_selected_specs(selected_specs: Sequence[EntrySpec]) -> list[EntrySpec]:
-    refreshed: list[EntrySpec] = []
-    for spec in selected_specs:
-        if spec.source == "imported":
-            refreshed.append(spec)
-            continue
-        source_path = spec.script_path or spec.source_path
-        source = source_from_path(source_path) if source_path is not None and source_path.exists() else None
-        refreshed.append(_entry_spec_from_source(source) if source is not None else spec)
-    return refreshed
-
-
 def _validate_step_target(
     spec: EntrySpec,
     *,
@@ -1257,22 +1247,21 @@ def _validate_step_target(
     tool_name: str,
 ) -> None:
     if spec.step_path is None:
-        raise ValueError(f"{tool_name} target has no STEP path: {spec.source_ref}")
+        raise StepInputError(f"{tool_name} target has no STEP path: {spec.source_ref}")
     if spec.source == "generated":
         metadata = spec.generator_metadata
         if metadata is None or not metadata.has_gen_step:
-            raise ValueError(f"{tool_name} target does not define gen_step(): {spec.source_ref}")
+            raise StepInputError(f"{tool_name} target does not define gen_step(): {spec.source_ref}")
         return
     if direct_step_kind is None:
-        raise ValueError(f"{tool_name} --kind is required for direct STEP/STP targets: {spec.source_ref}")
+        raise StepInputError(f"{tool_name} --kind is required for direct STEP/STP targets: {spec.source_ref}")
 
 
 def _existing_direct_step_targets(targets: Sequence[str]) -> list[str]:
     direct_targets: list[str] = []
     for target in targets:
         target_text = str(target or "").strip()
-        target_path = Path(target_text)
-        resolved = target_path.resolve() if target_path.is_absolute() else (Path.cwd() / target_path).resolve()
+        resolved = _target_path(target_text)
         if resolved.exists() and resolved.suffix.lower() in STEP_SUFFIXES:
             direct_targets.append(target_text)
     return direct_targets

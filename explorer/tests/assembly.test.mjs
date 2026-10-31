@@ -69,6 +69,14 @@ test("sequence labels resolve groups and wildcards to parts, and report what the
   assert.throws(() => resolveSequence(document([{ title: "Some", parts: ["cap"], from: [0, 0, 1] }, { title: "All", parts: ["base", "p*", "cap"], from: [0, 0, 1] }]), model, "x"), /step 2 moves every part/);
 });
 
+test("a group nobody labelled never matches, as in the cad skill's matcher, while its parts still do", () => {
+  // The converter names an unlabelled group after its parent ("jig 2"); only someone's own label is a group to match.
+  const unnamed = { ...model, nodes: model.nodes.map((node) => node.id === "pins" ? { ...node, label: "jig 2", labelled: false } : node) };
+  const steps = resolveSequence(document([{ title: "Pins", parts: ["jig 2", "pin_*"], from: [0, 0, 1] }]), unnamed, "x").steps;
+  assert.deepEqual(steps[0].unresolved, ["jig 2"]);
+  assert.deepEqual(steps[0].nodeIds, ["pin-1", "pin-2"]);
+});
+
 test("steps place parts from their offsets, carry earlier parts and animate fractional positions", () => {
   const state = { ...initialState(), assembly: sequence, step: 0 };
   assert.deepEqual(placed(state, 0), { base: [0, 0, 0], "pin-1": [0, 0, 31], "pin-2": [2, 0, 31], cap: [0, 0, 22] });

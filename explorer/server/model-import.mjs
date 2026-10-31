@@ -76,9 +76,10 @@ async function publish(temporary, destination, verify) {
   }
 }
 
-async function convertStep(source, attempt, python, sourceHash) {
+async function convertStep(source, attempt, python, sourceHash, name) {
   const output = path.join(attempt, "model.json");
-  await python("convert.py", [source, "--output", output]);
+  // The snapshot is named by its hash; unnamed parts are named after the file as people know it.
+  await python("convert.py", [source, "--output", output, `--name=${name}`]);
   if ((await stat(output)).size > maxJsonBytes) throw new PrototypeError("model_too_large", "Converted mesh exceeds the viewer's size limit", 413);
   const model = validateModel(JSON.parse(await readFile(output, "utf8")), { requireRevision: false });
   Object.assign(model, importDiagnostics(model));
@@ -112,7 +113,7 @@ export async function prepareModelSnapshot({ resolved, bytes: suppliedBytes, dis
     await writeFile(stagedSource, bytes, { flag: "wx" });
     const name = displayName || path.basename(resolved);
     const { model, output, geometry } = format === "step"
-      ? await convertStep(stagedSource, attempt, python, sourceHash)
+      ? await convertStep(stagedSource, attempt, python, sourceHash, name)
       : await convertMesh(stagedSource, attempt, python, sourceHash, format, meshOptions(options), name);
     model.source.name = name;
     model.topologyRevision = topologyRevision(model);

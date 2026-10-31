@@ -21,13 +21,20 @@ class NormalizeCadPathTests(unittest.TestCase):
             "C:\\Users\\me\\plate.step": "C:/Users/me/plate",
             "C:/Users/me/plate": "C:/Users/me/plate",
             "outputs/plate/": "outputs/plate",
+            "./outputs/plate.step": "outputs/plate",
+            ".\\outputs\\plate.step": "outputs/plate",
+            "outputs/../outputs/pin.step": "outputs/pin",
+            "outputs//plate": "outputs/plate",
+            "outputs/../../vendor/plate": "../vendor/plate",
+            "/home/../plate": "/plate",
+            "//server/share/parts/plate.step": "//server/share/parts/plate",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw):
                 self.assertEqual(expected, normalize_cad_path(raw))
 
     def test_rejected_spellings(self) -> None:
-        for raw in ("", "/", "..", "./plate", "outputs/../plate", "outputs//plate", "/home/../plate", "C:/"):
+        for raw in ("", "/", "..", ".", "outputs/..", "/../plate", "C:/", "C:plate", ".step", "outputs/.step"):
             with self.subTest(raw=raw):
                 self.assertIsNone(normalize_cad_path(raw))
 
@@ -60,6 +67,10 @@ class CanonicalCadPathTests(unittest.TestCase):
         (token,) = step_targets.cad_tokens(f"@cad[{self.root.as_posix()}/parts/foo#o1.2.f3]")
         self.assertEqual(("parts/foo", ("o1.2.f3",)), (token.cad_path, token.selectors))
         self.assertEqual("parts/foo", step_targets.entry_target_from_target("/parts/foo.step").cad_path)
+        for typed in ("./parts/foo.step", "parts/../parts/foo.step", ".\\parts\\foo.step"):
+            with self.subTest(typed=typed):
+                self.assertEqual("parts/foo", step_targets.entry_target_from_target(typed).cad_path)
+                self.assertEqual(self.root / "parts" / "foo.step", step_targets.resolve_step_target(typed).step_path)
 
 
 if __name__ == "__main__":

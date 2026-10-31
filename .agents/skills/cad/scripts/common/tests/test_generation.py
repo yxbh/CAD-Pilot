@@ -821,7 +821,7 @@ class CadGenerationTests(unittest.TestCase):
     def test_step_toml_target_is_not_supported(self) -> None:
         (self.temp_root / "broken.step.toml").write_text('kind = "part"\n', encoding="utf-8")
 
-        with self.assertRaisesRegex(FileNotFoundError, "Python generator or STEP/STP file path"):
+        with self.assertRaisesRegex(cad_generation.StepInputError, "Python generator or STEP/STP file path"):
             cad_generation.generate_step_targets([str(self.temp_root / "broken.step.toml")])
 
     def test_direct_step_generation_requires_kind(self) -> None:
@@ -1371,7 +1371,7 @@ class CadGenerationTests(unittest.TestCase):
             step_options=self._step_options(
                 three_mf="printable.3mf",
                 mesh_tolerance=0.4,
-                mesh_angular_tolerance=0.3,
+                mesh_angular_tolerance=0.05,  # finer than the 0.1 default; a coarser value changes nothing
             ),
         )
         spec = selected_specs[0]
@@ -1432,7 +1432,7 @@ class CadGenerationTests(unittest.TestCase):
 
         three_mf_export_mock.assert_called_once()
         self.assertTrue(any(
-            call.kwargs.get("linear_deflection") <= 0.4 and call.kwargs.get("angular_deflection") == 0.3
+            call.kwargs.get("linear_deflection") <= 0.4 and call.kwargs.get("angular_deflection") == 0.05
             for call in mesh_scene.mock_calls
         ))
         self.assertIsNotNone(spec.three_mf_path)
