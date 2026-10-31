@@ -6,7 +6,17 @@ export function revisionLabel(sha256) {
   return sha256 ? sha256.slice(0, 12) : "";
 }
 
-export function stateSummary(state, { url, changedOnDisk = false, problem = "" } = {}) {
+// The camera as every answer reports it: the preset or angle it was fitted to, its projection and, from the camera that
+// drew the view, viewHeight, the view's height in millimetres at the target.
+export function cameraSummary(state, drawn) {
+  return {
+    view: state.cameraPinned ? "moved by the user" : state.cameraPreset, projection: state.projection,
+    ...(drawn?.viewHeight ? { viewHeight: drawn.viewHeight } : {}),
+  };
+}
+
+// drawnCamera: the camera of the renderer that drew the current revision, if one has.
+export function stateSummary(state, { url, changedOnDisk = false, problem = "", drawnCamera } = {}) {
   const labels = new Map(state.parts.map((part) => [part.id, part.label]));
   const name = (id) => labels.get(id) ?? id;
   const steps = state.assembly?.steps ?? [];
@@ -24,8 +34,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "" }
   });
   const view = {
     revision: state.revision,
-    camera: state.cameraPinned ? "moved by the user" : state.cameraPreset,
-    projection: state.projection,
+    camera: cameraSummary(state, drawnCamera),
     appearance: state.appearance === "studio" ? `studio ${state.materialFinish}` : "inspect",
     ...(state.showEdges ? {} : { outlines: false }),
     ...(state.explode ? { explode: { amount: state.explode, direction: state.direction, ...(state.fixedId ? { fixed: name(state.fixedId) } : {}) } } : {}),

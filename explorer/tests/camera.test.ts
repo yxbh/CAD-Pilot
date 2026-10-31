@@ -17,8 +17,7 @@ test("resizing only changes horizontal coverage for both projections, including 
   const rig = new CameraController();
   rig.resize(1100, 750);
   for (const projection of ["perspective", "orthographic"] as const) {
-    rig.setProjection(projection);
-    rig.fit(bounds, "iso");
+    rig.fit(bounds, "iso", projection);
     rig.target.add(new Vector3(11, -8, 4));
     rig.camera.position.add(new Vector3(7, 2, -6));
     rig.camera.zoom = 2.7;
@@ -48,7 +47,7 @@ test("all six axis views look along the correct signed world axis with world Z u
   const rig = new CameraController();
   rig.resize(1000, 700);
   for (const axis of axisViews) {
-    rig.fit(bounds, axis.id);
+    rig.fit(bounds, axis.id, "perspective");
     const facing = rig.camera.position.clone().sub(rig.target).normalize();
     close(facing.distanceTo(new Vector3(...axis.direction)), 0, 1e-4);
     close(rig.camera.getWorldDirection(new Vector3()).dot(facing), -1);
@@ -61,7 +60,7 @@ test("dragging sideways from any view spins the model about world Z", () => {
   const rig = new CameraController();
   rig.resize(1000, 700);
   for (const preset of ["iso", ...axisViews.map((axis) => axis.id)] as const) {
-    rig.fit(bounds, preset);
+    rig.fit(bounds, preset, "perspective");
     const offset = rig.camera.position.clone().sub(rig.target);
     const up = screenUp(rig);
     const orbit = new OrbitControls(rig.camera);
@@ -88,7 +87,7 @@ test("restoring a camera saved with a non-Z up keeps its view and screen orienta
 test("projection round trips preserve target, orientation and target-plane image size, including ortho zoom", () => {
   const rig = new CameraController();
   rig.resize(1100, 750);
-  rig.fit(bounds, "iso");
+  rig.fit(bounds, "iso", "perspective");
   rig.target.add(new Vector3(10, -5, 3));
   rig.update();
   const first = rig.snapshot();
@@ -113,7 +112,7 @@ test("projection round trips preserve target, orientation and target-plane image
 test("orthographic projection has equal scale at different depths; perspective does not", () => {
   const rig = new CameraController();
   rig.resize(900, 600);
-  rig.fit(bounds, "front");
+  rig.fit(bounds, "front", "perspective");
   const projectedWidth = (depth: number) => {
     const a = new Vector3(-10, depth, 0).project(rig.camera);
     const b = new Vector3(10, depth, 0).project(rig.camera);
@@ -129,13 +128,25 @@ test("fit includes all bbox corners for both projections, tiny/large models and 
     rig.resize(width, height);
     const box: Bounds = { min: bounds.min.map((n) => n * scale) as Bounds["min"], max: bounds.max.map((n) => n * scale) as Bounds["max"] };
     for (const projection of ["perspective", "orthographic"] as const) for (const preset of ["iso", ...axisViews.map((axis) => axis.id)] as const) {
-      rig.setProjection(projection);
-      rig.fit(box, preset);
+      rig.fit(box, preset, projection);
       for (let corner = 0; corner < 8; corner++) {
         const p = new Vector3(...[0, 1, 2].map((axis) => (corner & (1 << axis) ? box.max : box.min)[axis]) as Bounds["min"]).project(rig.camera);
         assert.ok(Math.abs(p.x) < 1 && Math.abs(p.y) < 1 && Math.abs(p.z) < 1, `${projection}/${preset}: ${p.toArray()}`);
       }
     }
+  }
+});
+test("a fit frames the view the same whichever projection the camera had before", () => {
+  for (const projection of ["perspective", "orthographic"] as const) {
+    const heights = (["perspective", "orthographic"] as const).map((before) => {
+      const rig = new CameraController();
+      rig.resize(1280, 800);
+      rig.setProjection(before);
+      rig.fit(bounds, "iso", projection);
+      assert.equal(rig.projection, projection);
+      return viewHeight(rig.camera, rig.target);
+    });
+    close(heights[0], heights[1]);
   }
 });
 test("legacy perspective snapshots and ortho zoom/pan restore without changing their view footprint", () => {

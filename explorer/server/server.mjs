@@ -237,7 +237,9 @@ async function startOwnedService({
       const info = await stat(path.join(project, state.source.file)).catch(() => null);
       changedOnDisk = !info || info.size !== state.source.size || info.mtime.toISOString() !== state.source.generatedAt;
     }
-    return stateSummary(getState(), { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem });
+    const current = getState();
+    const report = { viewer: lastRendered, headless: lastHeadless }[current.renderers.drawn];
+    return stateSummary(current, { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera });
   }
 
   async function python(script, args) {
