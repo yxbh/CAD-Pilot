@@ -13,6 +13,7 @@ import pytest
 from build123d import Box, Cylinder, Pos, export_step
 
 from print.bambu import BambuStudio, BambuStudioError, CliRun
+from common.tests import cli_host
 from common.threemf import CORE_NS
 from print.bambu3mf import CALIBRATION_KEY, write_project
 from print.layout import Rect
@@ -194,7 +195,8 @@ def test_project_has_named_plates_supports_and_slices(tmp_path):
 @needs_bambu
 def test_cli_writes_a_single_part_project_and_reports_its_path(tmp_path):
     export_step(Pos(0, 0, 3) * Box(20, 20, 6), str(tmp_path / "plate.step"))
-    result = _cli(_home(tmp_path, PROFILE), tmp_path, "project", "plate.step", "--copies", "2", "--colour", "#C12E1F", "--slice")
+    # The launcher as a user starts it; the other commands here run in a test host (common/tests/cli_host.py).
+    result = _cli(_home(tmp_path, PROFILE), tmp_path, "project", "plate.step", "--copies", "2", "--colour", "#C12E1F", "--slice", own_process=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines()[-1] == f"3MF: {(tmp_path / 'plate.3mf').resolve()}"
     assert "plate 1 \"plate\": " in result.stdout and "#C12E1F" in result.stdout
@@ -355,9 +357,11 @@ def test_a_calibration_coupon_slices_at_zero_whatever_the_profile_measured(tmp_p
     assert hole == pytest.approx(1.5 + 0.21, abs=0.02)  # not 0.1 mm further out, as PETG's measured value would put it
 
 
-def _cli(home: Path, cwd: Path, *arguments: str) -> subprocess.CompletedProcess:
+def _cli(home: Path, cwd: Path, *arguments: str, own_process: bool = False) -> subprocess.CompletedProcess:
     env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
-    return subprocess.run([sys.executable, str(LAUNCHER), *arguments], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    if own_process:
+        return subprocess.run([sys.executable, str(LAUNCHER), *arguments], cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    return cli_host.run(LAUNCHER, *arguments, cwd=cwd, env=env)
 
 
 def _home(tmp_path: Path, profile: dict) -> Path:
