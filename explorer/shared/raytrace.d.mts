@@ -8,6 +8,6 @@ export const SOFTWARE_SECONDS: number;
 export const MAX_SAMPLES: number;
 export const MAX_SECONDS: number;
 export type TraceLimits = { samples: number; seconds: number };
-export type TraceReport = { samples: number; asked: number; seconds: number; waited: number; stopped: "samples" | "time"; software: boolean; renderer: string };
+export type TraceReport = { samples: number; asked: number; seconds: number; waited: number; stopped: "samples" | "time" | "untraced"; software: boolean; renderer: string };
 export function traceLimits(input?: { samples?: number; seconds?: number }): TraceLimits;
 export function traceAnswer(trace: unknown): (Omit<TraceReport, "software"> & { note?: string }) | null;

@@ -31,6 +31,9 @@ test("a traced image's answer gives its samples and times, and says when softwar
   const finished = traceAnswer({ samples: 16, asked: 16, seconds: 3, waited: 60, stopped: "samples", software: true, renderer: "SwiftShader" });
   assert.match(finished.note, new RegExp(`then 3 s for 16 samples\\. Software tracing stops after ${SOFTWARE_SECONDS} s`));
   assert.equal(traceAnswer(undefined), null);
+  const page = traceAnswer({ samples: 0, asked: 128, seconds: 0, waited: 0, stopped: "untraced", software: true, renderer: "SwiftShader" });
+  assert.equal(page.stopped, "untraced");
+  assert.match(page.note, /not ray traced/);
   assert.equal(traceAnswer({ samples: "many" }), null);
 });
 

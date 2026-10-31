@@ -15,7 +15,9 @@ export const IMAGE_SECONDS = 60;
 // Software WebGL (no usable GPU) traces a sample in seconds rather than milliseconds, so an image waits at most this long.
 export const SOFTWARE_SECONDS = 20;
 export const MAX_SAMPLES = 4096;
-export const MAX_SECONDS = 600;
+// The longest an image traces: with preparing and compiling first, it still answers within the five minutes a request
+// from the command line waits.
+export const MAX_SECONDS = 90;
 
 /** A capture's ray-tracing limits from its input: samples and seconds, either optional; throws a RangeError naming the problem. */
 export function traceLimits({ samples, seconds } = {}) {
@@ -35,15 +37,19 @@ export function traceLimits({ samples, seconds } = {}) {
 /**
  * What the answer says about a traced image: the samples it got of those asked for, how long it traced and waited in
  * all (preparing the scene and compiling the tracer first) and on what, with a note when software rendering capped it.
- * trace is the renderer's report: { samples, asked, seconds, waited, stopped, software, renderer }.
+ * trace is the renderer's report: { samples, asked, seconds, waited, stopped, software, renderer }; stopped is "untraced" for
+ * a page drawing in software, which shows Studio's view.
  */
 export function traceAnswer(trace) {
   if (!trace || typeof trace !== "object" || !Number.isFinite(trace.samples)) return null;
   const round = (value) => Math.round(value * 10) / 10;
   const answer = {
     samples: trace.samples, asked: trace.asked, seconds: round(trace.seconds), waited: round(trace.waited),
-    stopped: trace.stopped === "samples" ? "samples" : "time", renderer: String(trace.renderer ?? ""),
+    stopped: ["samples", "untraced"].includes(trace.stopped) ? trace.stopped : "time", renderer: String(trace.renderer ?? ""),
   };
+  if (answer.stopped === "untraced") {
+    return { ...answer, note: "This page draws with software WebGL, so it shows Studio's view and its image is not ray traced. Images from the background renderer still trace." };
+  }
   if (!trace.software) return answer;
   const prepared = `Drawn with software WebGL, as no usable GPU was found: the path tracer took ${round(trace.waited - trace.seconds)} s to prepare and compile`;
   return {

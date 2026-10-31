@@ -636,6 +636,8 @@ async function startOwnedService({
       if (!target) throw new PrototypeError("renderer_failed", "The background renderer disconnected before the capture", 503);
     }
     headless?.touch();
+    // The background renderer stops once idle; one drawing a long capture (a traced image) is not.
+    const awake = target[1].kind === "headless" ? setInterval(() => headless?.touch(), 30_000) : null;
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -646,7 +648,7 @@ async function startOwnedService({
       const request = { id, revision, reviewId: review?.id ?? null, reviewVersion: review?.version, ...options };
       captures.set(id, { ...request, kind: target[1].kind, resolve, reject, timer });
       send(target[0], "capture", request);
-    });
+    }).finally(() => clearInterval(awake));
   }
 
   // Images are stored by content: an unchanged view captured again reuses its file.

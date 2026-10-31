@@ -6,7 +6,10 @@ GPU process for a minute or more; the test's capture traces in the background re
 
 import argparse
 import json
+import re
 from pathlib import Path
+
+from playwright.sync_api import expect
 
 from browser_session import BrowserSession, launch_chromium, sync_playwright
 
@@ -25,8 +28,9 @@ def run(url, output):
             # The box follows the view, which changes once the command is answered.
             page.get_by_label("Ray traced").click()
             state = session.wait(lambda current: current["appearance"] == "raytraced" and current["rendered"]["revision"] == current["revision"])
+            # A GPU compiles the tracer in seconds and counts samples; without one the page says it stays on Studio's view.
             status = page.locator(".trace-status")
-            status.wait_for()
+            expect(status).to_have_text(re.compile(r"Ray traced · \d+ of 512 samples|Ray tracing needs a GPU"), timeout=60_000)
             report = {
                 "appearance": state["appearance"], "status": status.inner_text(),
                 "studioPressed": page.get_by_role("button", name="Studio appearance").get_attribute("aria-pressed"),

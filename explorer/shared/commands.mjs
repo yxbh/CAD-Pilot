@@ -120,7 +120,7 @@ export const COMMANDS = Object.freeze({
     background: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Background colour for this image only, such as #ffffff." },
     analysis: { ...objectSchema(analysis), description: "Analysis settings for this image only, over the view's own (see set_analysis)." },
     samples: { type: "integer", minimum: 1, maximum: MAX_SAMPLES, description: "Ray trace this image to this many samples (default 128 when only the view is ray traced)." },
-    seconds: { type: "number", exclusiveMinimum: 0, maximum: MAX_SECONDS, description: "Ray trace this image for at most this long (default 60 s; software WebGL stops sooner and says so)." },
+    seconds: { type: "number", exclusiveMinimum: 0, maximum: MAX_SECONDS, description: "Ray trace this image for at most this long: 60 s by default, or with samples alone as long as they take, within the most. Software WebGL stops sooner and says so." },
   }, [], { revision: "unchecked", render: "capture", duringReview: true }),
   list_reviews: read("List saved drawing review summaries."),
   get_review: read("Read a review's source, captured pose and mark count without image bytes.", { id: { type: "string" } }, ["id"]),

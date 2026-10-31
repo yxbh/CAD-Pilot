@@ -619,7 +619,8 @@ export default function Scene(props: Props) {
           faceId={state.selectedFace?.nodeId === placement.node.id ? state.selectedFace.faceId : null}
           edgeId={state.selectedEdge?.nodeId === placement.node.id ? state.selectedEdge.edgeId : null}
           point={state.selectedPoint?.nodeId === placement.node.id ? state.selectedPoint.point : null}
-          hovered={hovered?.nodeId === placement.node.id && hovered.faceId === null && !hovered.edgeId}
+          // A hovered part's colour would start the trace over at every move of the pointer.
+          hovered={!traced && hovered?.nodeId === placement.node.id && hovered.faceId === null && !hovered.edgeId}
           hoverFaceId={state.selectionMode === "face" && hovered?.nodeId === placement.node.id ? hovered.faceId : null}
           hoverEdgeId={state.selectionMode === "edge" && hovered?.nodeId === placement.node.id ? hovered.edgeId ?? null : null}
           selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}

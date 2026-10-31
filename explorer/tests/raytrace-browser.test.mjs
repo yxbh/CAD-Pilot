@@ -9,7 +9,7 @@ test("the ray-traced view is set from the page's appearance settings and traced 
     assert.deepEqual(report.pageErrors, []);
     assert.equal(report.appearance, "raytraced");
     assert.equal(report.studioPressed, "true", "Ray traced is Studio's light, traced");
-    assert.match(report.status, /Preparing the ray-traced view|Compiling the path tracer|Ray traced · \d+ of 512 samples|Ray tracing needs a GPU/);
+    assert.match(report.status, /Ray traced · \d+ of 512 samples|Ray tracing needs a GPU/);
 
     // With the page closed, the background renderer traces the image to the samples asked for: it compiles the tracer
     // first, which software WebGL takes about a minute over and says so. A traced image leaves analysis views out.
@@ -22,6 +22,10 @@ test("the ray-traced view is set from the page's appearance settings and traced 
     assert.ok(traced.raytrace.waited >= traced.raytrace.seconds);
     if (/SwiftShader|llvmpipe|Basic Render/i.test(traced.raytrace.renderer)) assert.match(traced.raytrace.note, /software WebGL/);
     else assert.equal(traced.raytrace.note, undefined);
+    // A new size of the same shape traces again rather than handing back the last size's samples, cleared.
+    const larger = await service.captureImage({ width: 400, height: 300, samples: 3, seconds: 30 });
+    assert.ok(larger.raytrace.samples >= 1, JSON.stringify(larger.raytrace));
+    assert.equal(larger.width, 400);
     await service.execute("set_appearance", { mode: "studio" });
     const studio = await service.captureImage({ width: 200, height: 150 });
     assert.equal(studio.raytrace, undefined);
