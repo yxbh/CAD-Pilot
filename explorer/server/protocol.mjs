@@ -7,6 +7,7 @@ import {
 import { displayedWorldBounds, sequenceOffsets, sequencePose, STEP_MODES } from "../shared/placement.mjs";
 import { attachMeshGeometry, MESH_FORMATS, meshViews, pointOnTriangle, triangleCorners } from "../shared/mesh.mjs";
 import { referenceEntity, roundPoint } from "../shared/references.mjs";
+import { applyAnalysis, defaultAnalysis } from "../shared/analysis.mjs";
 
 export const SELECTION_MODES = Object.freeze(["face", "edge", "point", "part"]);
 
@@ -26,7 +27,7 @@ export function initialState() {
     assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
     activeReviewId: null, camera: null, cameraPinned: false,
-    projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true,
+    projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true, analysis: defaultAnalysis(),
     section: { enabled: false, axis: "x", position: 0, flipped: false },
     // Where the main file came from: project-relative path (empty for uploads and the demo), its modified time, size
     // and SHA-256, which is the revision a person is told about; documentRevision identifies the whole view.
@@ -39,7 +40,7 @@ export function initialState() {
 }
 
 // Display preferences belong to the person, not to one model, so a newly loaded STEP keeps them.
-const preferences = ["autoCopy", "selectionMode", "projection", "appearance", "materialFinish", "showEdges", "cameraPreset"];
+const preferences = ["autoCopy", "selectionMode", "projection", "appearance", "materialFinish", "showEdges", "analysis", "cameraPreset"];
 
 // Regenerating a design keeps the view when every occurrence keeps its id, parent, kind and name in the assembly tree.
 // Unnamed parts are named after the file people opened, never its snapshot, so a regeneration keeps their names too.
@@ -265,6 +266,12 @@ export function changeView(state, model, name, input = {}) {
         next.showEdges = input.showEdges;
       } else if (input.mode !== undefined && input.mode !== state.appearance) next.showEdges = input.mode === "inspect";
       break;
+    case "set_analysis": {
+      const { expectedRevision, ...settings } = input;
+      if (!Object.keys(settings).length) throw new PrototypeError("bad_analysis", "Supply a map or an overlay or setting to change");
+      next.analysis = analysisInput(state.analysis, settings);
+      break;
+    }
     case "set_section": {
       if (input.enabled === undefined && input.axis === undefined && input.position === undefined && input.flipped === undefined) {
         throw new PrototypeError("bad_section", "Supply an enabled flag, X/Y/Z axis, model-world position or flipped side");
@@ -316,6 +323,12 @@ export function changeView(state, model, name, input = {}) {
       throw new PrototypeError("unknown_command", `Unknown command: ${name}`);
   }
   return next;
+}
+
+/** The view's analysis settings with an input applied, for set_analysis and a capture's own settings. */
+export function analysisInput(current, input) {
+  try { return applyAnalysis(current, input); }
+  catch (error) { throw new PrototypeError("bad_analysis", error.message); }
 }
 
 function sequenceHidden(state) {
