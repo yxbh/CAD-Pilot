@@ -12,9 +12,11 @@ from common.selector_types import SelectorBundle
 
 
 STEP_TOPOLOGY_EXTENSION = "STEP_topology"
-# Bump when the selector extraction in step_scene or the GLB topology changes how a STEP is numbered or described.
-# Sidecars beside STEPs and the per-user cache's indexes carry it, so neither is read once it is out of date.
-STEP_TOPOLOGY_SCHEMA_VERSION = 2
+# Sidecars beside STEPs and the per-user cache's indexes carry it, and cache files are named by it, so neither is read
+# once it is out of date. Bump it when the selector extraction in step_scene or the GLB topology changes how a STEP is
+# numbered or described, always to a number no earlier tools used in either place: tools of different versions share
+# one cache, and two writing the same file name would keep replacing each other's index.
+STEP_TOPOLOGY_SCHEMA_VERSION = 3
 GLB_MAGIC = 0x46546C67
 GLB_VERSION = 2
 REPO_ROOT = Path.cwd().resolve()
