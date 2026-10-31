@@ -10,10 +10,9 @@ from pathlib import Path
 import time
 
 import numpy as np
-from playwright.sync_api import sync_playwright
 import trimesh
 
-from browser_session import BrowserSession, launch_chromium
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 WORKBENCH = Path(__file__).resolve().parents[2]
 

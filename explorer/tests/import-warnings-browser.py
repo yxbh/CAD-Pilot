@@ -11,8 +11,8 @@ from OCP.TopAbs import TopAbs_EDGE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Compound
 from OCP.gp import gp_Pnt
-from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession, launch_chromium
+from playwright.sync_api import expect
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 def rounded_fixture(path):

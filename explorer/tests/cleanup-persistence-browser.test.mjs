@@ -8,6 +8,7 @@ import test from "node:test";
 import { explorerRoot, workbenchRoot, workbenchPython } from "../server/paths.mjs";
 import { initialState } from "../server/protocol.mjs";
 import { createReference } from "../shared/references.mjs";
+import { runPython } from "./python-host.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
 
 const execute = promisify(execFile);
@@ -126,9 +127,7 @@ test("fresh cleanup measurements survive an immutable legacy cache, failed loads
     await service.execute("open_review", { id: review.id });
     assert.equal(await readFile(reviewFile, "utf8"), reviewBytes);
     await service.execute("close_review");
-    const browser = await execute(workbenchPython, [
-      "-B", browserScript, "--url", service.url, "--output", output, "--restored-cleanup",
-    ], { timeout: 45_000, maxBuffer: 1024 * 1024 });
+    const browser = await runPython("import-warnings-browser.py", ["--url", service.url, "--output", output, "--restored-cleanup"], { timeout: 45_000 });
     t.diagnostic(browser.stdout.trim());
     assert.deepEqual((await reopen()).cleanup, original.cleanup, "Browser camera writes must preserve counts across another provider restart");
 

@@ -1,24 +1,33 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { cp, mkdir, mkdtemp } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { assertBuilt } from "../server/launcher.mjs";
 import { explorerRoot, workbenchRoot } from "../server/paths.mjs";
-import { workbenchPython } from "../server/paths.mjs";
 import { createHeadlessRenderer } from "../server/renderer.mjs";
+import { runPython } from "./python-host.mjs";
 import { createTestRuntime } from "./service-fixture.mjs";
-
-const execute = promisify(execFile);
 
 export async function runBrowser(script, { url, output, timeout = 210_000 }) {
   await assertBuilt();
-  const result = await execute(workbenchPython, [
-    "-B", path.join(explorerRoot, "tests", script), "--url", url, "--output", output,
-  ], { cwd: explorerRoot, encoding: "utf8", timeout, maxBuffer: 2 * 1024 * 1024 });
+  const result = await runPython(script, ["--url", url, "--output", output], { timeout });
   if (result.stderr) console.error(result.stderr.trim());
   return result;
+}
+
+// The demo assembly and its sequence, written once per test process. Each browser test's runtime gets a copy, where
+// the service finds it and skips building it again; core tests still build it themselves.
+let demo;
+function demoTemplate() {
+  demo ??= (async () => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), "cad-explorer-demo-"));
+    process.once("exit", () => rmSync(folder, { recursive: true, force: true }));
+    await runPython(path.join(explorerRoot, "python", "create_demo.py"), ["--output", path.join(folder, "demo-assembly.step")]);
+    return folder;
+  })();
+  return demo;
 }
 
 export async function withBrowserView(name, run) {
@@ -27,6 +36,7 @@ export async function withBrowserView(name, run) {
   await mkdir(output, { recursive: true });
   const runtime = await createTestRuntime();
   try {
+    await cp(await demoTemplate(), runtime.runtimeRoot, { recursive: true });
     const service = await runtime.createService({ projectRoot: workbenchRoot, viewId, renderer: createHeadlessRenderer });
     await service.initialize();
     assert.equal(service.getState().error, "");
