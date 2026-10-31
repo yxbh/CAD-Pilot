@@ -36,7 +36,10 @@ Printer, process, build plate, filaments, colours and supports are stored once p
       "colour": "#9E9E9E",
       "compensation": {
         "Bambu Lab H2D 0.4 nozzle": {
-          "hole": {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01}
+          "hole": {
+            "mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01,
+            "process": "0.20mm Standard @BBL H2D", "filament_preset": "Bambu PETG Basic @BBL H2D 0.4 nozzle"
+          }
         }
       }
     },
@@ -52,7 +55,7 @@ Printer, process, build plate, filaments, colours and supports are stored once p
 - `filament` names the default entry of `filaments`; parts pick another by its key.
 - `support.type` is `tree(auto)` or `normal(auto)`. `interface_filament` names a filament printed as the support's contact layer under parts in another material, such as PLA under PETG, which peels off cleanly.
 - `process_settings` are Bambu process settings applied to every project, written as text the way Bambu Studio writes them (`"wall_loops": "4"`, not `4`, which Bambu ignores). Bambu Studio shows them, and the support settings, as changes to the process preset. Hole and contour compensation (`xy_hole_compensation`, `xy_contour_compensation`, `enable_circle_compensation`) are refused here: they are measured per printer and filament.
-- A filament's `compensation` holds what calibration coupons measured, by printer preset: `hole` and `contour`, each with `mm` (per side, as Bambu applies it), the date `measured`, and the `resolution` and `slice_closing_radius` in force then. `save-compensation` writes it; do not type values in by hand.
+- A filament's `compensation` holds what calibration coupons measured, by printer preset: `hole` and `contour`, each with `mm` (per side, as Bambu applies it), the date `measured`, and what the coupon's project sliced with: its `resolution`, `slice_closing_radius` and `process`, and the `filament_preset`. `save-compensation` writes it; do not type values in by hand.
 
 When the file is missing, ask the user, one plain question at a time, which printer and nozzle, quality, filament and colour, build plate and supports they use, then write it and run `profile`. Do not infer these from 3MFs in Downloads, another project or the example above.
 
@@ -84,16 +87,16 @@ A job file, conventionally `<name>.print.json` beside the project's print output
 
 ## Hole and contour compensation
 
-Holes print smaller than modelled, mainly because the plastic contracts as it cools, and outer edges can print a little off size. Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent, and under the fdm-design skill's fit rule they are the one place shrinkage is corrected.
+Bambu Studio's X-Y hole compensation grows every hole a layer encloses by its value on each side (0.1 mm turns a 6.0 mm hole into 6.2 mm) and leaves the outer size alone; X-Y contour compensation moves the outer edge, such as a peg's, the same way. The two are independent. The fdm-design skill's fit rule says why holes print small and why one offset per side corrects it; under that rule these two settings are the only correction for it.
 
-`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the resolution or closing radius the project slices at differs from the one in force when the value was measured: it holds only at those settings, so measure again or put them back.
+`project` writes each object's compensation as its own Bambu Studio setting, so parts in different filaments on one plate each get their filament's values; Bambu Studio applies them over the project's. A value is the one measured for the part's filament on the profile's printer, or 0 when none is. The report lists, per part, both values and whether each is measured (with its date) or unmeasured, and warns when the process, the part's filament preset, the resolution or the closing radius differs from those the value was measured with: it holds only with those, so measure again or put them back.
 
 To measure a filament's compensation:
 
-1. Run the pre-print checks in the fdm-design skill (dry filament, flow dynamics, elephant foot), then ask the user which real part they will test with: a screw for holes, or a hole of known size, such as a bearing's bore, for pegs. `--diameter` is that part's size.
+1. Run the pre-print checks in the fdm-design skill (dry filament, flow dynamics, elephant foot), then ask the user which real part they will test with, near the size their fits use: for holes, a smooth pin such as a dowel pin, a drill bit's shank or a gauge pin, not a screw, whose thread bites and makes a snug fit hard to judge; for pegs, a hole of known size, such as a bearing's bore. Have them measure it with calipers: `--diameter` is that measurement, not the nominal size (an M3 screw, for one, measures about 2.9 mm).
 2. `coupon --calibrate holes` writes a bar of holes; `--calibrate pegs` writes a row of pegs on a base. Each rung is the part's diameter plus one compensation value on each side (`--values`, by default 0 to 0.25 mm for holes and -0.15 to 0.1 mm for pegs), marked with as many dimples as its place in the row. It writes the STEP and a project 3MF beside it, sliced with hole and contour compensation forced to 0 whatever the profile holds. Give the user the dimple legend from the report with the 3MF.
 3. The user prints it and tries the part: the hole it fits snugly without wobble, or the peg that fits the hole that way. That rung's value is the compensation. A part that fits none needs another range of `--values`.
-4. `save-compensation coupons/petg-holes.3mf --filament PETG --hole 0.1` (or `--contour`) shows what it would record for the profile's printer: the value, today's date, and the resolution and closing radius the coupon's project sliced at. It refuses a coupon made for another printer or filament. Ask the user, then run it again with `--write`.
+4. `save-compensation coupons/petg-holes.3mf --filament PETG --hole 0.1` (`--contour` for pegs) shows what it would record for the profile's printer: the value, today's date, and the process, filament preset, resolution and closing radius the coupon's project sliced with. It takes the project the coupon command wrote and named in its report, and refuses any other: one that is not a calibration coupon, one that measures the other compensation, one whose objects do not slice the measured compensation at 0, or one made for another printer or filament. Ask the user, then run it again with `--write`.
 5. Print a part that uses the hole again to confirm it, and repeat for each filament.
 
 ## Orientation checks

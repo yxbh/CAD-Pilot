@@ -29,10 +29,16 @@ ASK_USER = (
 )
 SUPPORT_KEYS = {"type", "interface_filament"}
 FILAMENT_KEYS = {"preset", "colour", "compensation"}
-# Bambu's X-Y compensations, measured per printer and filament with calibration coupons.
+# Bambu's X-Y compensations, measured per printer and filament with calibration coupons, and the
+# calibration ladder that measures each.
 COMPENSATION_SETTINGS = {"hole": "xy_hole_compensation", "contour": "xy_contour_compensation"}
-# The settings a measured compensation depends on: it holds only at the values in force when it was measured.
-CONDITIONS = ("resolution", "slice_closing_radius")
+LADDERS = {"hole": "holes", "contour": "pegs"}
+# What a measured compensation depends on besides the printer preset, nozzle included, it is stored
+# under: it holds only with the values in force when it was measured. The process and filament are
+# their preset names.
+NUMBER_CONDITIONS = ("resolution", "slice_closing_radius")
+TEXT_CONDITIONS = ("process", "filament_preset")
+CONDITIONS = (*NUMBER_CONDITIONS, *TEXT_CONDITIONS)
 MEASUREMENT_KEYS = {"mm", "measured", *CONDITIONS}
 # A compensation is a small correction per side, under this.
 MAX_COMPENSATION_MM = 1.0
@@ -47,15 +53,21 @@ class ProfileError(ValueError):
 @dataclass(frozen=True)
 class Measurement:
     """A compensation read off a calibration coupon (mm per side, as Bambu applies it), the day it was
-    measured, and the slicing conditions in force then."""
+    measured, and the conditions in force then."""
 
     mm: float
     measured: str
     resolution: float
     slice_closing_radius: float
+    process: str
+    filament_preset: str
 
     def as_dict(self) -> dict:
-        return {"mm": self.mm, "measured": self.measured, "resolution": self.resolution, "slice_closing_radius": self.slice_closing_radius}
+        return {"mm": self.mm, "measured": self.measured, **self.conditions}
+
+    @property
+    def conditions(self) -> dict[str, float | str]:
+        return {key: getattr(self, key) for key in CONDITIONS}
 
 
 @dataclass(frozen=True)
@@ -145,7 +157,10 @@ def _measurement(where: str, data: object) -> Measurement:
     _unknown(where, data, MEASUREMENT_KEYS)
     missing = sorted(MEASUREMENT_KEYS - set(data))
     if missing:
-        raise ProfileError(f"{where}: missing {', '.join(missing)}")
+        raise ProfileError(
+            f"{where}: missing {', '.join(missing)}. save-compensation records them from the coupon's project; save the "
+            "coupon's result again with it (see the cad skill's references/print.md)"
+        )
     mm = _number(f"{where} mm", data["mm"])
     if abs(mm) >= MAX_COMPENSATION_MM:
         raise ProfileError(f"{where} mm is {mm:g}: a compensation is a small correction per side, under {MAX_COMPENSATION_MM:g} mm")
@@ -156,8 +171,9 @@ def _measurement(where: str, data: object) -> Measurement:
         canonical = False
     if not canonical:
         raise ProfileError(f"{where} measured must be a date such as \"2026-10-31\", not {measured!r}")
-    conditions = {key: _number(f"{where} {key}", data[key]) for key in CONDITIONS}
-    return Measurement(mm, measured, **conditions)
+    numbers = {key: _number(f"{where} {key}", data[key]) for key in NUMBER_CONDITIONS}
+    texts = {key: _text(f"{where} {key}", data[key]) for key in TEXT_CONDITIONS}
+    return Measurement(mm, measured, **numbers, **texts)
 
 
 def _compensation(where: str, data: object) -> dict[str, dict[str, Measurement]]:

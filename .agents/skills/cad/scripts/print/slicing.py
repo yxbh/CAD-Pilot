@@ -7,12 +7,11 @@ import json
 import re
 import tempfile
 import time
-import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from xml.etree import ElementTree as ET
 
-from .bambu import BambuStudio, BambuStudioError, CliRun
+from .bambu import BambuStudio, CliRun
+from .bambu3mf import read_project
 
 
 CONFLICT = re.compile(r"gcode path conflicts found between (.+?) and (.+?)\s*$", re.M)
@@ -61,23 +60,6 @@ class SliceReport:
         return data
 
 
-def project_contents(project: Path) -> tuple[dict, list[str]]:
-    """A project's settings and its plate names, in plate order."""
-    try:
-        with zipfile.ZipFile(project) as archive:
-            settings = json.loads(archive.read("Metadata/project_settings.config"))
-            config = ET.fromstring(archive.read("Metadata/model_settings.config"))
-    except (zipfile.BadZipFile, KeyError, ValueError, ET.ParseError) as error:
-        raise BambuStudioError(
-            f"{project} is not a Bambu Studio project ({error}); a plain 3MF has no plates or settings to slice"
-        ) from error
-    names = []
-    for plate in config.iter("plate"):
-        values = {m.get("key"): m.get("value") for m in plate.findall("metadata")}
-        names.append((int(values.get("plater_id", len(names) + 1)), values.get("plater_name") or ""))
-    return settings, [name for _, name in sorted(names)]
-
-
 def _plate_result(entry: dict, plate: PlateSlice, settings: dict) -> None:
     presets = settings.get("filament_settings_id", [])
     colours = settings.get("filament_colour", [])
@@ -106,8 +88,9 @@ def slice_project(studio: BambuStudio, project: Path, *, timeout: float = 1800) 
     sliced one at a time, and a crash, a timeout or crossing toolpaths is blamed only on the plate
     of a one-plate run."""
     project = project.resolve()
-    settings, names = project_contents(project)
-    plates = {number: PlateSlice(number, name) for number, name in enumerate(names, start=1)}
+    contents = read_project(project)
+    settings = contents.settings
+    plates = {number: PlateSlice(number, name) for number, name in enumerate(contents.plates, start=1)}
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="cad-slice-") as temp:
         work = Path(temp)

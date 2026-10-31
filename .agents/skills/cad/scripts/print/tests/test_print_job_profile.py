@@ -27,8 +27,9 @@ PROFILE = {
 
 H2D = PROFILE["printer"]
 PETG = PROFILE["filaments"]["PETG"]
-MEASURED = {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01}
-NOW = {"resolution": 0.003, "slice_closing_radius": 0.01}
+WITH = {"process": PROFILE["process"], "filament_preset": PETG["preset"]}
+MEASURED = {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01, **WITH}
+NOW = {"resolution": 0.003, "slice_closing_radius": 0.01, **WITH}
 
 
 def test_compensation_is_measured_per_printer_and_filament():
@@ -42,9 +43,11 @@ def test_compensation_is_measured_per_printer_and_filament():
     assert (contour.setting, contour.mm, contour.measurement) == ("xy_contour_compensation", 0.0, None)
     # A calibration coupon prints at 0 whatever was measured.
     assert [(c.mm, c.measurement) for c in part_compensation(profile, "PETG", NOW, calibrating=True)] == [(0.0, None), (0.0, None)]
-    # At another resolution the measured value is still used, and the change is named.
+    # At another resolution, or with another filament preset, the measured value is still used, and the change is named.
     (hole, _) = part_compensation(profile, "PETG", {**NOW, "resolution": 0.012}, calibrating=False)
     assert hole.mm == 0.1 and hole.changed == {"resolution": (0.003, 0.012)}
+    (hole, _) = part_compensation(profile, "PETG", {**NOW, "filament_preset": "Bambu PETG HF @BBL H2D 0.4 nozzle"}, calibrating=False)
+    assert hole.changed == {"filament_preset": (PETG["preset"], "Bambu PETG HF @BBL H2D 0.4 nozzle")}
 
 
 def test_saving_compensation_changes_only_that_filament_on_that_printer(tmp_path):
@@ -52,12 +55,12 @@ def test_saving_compensation_changes_only_that_filament_on_that_printer(tmp_path
 
     path = tmp_path / "print-profile.json"
     path.write_text(json.dumps({**PROFILE, "filaments": {**PROFILE["filaments"], "PETG": {**PETG, "compensation": {H2D: {"contour": MEASURED}}}}}))
-    hole = Measurement(0.15, "2026-11-02", 0.003, 0.01)
+    hole = Measurement(0.15, "2026-11-02", **{**NOW, "resolution": 0.003})
     before = path.read_text()
     assert record_compensation("PETG", H2D, {"hole": hole}, write=False, path=path).measured("PETG")["hole"] == hole
     assert path.read_text() == before
     with pytest.raises(ProfileError, match="under 1 mm"):
-        record_compensation("PETG", H2D, {"hole": Measurement(10, "2026-11-02", 0.003, 0.01)}, write=False, path=path)
+        record_compensation("PETG", H2D, {"hole": Measurement(10, "2026-11-02", **NOW)}, write=False, path=path)
     profile = record_compensation("PETG", H2D, {"hole": hole}, write=True, path=path)
     assert profile.measured("PETG") == {"contour": profile.measured("PETG")["contour"], "hole": hole}
     written = json.loads(path.read_text())
@@ -100,7 +103,8 @@ def test_missing_profile_says_what_to_ask(tmp_path):
         ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "mm": 8}}}}}}, "under 1 mm"),
         ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "measured": "last week"}}}}}}, "must be a date"),
         ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "measured": "20261031"}}}}}}, "must be a date"),
-        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {"mm": 0.1, "measured": "2026-10-31"}}}}}}, "missing resolution"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {"mm": 0.1, "measured": "2026-10-31"}}}}}}, "missing filament_preset, process, resolution, slice_closing_radius. save-compensation records them"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "process": ""}}}}}}, "process must be a non-empty string"),
         ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"holes": MEASURED}}}}}, "unknown key"),
         ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "mm": "0.1"}}}}}}, "must be a number"),
     ],
@@ -197,6 +201,13 @@ def test_the_documented_job_writes_its_3mf_beside_the_job(tmp_path):
     job = parse_job(example, base=prints, default_output=prints / "jig.3mf")
     assert job.output.parent == prints
     assert {part.file.parent for part in job.parts} == {tmp_path / "outputs"}
+
+
+def test_the_documented_profile_reads():
+    reference = (Path(__file__).resolve().parents[3] / "references" / "print.md").read_text(encoding="utf-8")
+    section = reference.split("## The personal print profile", 1)[1]
+    profile = parse_profile(json.loads(re.search(r"```json\n(.*?)```", section, re.S).group(1)))
+    assert profile.measured("PETG")["hole"].filament_preset == profile.filaments["PETG"].preset
 
 
 @pytest.mark.parametrize("name, content", [("jig.3mf", b"PK\x03\x04"), ("jig.print.json", b"\xff\xfe\x00binary")])

@@ -88,8 +88,9 @@ class ProjectPlan:
     plates: list[PlatePlan]
     settings: dict
     bed: Rect
-    # A calibration coupon: every part sliced with hole and contour compensation at 0.
-    calibrating: bool = False
+    # For a calibration coupon, the compensation it measures ("hole" or "contour"): every part is
+    # sliced with hole and contour compensation at 0.
+    calibration: str | None = None
 
     @property
     def version(self) -> str:
@@ -271,9 +272,10 @@ def check_settings(presets: Presets, profile: PrintProfile, **options) -> CheckS
     return CheckSettings.from_settings(settings, **options)
 
 
-def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibrating: bool = False) -> ProjectPlan:
+def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibration: str | None = None) -> ProjectPlan:
     """Every part with its filament slot, support and compensation settings, laid out on its plates.
-    ``calibrating`` forces compensation to 0 for a calibration coupon, whatever the profile measured."""
+    ``calibration`` names the compensation a calibration coupon measures, and forces both to 0 for it,
+    whatever the profile measured."""
     presets = studio.presets
     presets.require("machine", profile.printer)
     presets.require("process", profile.process)
@@ -341,12 +343,12 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibr
     plates = _pack_plates(parts, job, area, keep_out, tower, tower_keep_out, interface)
     settings = _project_settings(resolved, profile, slots, interface, system_process, len(plates), tower)
     # Each object carries its filament's compensation; Bambu Studio applies per-object values over the project's.
-    now = conditions(settings)
     for part in parts:
-        part.compensation = part_compensation(profile, part.slot.key, now, calibrating=calibrating)
+        now = conditions(settings, part.slot.preset)
+        part.compensation = part_compensation(profile, part.slot.key, now, calibrating=calibration is not None)
         # Rounded to Bambu's 0.0001 mm and written without an exponent, which it would not read.
         part.object_settings.update({c.setting: f"{round(c.mm, 4) + 0.0:g}" for c in part.compensation})
-    return ProjectPlan(job, profile, parts, slots, plates, settings, bed, calibrating)
+    return ProjectPlan(job, profile, parts, slots, plates, settings, bed, calibration)
 
 
 def plate_origin(index: int, plate_count: int, bed: Rect) -> tuple[float, float]:

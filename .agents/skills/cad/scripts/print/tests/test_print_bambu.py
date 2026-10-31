@@ -13,7 +13,8 @@ import pytest
 from build123d import Box, Cylinder, Pos, export_step
 
 from print.bambu import BambuStudio, BambuStudioError, CliRun
-from print.bambu3mf import write_project
+from common.threemf import CORE_NS
+from print.bambu3mf import CALIBRATION_KEY, write_project
 from print.layout import Rect
 from print.job import parse_job
 from print.plan import plan_project
@@ -118,12 +119,24 @@ class _FakeStudio:
         return CliRun(0, "", 0)
 
 
+def _project(path: Path, settings: dict, *, plates: int = 1, objects: tuple[dict, ...] = (), metadata: dict | None = None) -> Path:
+    """A project as far as slicing and saving compensation read one: settings, plates, objects' own
+    settings and the model's metadata."""
+    plate = "".join(f'<plate><metadata key="plater_id" value="{n}"/><metadata key="plater_name" value="P{n}"/></plate>' for n in range(1, plates + 1))
+    items = "".join(
+        f'<object id="{n + 2}">' + "".join(f'<metadata key="{key}" value="{value}"/>' for key, value in item.items()) + "</object>"
+        for n, item in enumerate(objects)
+    )
+    model = f'<model xmlns="{CORE_NS}">' + "".join(f'<metadata name="{k}">{v}</metadata>' for k, v in (metadata or {}).items()) + "<resources/></model>"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("3D/3dmodel.model", model)
+        archive.writestr("Metadata/model_settings.config", f"<config>{items}{plate}</config>")
+        archive.writestr("Metadata/project_settings.config", json.dumps(settings))
+    return path
+
+
 def test_a_failing_plate_is_reported_and_the_rest_still_slice(tmp_path):
-    project = tmp_path / "three.3mf"
-    plates = "".join(f'<plate><metadata key="plater_id" value="{n}"/><metadata key="plater_name" value="P{n}"/></plate>' for n in (1, 2, 3))
-    with zipfile.ZipFile(project, "w") as archive:
-        archive.writestr("Metadata/model_settings.config", f"<config>{plates}</config>")
-        archive.writestr("Metadata/project_settings.config", json.dumps({"filament_settings_id": ["PETG"], "filament_colour": ["#000000"]}))
+    project = _project(tmp_path / "three.3mf", {"filament_settings_id": ["PETG"], "filament_colour": ["#000000"]}, plates=3)
     studio = _FakeStudio(failing=2)
     report = slice_project(studio, project)
     assert studio.targets == [0, 3]
@@ -226,12 +239,7 @@ class _ScriptedStudio:
 
 
 def _three_plates(tmp_path):
-    project = tmp_path / "three.3mf"
-    plates = "".join(f'<plate><metadata key="plater_id" value="{n}"/><metadata key="plater_name" value="P{n}"/></plate>' for n in (1, 2, 3))
-    with zipfile.ZipFile(project, "w") as archive:
-        archive.writestr("Metadata/model_settings.config", f"<config>{plates}</config>")
-        archive.writestr("Metadata/project_settings.config", json.dumps({"filament_settings_id": ["PETG"]}))
-    return project
+    return _project(tmp_path / "three.3mf", {"filament_settings_id": ["PETG"]}, plates=3)
 
 
 def test_a_crash_without_result_blames_no_plate_until_each_is_sliced_alone(tmp_path, monkeypatch):
@@ -277,9 +285,10 @@ def test_installed_beds_give_a_reachable_tower_clear_of_exclusions(printer):
     assert reach.contains(tower) and not any(kept_clear.overlaps(rect) for rect in keep_out)
 
 
+MEASURED_WITH = {"process": PROFILE["process"], "filament_preset": PROFILE["filaments"]["PETG"]["preset"]}
 MEASURED_PETG = {
-    "hole": {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01},
-    "contour": {"mm": -0.05, "measured": "2026-10-31", "resolution": 0.012, "slice_closing_radius": 0.01},
+    "hole": {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01, **MEASURED_WITH},
+    "contour": {"mm": -0.05, "measured": "2026-10-31", "resolution": 0.012, "slice_closing_radius": 0.01, **MEASURED_WITH},
 }
 # Without arc fitting the G-code draws circles as straight moves, which the checks above read.
 NO_ARCS = {**PROFILE["process_settings"], "enable_arc_fitting": "0"}
@@ -307,8 +316,8 @@ def test_each_object_slices_with_its_own_filaments_measured_compensation(tmp_pat
     lines = "\n".join(plan_lines(plan))
     assert "in PETG (PETG): hole +0.1 mm (measured 2026-10-31), outer contour -0.05 mm (measured 2026-10-31)" in lines
     assert "in PLA (PLA): hole 0 mm (unmeasured), outer contour 0 mm (unmeasured)" in lines
-    # The contour value was measured at another resolution than this project slices at.
-    assert "PETG contour compensation was measured at resolution 0.012; this project slices at resolution 0.003" in lines
+    # The contour value was measured at another resolution than this project slices with.
+    assert "PETG contour compensation was measured with resolution 0.012; this project slices with resolution 0.003" in lines
     assert "PETG hole compensation was measured" not in lines
 
     gcode, roundtrip = _slice_keeping_gcode(job.output, tmp_path)
@@ -332,7 +341,7 @@ def test_a_calibration_coupon_slices_at_zero_whatever_the_profile_measured(tmp_p
 
     (rung,) = write_calibration_ladder(tmp_path / "holes.step", "holes", 3.0, [0.0], 5.0)
     job = parse_job({"parts": [{"file": "holes.step", "turn": False}]}, base=tmp_path, default_output=tmp_path / "holes.3mf")
-    plan = plan_project(job, parse_profile(_measured_profile()), STUDIO, calibrating=True)
+    plan = plan_project(job, parse_profile(_measured_profile()), STUDIO, calibration="hole")
     write_project(plan, job.output)
     settings = _object_settings(job.output)["holes"]
     assert (settings["xy_hole_compensation"], settings["xy_contour_compensation"]) == ("0", "0")
@@ -361,13 +370,15 @@ def _home(tmp_path: Path, profile: dict) -> Path:
 @needs_bambu
 def test_the_coupon_command_writes_a_calibration_project_at_zero(tmp_path):
     home = _home(tmp_path, _measured_profile())
-    result = _cli(home, tmp_path, "coupon", "-o", "pegs.step", "--calibrate", "pegs", "--diameter", "8", "--values", "-0.1", "0", "0.1")
+    coupon = Path("coupons", "pegs.step")
+    result = _cli(home, tmp_path, "coupon", "-o", str(coupon), "--calibrate", "pegs", "--diameter", "8", "--values", "-0.1", "0", "0.1")
     assert result.returncode == 0, result.stderr
     assert "1 dimple: peg 7.8 mm, contour compensation -0.1 mm" in result.stdout
-    assert "save-compensation pegs.3mf --filament PETG --contour <value>" in result.stdout
+    assert f"save-compensation {coupon.with_suffix('.3mf')} --filament PETG --contour <value>" in result.stdout
     assert "hole 0 mm (forced for calibration), outer contour 0 mm (forced for calibration)" in result.stdout
-    assert result.stdout.strip().splitlines()[-1] == f"3MF: {(tmp_path / 'pegs.3mf').resolve()}"
-    settings = _object_settings(tmp_path / "pegs.3mf")["pegs"]
+    project = (tmp_path / coupon).with_suffix(".3mf")
+    assert result.stdout.strip().splitlines()[-1] == f"3MF: {project.resolve()}"
+    settings = _object_settings(project)["pegs"]
     assert (settings["xy_hole_compensation"], settings["xy_contour_compensation"]) == ("0", "0")
 
 
@@ -378,12 +389,14 @@ def test_saving_a_rung_shows_the_change_and_writes_only_when_asked(tmp_path):
     # The coupon was sliced at resolution 0.003 and closing radius 0.01; the profile has moved on since.
     write_calibration_ladder(tmp_path / "holes.step", "holes", 3.0, [0.0, 0.1], 5.0)
     job = parse_job({"parts": [{"file": "holes.step", "filament": "PLA"}]}, base=tmp_path, default_output=tmp_path / "holes.3mf")
-    write_project(plan_project(job, parse_profile(PROFILE), STUDIO, calibrating=True), job.output)
+    write_project(plan_project(job, parse_profile(PROFILE), STUDIO, calibration="hole"), job.output)
     home = _home(tmp_path, {**PROFILE, "process_settings": {"resolution": "0.012"}})
     path = home / ".cad-pilot" / "print-profile.json"
     before = path.read_text()
     wrong = _cli(home, tmp_path, "save-compensation", "holes.3mf", "--filament", "PETG", "--hole", "0.1")
     assert wrong.returncode == 2 and "not PETG" in wrong.stderr
+    pegs = _cli(home, tmp_path, "save-compensation", "holes.3mf", "--filament", "PLA", "--contour", "0.1")
+    assert pegs.returncode == 2 and "save its result with --hole" in pegs.stderr
     preview = _cli(home, tmp_path, "save-compensation", "holes.3mf", "--filament", "PLA", "--hole", "0.15")
     assert preview.returncode == 0, preview.stderr
     assert "hole compensation: 0 mm (unmeasured) -> 0.15 mm" in preview.stdout and "Nothing written" in preview.stdout
@@ -391,8 +404,46 @@ def test_saving_a_rung_shows_the_change_and_writes_only_when_asked(tmp_path):
     written = _cli(home, tmp_path, "save-compensation", "holes.3mf", "--filament", "PLA", "--hole", "0.15", "--write")
     assert written.returncode == 0, written.stderr
     saved = json.loads(path.read_text())["filaments"]["PLA"]["compensation"][PROFILE["printer"]]
-    # The record keeps the conditions the coupon sliced at, not the profile's current ones.
-    assert saved == {"hole": {"mm": 0.15, "measured": date.today().isoformat(), "resolution": 0.003, "slice_closing_radius": 0.01}}
+    # The record keeps the conditions the coupon sliced with, not the profile's current ones.
+    with_pla = {"process": PROFILE["process"], "filament_preset": PROFILE["filaments"]["PLA"]["preset"]}
+    assert saved == {"hole": {"mm": 0.15, "measured": date.today().isoformat(), "resolution": 0.003, "slice_closing_radius": 0.01, **with_pla}}
+
+
+COUPON_SETTINGS = {
+    "printer_settings_id": PROFILE["printer"],
+    "print_settings_id": PROFILE["process"],
+    "filament_settings_id": [PROFILE["filaments"]["PETG"]["preset"]],
+    "resolution": "0.003",
+    "slice_closing_radius": "0.01",
+}
+AT_ZERO = {"name": "holes", "xy_hole_compensation": "0", "xy_contour_compensation": "0"}
+
+
+@pytest.mark.parametrize(
+    "objects, metadata, kind, message",
+    [
+        ((AT_ZERO,), {}, "hole", "is not a calibration coupon's project.*coupon --calibrate holes --filament PETG"),
+        ((AT_ZERO,), {CALIBRATION_KEY: "hole"}, "contour", "is a holes coupon, which measures hole compensation: save its result with --hole"),
+        ((AT_ZERO, {**AT_ZERO, "xy_hole_compensation": "0.1"}), {CALIBRATION_KEY: "hole"}, "hole", "with xy_hole_compensation 0.1, not 0"),
+        (({"name": "holes"},), {CALIBRATION_KEY: "hole"}, "hole", "with xy_hole_compensation unset, not 0"),
+    ],
+)
+def test_a_result_is_saved_only_from_a_coupon_that_measures_it_at_zero(tmp_path, objects, metadata, kind, message):
+    from print.cli import _coupon_settings
+    from print.job import JobError
+
+    coupon = _project(tmp_path / "coupon.3mf", COUPON_SETTINGS, objects=objects, metadata=metadata)
+    with pytest.raises(JobError, match=message):
+        _coupon_settings(coupon, kind, parse_profile(PROFILE), "PETG")
+
+
+def test_a_coupons_result_holds_with_its_process_and_filament_preset(tmp_path):
+    from print.cli import _coupon_settings
+    from print.compensation import conditions
+
+    coupon = _project(tmp_path / "coupon.3mf", COUPON_SETTINGS, objects=(AT_ZERO,), metadata={CALIBRATION_KEY: "hole"})
+    settings = _coupon_settings(coupon, "hole", parse_profile(PROFILE), "PETG")
+    assert conditions(settings, PROFILE["filaments"]["PETG"]["preset"]) == {"resolution": 0.003, "slice_closing_radius": 0.01, **MEASURED_WITH}
 
 
 def _fake_install(root: Path) -> Path:
