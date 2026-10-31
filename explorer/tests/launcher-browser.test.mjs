@@ -198,18 +198,21 @@ test("render writes a STEP's image without touching the project's viewer or save
   const everything = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "*");
   assert.equal(everything.code, 1);
   assert.match(everything.stderr, /would hide every part/);
-  // An orthographic render shows viewHeight / height millimetres per pixel, whatever the image's shape.
-  const drawn = [];
-  for (const size of ["400x300", "300x400"]) {
+  // An orthographic render shows viewHeight / height millimetres per pixel at any size: seen from the front, the demo's
+  // base plate (python/create_demo.py BASE_WIDTH) is its widest part, 100 mm across.
+  const scales = [];
+  for (const size of ["400x300", "800x600"]) {
     const front = await explorer("render", "demo.step", "docs/front.png", "--size", size, "--view", "front", "--projection", "orthographic", "--background", "#ffffff");
     assert.equal(front.code, 0, front.stderr);
     const { camera, height } = front.json();
+    assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
     assert.deepEqual([camera.view, camera.projection], ["front", "orthographic"]);
     const pixel = camera.viewHeight / height;
-    drawn.push({ pixel, millimetres: await drawnWidth(path.join(project, "docs", "front.png")) * pixel });
+    const millimetres = await drawnWidth(path.join(project, "docs", "front.png")) * pixel;
+    assert.ok(Math.abs(millimetres - 100) <= 2 * pixel, `${size}: ${millimetres} mm drawn at ${pixel} mm per pixel`);
+    scales.push(pixel);
   }
-  assert.notEqual(drawn[0].pixel, drawn[1].pixel);
-  assert.ok(Math.abs(drawn[0].millimetres - drawn[1].millimetres) <= 2 * Math.max(drawn[0].pixel, drawn[1].pixel), JSON.stringify(drawn));
+  assert.ok(Math.abs(scales[0] / scales[1] - 2) < 1e-9, "twice the size, half the millimetres per pixel");
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {
