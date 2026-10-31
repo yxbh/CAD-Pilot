@@ -50,10 +50,13 @@ export async function launcherFixture(t) {
   const env = { ...process.env, CAD_EXPLORER_RUNTIME_ROOT: runtimeRoot };
   delete env.CAD_EXPLORER_VIEW;
   const explorer = (...args) => exec(cli, args, { cwd: project, env });
+  // A stopped viewer stops answering before its process and its renderer's have exited, and Windows will not remove a
+  // folder a process still works in, so the folders' removal retries with a growing delay, as a renderer profile's does.
+  const remove = (folder) => rm(folder, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   t.after(async () => {
     await explorer("stop");
-    await rm(runtimeRoot, { recursive: true, force: true });
-    await rm(project, { recursive: true, force: true });
+    await remove(runtimeRoot);
+    await remove(project);
   });
   await cp(await demoTemplate(), runtimeRoot, { recursive: true });
   return { runtimeRoot, project, env, explorer };
