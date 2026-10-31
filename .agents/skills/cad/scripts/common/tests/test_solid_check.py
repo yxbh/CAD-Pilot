@@ -1,8 +1,8 @@
 """scripts/step reports generated solids it cannot vouch for, and still writes them.
 
 Fake workers stand in for the boolean kernel where a test needs a check that
-hangs or fails; the end-to-end cases run ``scripts/step`` on small models, the
-models that take the same options in one run.
+hangs or fails; the end-to-end cases run ``scripts/step`` on small models,
+several to a run (``step_runs.py``).
 """
 
 import io
