@@ -1,64 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
-import os from "node:os";
+import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { workbenchPython } from "../server/paths.mjs";
 import { readEndpoint } from "../server/endpoint.mjs";
-import { assertBuilt, locateView } from "../server/launcher.mjs";
+import { locateView } from "../server/launcher.mjs";
 import { revisionLabel } from "../server/summary.mjs";
+import { exec, launcherFixture } from "./launcher-fixture.mjs";
 
-const cli = fileURLToPath(new URL("../scripts/explorer.mjs", import.meta.url));
 const standalone = fileURLToPath(new URL("../server/standalone.mjs", import.meta.url));
-
-function exec(script, args, options) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { ...options, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => resolve({ code, stdout, stderr, json: () => JSON.parse(stdout) }));
-  });
-}
-
-// The four corner pixels, which a capture's backdrop fills.
-async function corners(file) {
-  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image; i = Image.open(sys.argv[1]).convert('RGB'); w, h = i.size; [print(*i.getpixel(p)) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]", file]);
-  return stdout.trim().split("\n").map((line) => line.split(" ").map(Number));
-}
-
-// The width in pixels of everything drawn over the backdrop that fills the top-left pixel.
-async function drawnWidth(file) {
-  const { stdout } = await promisify(execFile)(workbenchPython, ["-c", "import sys; from PIL import Image, ImageChops; i = Image.open(sys.argv[1]).convert('RGB'); box = ImageChops.difference(i, Image.new('RGB', i.size, i.getpixel((0, 0)))).getbbox(); print(box[2] - box[0])", file]);
-  return Number(stdout);
-}
-
-async function pngSize(file) {
-  const bytes = await readFile(file);
-  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
-  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
-}
-
-// Real background viewers and the real background renderer in a disposable runtime; no viewer page is ever opened,
-// so every view here is confirmed and captured by the headless renderer alone.
-async function launcherFixture(t) {
-  await assertBuilt();
-  const runtimeRoot = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-launcher-")));
-  const project = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad design ")));
-  const env = { ...process.env, CAD_EXPLORER_RUNTIME_ROOT: runtimeRoot };
-  delete env.CAD_EXPLORER_VIEW;
-  const explorer = (...args) => exec(cli, args, { cwd: project, env });
-  t.after(async () => {
-    await explorer("stop");
-    await rm(runtimeRoot, { recursive: true, force: true });
-    await rm(project, { recursive: true, force: true });
-  });
-  return { runtimeRoot, project, env, explorer };
-}
 
 test("open confirms each view without a tab, reloads in place keeping the view and keeps its address", { timeout: 240_000 }, async (t) => {
   const { runtimeRoot, project, env, explorer } = await launcherFixture(t);
@@ -140,101 +90,6 @@ test("open confirms each view without a tab, reloads in place keeping the view a
   assert.equal(restarted.started, true);
   assert.equal(restarted.url, opened.url, "A restarted viewer keeps its port and token so earlier links still work");
   assert.equal(restarted.model.name, "demo copy.step");
-});
-
-test("capture draws in the background into the project at any size and rejects other paths", { timeout: 240_000 }, async (t) => {
-  const { explorer, project } = await launcherFixture(t);
-  assert.equal((await explorer("open")).code, 0);
-  const captured = await explorer("capture", "reviews/view.png");
-  assert.equal(captured.code, 0, captured.stderr);
-  assert.equal(captured.json().saved, "reviews/view.png");
-  assert.deepEqual(await pngSize(path.join(project, "reviews", "view.png")), [1280, 800]);
-  const small = (await explorer("capture", "reviews/small.png", "--size", "320x200", "--background", "#ffffff")).json();
-  assert.deepEqual([small.width, small.height], [320, 200]);
-  // Each capture reports the camera that drew it, in the shape render and state use; one aspect, one framing.
-  const { camera } = captured.json();
-  assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
-  assert.ok(camera.viewHeight > 0);
-  assert.ok(Math.abs(small.camera.viewHeight - camera.viewHeight) < 1e-6 * camera.viewHeight, JSON.stringify([small.camera, camera]));
-  assert.deepEqual(await pngSize(path.join(project, "reviews", "small.png")), [320, 200]);
-  // Simultaneous captures take turns, each with its own size and backdrop.
-  const [red, blue] = await Promise.all([
-    explorer("capture", "reviews/red.png", "--size", "64x48", "--background", "#ff0000"),
-    explorer("capture", "reviews/blue.png", "--size", "96x64", "--background", "#0000ff"),
-  ]);
-  assert.equal(red.code, 0, red.stderr);
-  assert.equal(blue.code, 0, blue.stderr);
-  assert.deepEqual(await pngSize(path.join(project, "reviews", "red.png")), [64, 48]);
-  assert.deepEqual(await pngSize(path.join(project, "reviews", "blue.png")), [96, 64]);
-  assert.deepEqual(await corners(path.join(project, "reviews", "red.png")), Array(4).fill([255, 0, 0]));
-  assert.deepEqual(await corners(path.join(project, "reviews", "blue.png")), Array(4).fill([0, 0, 255]));
-  // An unchanged view captured again reuses its stored image.
-  assert.equal((await explorer("capture")).json().path, captured.json().path);
-  const outside = await explorer("capture", "../outside.png");
-  assert.equal(outside.code, 1);
-  assert.match(outside.stderr, /inside the project/);
-  if (process.platform !== "win32") {
-    const elsewhere = await mkdtemp(path.join(os.tmpdir(), "cad-explorer-elsewhere-"));
-    t.after(() => rm(elsewhere, { recursive: true, force: true }));
-    await symlink(elsewhere, path.join(project, "linked"));
-    const linked = await explorer("capture", "linked/view.png");
-    assert.equal(linked.code, 1);
-    assert.match(linked.stderr, /inside the project/);
-  }
-});
-
-test("render writes a STEP's image without touching the project's viewer or saved setups and reports the camera it drew", { timeout: 240_000 }, async (t) => {
-  const { explorer, project, runtimeRoot } = await launcherFixture(t);
-  const opened = (await explorer("open")).json();
-  await copyFile(path.join(runtimeRoot, "demo-assembly.step"), path.join(project, "demo.step"));
-  const views = await readdir(path.join(runtimeRoot, "views"));
-  const rendered = await explorer("render", "demo.step", "docs/demo.png", "--size", "400x300", "--view", "30:20",
-    "--section", "y", "--appearance", "studio", "--background", "#f2f1ec");
-  assert.equal(rendered.code, 0, rendered.stderr);
-  const result = rendered.json();
-  assert.deepEqual([result.saved, result.width, result.height, result.camera.view, result.camera.projection], ["docs/demo.png", 400, 300, "30:20", "perspective"]);
-  assert.equal(result.section.axis, "y");
-  assert.deepEqual(await pngSize(path.join(project, "docs", "demo.png")), [400, 300]);
-  // A custom background replaces Studio's floor too: seen from above, the floor would fill the bottom corners.
-  assert.deepEqual(await corners(path.join(project, "docs", "demo.png")), Array(4).fill([242, 241, 236]));
-  assert.deepEqual(await readdir(path.join(runtimeRoot, "views")), views, "a one-shot render saves no setup");
-  assert.ok((await readdir(runtimeRoot)).includes(".pruned"), "a one-shot render prunes the store it imported into");
-  const state = (await explorer("state")).json();
-  assert.deepEqual([state.view.revision, state.view.section, state.model.name], [opened.view.revision, "off", "Demo assembly.step"]);
-  // Hidden parts are named as in sequences: a group's label covers its parts.
-  const grouped = await explorer("render", "demo.step", "docs/hidden.png", "--size", "200x150", "--hide", "Four spacers");
-  assert.equal(grouped.code, 0, grouped.stderr);
-  const missing = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "Base plate,no such part");
-  assert.equal(missing.code, 1);
-  assert.match(missing.stderr, /No part or group label matches no such part/);
-  const everything = await explorer("render", "demo.step", "docs/hidden.png", "--hide", "*");
-  assert.equal(everything.code, 1);
-  assert.match(everything.stderr, /would hide every part/);
-  // An orthographic render shows viewHeight / height millimetres per pixel at any size: seen from the front, the demo's
-  // base plate (python/create_demo.py BASE_WIDTH) is its widest part, 100 mm across.
-  const scales = [];
-  for (const size of ["400x300", "800x600"]) {
-    const front = await explorer("render", "demo.step", "docs/front.png", "--size", size, "--view", "front", "--projection", "orthographic", "--background", "#ffffff");
-    assert.equal(front.code, 0, front.stderr);
-    const { camera, height } = front.json();
-    assert.deepEqual(Object.keys(camera).sort(), ["projection", "view", "viewHeight"]);
-    assert.deepEqual([camera.view, camera.projection], ["front", "orthographic"]);
-    const pixel = camera.viewHeight / height;
-    const millimetres = await drawnWidth(path.join(project, "docs", "front.png")) * pixel;
-    assert.ok(Math.abs(millimetres - 100) <= 2 * pixel, `${size}: ${millimetres} mm drawn at ${pixel} mm per pixel`);
-    scales.push(pixel);
-  }
-  assert.ok(Math.abs(scales[0] / scales[1] - 2) < 1e-9, "twice the size, half the millimetres per pixel");
-  // An orthographic view is fitted to the image the same way at the default size as at a requested one of the same shape.
-  const fitted = [];
-  for (const size of [[], ["--size", "640x400"]]) {
-    const ortho = await explorer("render", "demo.step", "docs/ortho.png", ...size, "--projection", "orthographic", "--background", "#ffffff");
-    assert.equal(ortho.code, 0, ortho.stderr);
-    const { camera, width } = ortho.json();
-    fitted.push({ viewHeight: camera.viewHeight, drawn: await drawnWidth(path.join(project, "docs", "ortho.png")) / width });
-  }
-  assert.ok(Math.abs(fitted[0].viewHeight / fitted[1].viewHeight - 1) < 1e-9, `view heights ${fitted.map((fit) => fit.viewHeight).join(" and ")} mm`);
-  assert.ok(Math.abs(fitted[0].drawn - fitted[1].drawn) <= 2 / 640, `drawn ${fitted.map((fit) => fit.drawn).join(" and ")} of the width`);
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {
