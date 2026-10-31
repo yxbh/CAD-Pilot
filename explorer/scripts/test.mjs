@@ -80,7 +80,9 @@ function run(name, files, filesAtOnce, concurrency) {
 // whole shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
 const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
-const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
+// Node 22 knows the one-process option only by its experimental name.
+const isolation = Number(process.versions.node.split(".")[0]) >= 24 ? "--test-isolation" : "--experimental-test-isolation";
+const browserOptions = browserFilesAtOnce === 1 ? [`${isolation}=none`] : [`--test-concurrency=${browserFilesAtOnce}`];
 const statuses = [
   run("core", files.filter((file) => !isBrowser(file)), coreFilesAtOnce, [`--test-concurrency=${coreFilesAtOnce}`]),
   run("browser", files.filter(isBrowser), browserFilesAtOnce, browserOptions),
