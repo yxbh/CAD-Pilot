@@ -4,8 +4,9 @@ import json
 import pytest
 
 from print.cli import _path
+from print.compensation import part_compensation
 from print.job import JobError, load_job, parse_job
-from print.profile import ProfileError, load_profile, parse_profile
+from print.profile import ProfileError, load_profile, parse_profile, record_compensation
 
 
 PROFILE = {
@@ -20,6 +21,49 @@ PROFILE = {
     "support": {"type": "tree(auto)", "interface_filament": "PLA"},
     "process_settings": {"resolution": "0.003"},
 }
+
+
+H2D = PROFILE["printer"]
+PETG = PROFILE["filaments"]["PETG"]
+MEASURED = {"mm": 0.1, "measured": "2026-10-31", "resolution": 0.003, "slice_closing_radius": 0.01}
+NOW = {"resolution": 0.003, "slice_closing_radius": 0.01}
+
+
+def test_compensation_is_measured_per_printer_and_filament():
+    elsewhere = {"Bambu Lab X1 Carbon 0.4 nozzle": {"hole": {**MEASURED, "mm": 0.2}}}
+    profile = parse_profile({**PROFILE, "filaments": {**PROFILE["filaments"], "PETG": {**PETG, "compensation": {H2D: {"hole": MEASURED}, **elsewhere}}}})
+    assert profile.measured("PETG")["hole"].mm == 0.1 and "contour" not in profile.measured("PETG")
+    assert profile.measured("PLA") == {}
+    assert profile.as_dict()["filaments"]["PETG"]["compensation"][H2D]["hole"] == MEASURED
+    hole, contour = part_compensation(profile, "PETG", NOW, calibrating=False)
+    assert (hole.setting, hole.mm, hole.measurement.measured, hole.changed) == ("xy_hole_compensation", 0.1, "2026-10-31", {})
+    assert (contour.setting, contour.mm, contour.measurement) == ("xy_contour_compensation", 0.0, None)
+    # A calibration coupon prints at 0 whatever was measured.
+    assert [(c.mm, c.measurement) for c in part_compensation(profile, "PETG", NOW, calibrating=True)] == [(0.0, None), (0.0, None)]
+    # At another resolution the measured value is still used, and the change is named.
+    (hole, _) = part_compensation(profile, "PETG", {**NOW, "resolution": 0.012}, calibrating=False)
+    assert hole.mm == 0.1 and hole.changed == {"resolution": (0.003, 0.012)}
+
+
+def test_saving_compensation_changes_only_that_filament_on_that_printer(tmp_path):
+    from print.profile import Measurement
+
+    path = tmp_path / "print-profile.json"
+    path.write_text(json.dumps({**PROFILE, "filaments": {**PROFILE["filaments"], "PETG": {**PETG, "compensation": {H2D: {"contour": MEASURED}}}}}))
+    hole = Measurement(0.15, "2026-11-02", 0.003, 0.01)
+    before = path.read_text()
+    assert record_compensation("PETG", H2D, {"hole": hole}, write=False, path=path).measured("PETG")["hole"] == hole
+    assert path.read_text() == before
+    with pytest.raises(ProfileError, match="under 1 mm"):
+        record_compensation("PETG", H2D, {"hole": Measurement(10, "2026-11-02", 0.003, 0.01)}, write=False, path=path)
+    profile = record_compensation("PETG", H2D, {"hole": hole}, write=True, path=path)
+    assert profile.measured("PETG") == {"contour": profile.measured("PETG")["contour"], "hole": hole}
+    written = json.loads(path.read_text())
+    assert written["filaments"]["PETG"]["compensation"][H2D] == {"contour": MEASURED, "hole": hole.as_dict()}
+    assert {key: value for key, value in written.items() if key != "filaments"} == {key: value for key, value in PROFILE.items() if key != "filaments"}
+    assert written["filaments"]["PLA"] == PROFILE["filaments"]["PLA"]
+    with pytest.raises(ProfileError, match="no filament 'ABS'"):
+        record_compensation("ABS", H2D, {"hole": hole}, write=True, path=path)
 
 
 def test_profile_reads_and_project_overrides_merge_key_by_key(tmp_path):
@@ -49,6 +93,14 @@ def test_missing_profile_says_what_to_ask(tmp_path):
         ({"nozzle": 0.4}, "unknown key"),
         ({"process_settings": {"wall_loops": 5}}, 'wall_loops must be text as Bambu Studio writes it, such as "5"'),
         ({"process_settings": {"wipe_tower_x": [40]}}, "wipe_tower_x must be text"),
+        ({"process_settings": {"xy_hole_compensation": "0.1"}}, "measured per printer and filament and saved with save-compensation"),
+        ({"process_settings": {"enable_circle_compensation": "1"}}, "measured per printer and filament"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "mm": 8}}}}}}, "under 1 mm"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "measured": "last week"}}}}}}, "must be a date"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "measured": "20261031"}}}}}}, "must be a date"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {"mm": 0.1, "measured": "2026-10-31"}}}}}}, "missing resolution"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"holes": MEASURED}}}}}, "unknown key"),
+        ({"filaments": {"PETG": {**PETG, "compensation": {H2D: {"hole": {**MEASURED, "mm": "0.1"}}}}}}, "must be a number"),
     ],
 )
 def test_profile_errors_name_the_problem(change, message):

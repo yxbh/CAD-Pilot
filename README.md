@@ -90,7 +90,7 @@ The maintained Explorer, as the Copilot canvas or the design-project viewer that
 
 Regenerating STEP and sidecars with a different exporter or CAD kernel can change assembly hierarchy and `@cad` occurrence selectors even when physical geometry remains equivalent. Keep the artifact revision with a copied reference and re-inspect the regenerated artifact; do not translate old selector paths by adding or removing an assumed hierarchy level.
 
-There is no automatic chat-selection bridge. Your live browser selection or drawing is not visible to the agent until you send a reference or screenshot. Check that annotations appear in the shared image. Confirm printer, nozzle, material, loads, and fit allowances when they affect the design.
+There is no automatic chat-selection bridge. Your live browser selection or drawing is not visible to the agent until you send a reference or screenshot. Check that annotations appear in the shared image. Confirm printer, nozzle, material, loads, and fits when they affect the design.
 
 ## FDM Design Guidance
 
@@ -98,11 +98,11 @@ The [FDM-design skill](.agents/skills/fdm-design/SKILL.md) covers layer-aware st
 
 Existing community skills were evaluated first. The resulting guidance is an original, engine-independent synthesis with manufacturer references, not a wholesale OpenSCAD import. See the [central provenance registry](.agents/skills/README.md#fdm-design) for the reviewed revisions and scope. Imported documentation remains unchanged.
 
-Start with known equipment and materials. Add useful fit measurements and print results to the project's existing notes as they happen, including the relevant configuration. No formal profile or calibration exercise is required to start designing. Assumptions are not measurements, and results from a different configuration need review before reuse.
+Start with known equipment and materials. Add useful fit measurements and print results to the project's existing notes as they happen, including the relevant configuration; measured hole and contour compensation goes in the print profile instead (see Print Handoff). No formal profile or calibration exercise is required to start designing. Assumptions are not measurements, and results from a different configuration need review before reuse.
 
 ## Print Handoff
 
-The cad skill's `scripts/print` turns STEP or STL parts into one Bambu Studio project 3MF with named plates, checks each part in its print orientation, and slices the project with the installed Bambu Studio's command line. Printer, process, build plate, filaments and supports come from a personal print profile in `~/.cad-pilot/print-profile.json`, which each project's print job can override. Its [reference](.agents/skills/cad/references/print.md) owns the profile, job format and checks. With the variables from Start a Design, from the design root:
+The cad skill's `scripts/print` turns STEP or STL parts into one Bambu Studio project 3MF with named plates, checks each part in its print orientation, and slices the project with the installed Bambu Studio's command line. Printer, process, build plate, filaments and supports come from a personal print profile in `~/.cad-pilot/print-profile.json`, which each project's print job can override. The profile also keeps the hole and contour compensation measured for each filament on each printer: the tool's calibration coupons measure it, it saves the user's chosen rung, and every project applies it per part, so models state only the fit they need. Its [reference](.agents/skills/cad/references/print.md) owns the profile, job format and checks. With the variables from Start a Design, from the design root:
 
 ```powershell
 & $Python "$Cad/scripts/print" profile

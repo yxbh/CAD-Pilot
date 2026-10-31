@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Create, modify, inspect, and validate STEP-first build123d/Python CAD parts and assemblies. Use for natural-language CAD specs, STEP/STP generation, build123d source, build123d source-level joints, @cad references, geometry facts, measurements, mating deltas, secondary DXF/STL/3MF outputs, and print handoffs (Bambu Studio project 3MFs, slice checks, print-orientation checks and fit coupons). Viewing and images go through the visual-review skill and the maintained CAD Explorer.
+description: Create, modify, inspect, and validate STEP-first build123d/Python CAD parts and assemblies. Use for natural-language CAD specs, STEP/STP generation, build123d source, build123d source-level joints, @cad references, geometry facts, measurements, mating deltas, secondary DXF/STL/3MF outputs, and print handoffs (Bambu Studio project 3MFs, slice checks, print-orientation checks, fit coupons and hole/contour compensation calibration). Viewing and images go through the visual-review skill and the maintained CAD Explorer.
 ---
 
 # CAD generation, inspection, and validation
@@ -13,7 +13,7 @@ Create or modify parametric CAD models from natural-language requirements, gener
 
 Use this skill when the user asks for CAD files, STEP/STP files, build123d source, `@cad[...]` references, mechanical parts, assemblies, enclosures, brackets, fixtures, holes, counterbores, countersinks, slots, pockets, bosses, standoffs, ribs, fillets, chamfers, shells, source-level joints, mating, or measurements.
 
-Also use it when the user asks for DXF, STL, or 3MF output from CAD geometry. Keep those workflows secondary and load `dxf.md` or `supported-exports.md` for details. For a print, such as a Bambu Studio project, a slice check, a check of a print orientation or a fit coupon, load `print.md`.
+Also use it when the user asks for DXF, STL, or 3MF output from CAD geometry. Keep those workflows secondary and load `dxf.md` or `supported-exports.md` for details. For a print, such as a Bambu Studio project, a slice check, a check of a print orientation, a fit coupon or measuring the printer's hole and contour compensation, load `print.md`.
 
 To open, show, compare or capture a model, use the workbench's visual-review skill, which drives the maintained CAD Explorer; this skill does not start viewers.
 
@@ -31,7 +31,7 @@ Use these modeling conventions unless the user or project specifies otherwise:
 - STEP structure: one valid solid, a compound of solids, or a labeled assembly compound.
 - Assembly structure: fixed root part, part-local frames, named mating datums, and placements defined in source with explicit transforms or build123d joints, whichever states the relationship more clearly.
 
-These are coordinate and file conventions, not physical requirements. Critical dimensions, fit, clearances, wall thickness, material, printer and nozzle are unknown until the user confirms them. Ask when a missing or conflicting value materially affects the result, such as the overall size of a physical object, a mating interface, a required scale or fit, or a safety, load, food-contact or compliance requirement. Ask one plain-language question at a time, and offer rough alternatives when the user may not know the answer. Otherwise proceed: put each inferred value in a named parameter, label it as a provisional assumption, and list it in the report so the user can confirm or change it. A published standard value, such as a clearance-hole table, is a starting proposal, not measured printer calibration.
+These are coordinate and file conventions, not physical requirements. Critical dimensions, fit, clearances, wall thickness, material, printer and nozzle are unknown until the user confirms them. Ask when a missing or conflicting value materially affects the result, such as the overall size of a physical object, a mating interface, a required scale or fit, or a safety, load, food-contact or compliance requirement. Ask one plain-language question at a time, and offer rough alternatives when the user may not know the answer. Otherwise proceed: put each inferred value in a named parameter, label it as a provisional assumption, and list it in the report so the user can confirm or change it. A published standard value, such as a clearance-hole table, is a starting proposal for the fit the user wants. Model the fit itself; the fdm-design skill's fit rule keeps printer shrinkage out of the model.
 
 ## Natural-language specs only
 
@@ -100,7 +100,7 @@ Load these files only when their trigger applies:
 - `references/rendering-and-explorer.md` — showing models in the maintained CAD Explorer, self-review captures, images for the user, and reporting visual review.
 - `references/dxf.md` — secondary DXF workflow.
 - `references/supported-exports.md` — secondary STL/3MF sidecar workflows.
-- `references/print.md` — print handoff: the personal print profile, print jobs, Bambu Studio projects, slice checks, print-orientation checks and fit coupons.
+- `references/print.md` — print handoff: the personal print profile, print jobs, Bambu Studio projects, hole and contour compensation and its calibration coupons, slice checks, print-orientation checks and fit coupons.
 - `references/build123d-modeling.md` — build123d modeling patterns, topology, selectors, features, assemblies, and placement, fillet, loft, Boolean and validity pitfalls.
 - `references/repair-loop.md` — diagnosis and repair procedures.
 

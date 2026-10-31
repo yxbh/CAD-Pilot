@@ -1,7 +1,7 @@
 import pytest
 from build123d import GeomType
 
-from print.coupon import ladder
+from print.coupon import calibration_ladder, ladder
 
 
 def test_ladder_holes_step_through_the_clearances_with_dimple_marks():
@@ -19,3 +19,21 @@ def test_ladder_holes_step_through_the_clearances_with_dimple_marks():
 def test_ladder_refuses_what_it_cannot_make(clearances):
     with pytest.raises(ValueError):
         ladder(10.0, clearances, depth=6.0)
+
+
+@pytest.mark.parametrize("kind", ["holes", "pegs"])
+def test_calibration_rungs_are_the_real_part_plus_their_compensation_on_each_side(kind):
+    shape, rungs = calibration_ladder(kind, 3.0, [-0.05, 0.0, 0.1], depth=5.0)
+    assert [(rung.marks, rung.value_mm, rung.size_mm) for rung in rungs] == [(1, -0.05, 2.9), (2, 0.0, 3.0), (3, 0.1, 3.2)]
+    radii = sorted(round(face.radius, 3) for face in shape.faces().filter_by(GeomType.CYLINDER))
+    assert radii == [1.45, 1.5, 1.6]
+    assert len(shape.faces().filter_by(GeomType.SPHERE)) == 1 + 2 + 3
+    assert shape.is_valid and len(shape.solids()) == 1
+    # Holes go through a bar as deep as the part engages; pegs stand that tall on a base.
+    assert shape.bounding_box().size.Z == pytest.approx(5.0 if kind == "holes" else 8.0)
+
+
+@pytest.mark.parametrize("values", [[0.1, 0.1], [], [-1.6], [0.0, 1.0]])
+def test_calibration_ladder_refuses_repeated_empty_or_vanishing_rungs(values):
+    with pytest.raises(ValueError):
+        calibration_ladder("holes", 3.0, values, depth=5.0)

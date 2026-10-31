@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .bambu import BED_TEMPERATURE_KEYS, BambuStudio, Presets, setting
+from .compensation import Compensation, conditions, part_compensation
 from .job import Job, PartSpec
 from .layout import Footprint, Rect, pack
 from .meshes import PrintMesh, load_mesh
@@ -60,6 +61,7 @@ class PartPlan:
     slot: Slot
     uses_interface: bool
     object_settings: dict[str, str] = field(default_factory=dict)
+    compensation: list[Compensation] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,8 @@ class ProjectPlan:
     plates: list[PlatePlan]
     settings: dict
     bed: Rect
+    # A calibration coupon: every part sliced with hole and contour compensation at 0.
+    calibrating: bool = False
 
     @property
     def version(self) -> str:
@@ -267,7 +271,9 @@ def check_settings(presets: Presets, profile: PrintProfile, **options) -> CheckS
     return CheckSettings.from_settings(settings, **options)
 
 
-def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> ProjectPlan:
+def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibrating: bool = False) -> ProjectPlan:
+    """Every part with its filament slot, support and compensation settings, laid out on its plates.
+    ``calibrating`` forces compensation to 0 for a calibration coupon, whatever the profile measured."""
     presets = studio.presets
     presets.require("machine", profile.printer)
     presets.require("process", profile.process)
@@ -334,7 +340,13 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio) -> Projec
     tower, tower_keep_out = _tower(resolved, reach, keep_out)
     plates = _pack_plates(parts, job, area, keep_out, tower, tower_keep_out, interface)
     settings = _project_settings(resolved, profile, slots, interface, system_process, len(plates), tower)
-    return ProjectPlan(job, profile, parts, slots, plates, settings, bed)
+    # Each object carries its filament's compensation; Bambu Studio applies per-object values over the project's.
+    now = conditions(settings)
+    for part in parts:
+        part.compensation = part_compensation(profile, part.slot.key, now, calibrating=calibrating)
+        # Rounded to Bambu's 0.0001 mm and written without an exponent, which it would not read.
+        part.object_settings.update({c.setting: f"{round(c.mm, 4) + 0.0:g}" for c in part.compensation})
+    return ProjectPlan(job, profile, parts, slots, plates, settings, bed, calibrating)
 
 
 def plate_origin(index: int, plate_count: int, bed: Rect) -> tuple[float, float]:

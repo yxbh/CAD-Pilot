@@ -12,13 +12,13 @@ Use this skill alongside the chosen CAD engine and visual-review workflow, not a
 ## Workflow
 
 1. Understand the job in plain language: what it holds or mates to, where force acts, assembly/removal access, expected cycles, heat, sunlight, moisture, and the consequences of failure. Use a marked view or a simple question when the load path or feature is unclear.
-2. Read the user's personal print profile (`~/.cad-pilot/print-profile.json`, described in the cad skill's `references/print.md`) and the project's confirmed printer, nozzle, filament, slicer preset, and calibration records. Missing values are unknown: ask the user rather than searching downloaded 3MFs or other projects for a printer, bed type or preset. A profile for another printer, spool, nozzle, orientation, or slicer setup is not evidence for this one. Do not infer the user's hardware from pasted research.
+2. Read the user's personal print profile (`~/.cad-pilot/print-profile.json`, described in the cad skill's `references/print.md`), which also holds the hole and contour compensation measured for each filament on each printer, and the project's confirmed printer, nozzle, filament, slicer preset, and calibration records. Missing values are unknown: ask the user rather than searching downloaded 3MFs or other projects for a printer, bed type or preset. A profile for another printer, spool, nozzle, orientation, or slicer setup is not evidence for this one. Do not infer the user's hardware from pasted research.
 3. Ask for facts that materially affect fit, function, or safe use. For a rough visual concept, proceed with explicitly labeled assumptions; do not block all co-design on a long questionnaire. Do not call that concept print-ready.
 4. Choose a provisional print orientation and material before committing to details. Compare strength, bed contact, surface finish, support removal, and critical interfaces. Keep the functional model frame separate from the print-placement transform.
 5. Apply the design checklist below to relevant features. Record numerical values with units, their source, applicability, and evidence status. Upstream defaults are proposals, not calibration or universal limits.
 6. Generate and inspect actual geometry with the CAD tools. Check the selected features after booleans, fillets, and export; a constant named wall_thickness does not establish the thinnest wall in the final part. Use section views for hidden features and share the affected area for ambiguous changes.
 7. Hand the print off with the cad skill's `scripts/print` (`references/print.md`): it measures each part in its print orientation (bed contact, support, bridges and thin walls), writes one Bambu Studio project with named plates from the print profile, and slices it with Bambu Studio's command line. Until a slice check has run, label slicer checks not checked. Its times and weights are slicer estimates, not a measured print. Review the plates in Bambu Studio for what the command line cannot judge, such as seams and support access.
-8. Propose the smallest physical test needed: a fit coupon, insert boss, snap tab, bridge sample, or load-representative feature. Record the result and configuration before promoting a provisional allowance to measured calibration. Report evidence and remaining uncertainty separately.
+8. Propose the smallest physical test needed: a fit coupon, insert boss, snap tab, bridge sample, or load-representative feature, after the checks in Before Printing. Record the result and configuration with the project; a calibration coupon's result is saved in the print profile instead, with the user's agreement. Report evidence and remaining uncertainty separately.
 
 ## Design Checklist
 
@@ -45,15 +45,17 @@ Use this skill alongside the chosen CAD engine and visual-review workflow, not a
 
 ### Fits, Holes, and Tolerance Budgets
 
-- Separate nominal hardware size, intended clearance/interference, manufacturing tolerance, and printer compensation. Ask whether parts should slide, rotate, snap, clamp, or remain permanently pressed together. Do not use one global clearance for every interface.
+- **The model states the fit; only measured compensation corrects shrinkage.** Model each hole, pin and mating face at the size the fit needs, such as an M3 clearance hole at 3.4 mm, and never add an allowance for how the printer or filament prints. Plastic contracts as it cools, so holes print small and outer edges can print off size; the X-Y hole and contour compensation measured for the filament on that printer, which `scripts/print` writes into each project, corrects that. Until it is measured, holes print a little small: offer a calibration coupon rather than enlarging the model. A fit coupon finds the clearance a fit needs and prints with the measured compensation; a calibration coupon measures the compensation and prints with it at 0. The cad skill's `references/print.md` describes both.
+- Separate nominal hardware size, intended clearance/interference and manufacturing tolerance. Ask whether parts should slide, rotate, snap, clamp, or remain permanently pressed together. Do not use one global clearance for every interface.
 - State whether a gap is per side, radial, diametral, or total. For concentric round parts, hole diameter minus shaft diameter is diametral clearance; radial clearance is half that value. Check tolerance extremes, not only nominal dimensions.
 - As an arithmetic example, a 10.0 mm shaft in a 10.4 mm hole has 0.4 mm diametral or 0.2 mm radial clearance. This is not a recommended fit allowance. If the shaft can be 10.1 mm and the hole 10.2 mm, worst-case diametral clearance is only 0.1 mm.
-- Holes, slots, and bosses can print differently by size and axis. Horizontal bores may sag or become noncircular; preserve the true clearance envelope if using a self-supporting roof, or plan accessible drilling/reaming and a representative coupon.
-- Record CAD allowances and slicer XY/hole/first-layer compensation together so they are not accidentally applied twice. Tessellation should resolve the smallest critical feature adequately; a smooth preview does not prove exported hole accuracy.
+- Holes, slots, and bosses can print differently by size and axis. Hole compensation reaches only openings a layer encloses, such as a hole that is vertical as printed. Horizontal bores may sag or become noncircular; preserve the true clearance envelope if using a self-supporting roof, or plan accessible drilling/reaming and a representative coupon.
+- Holes under about 1 mm, close to the nozzle's own width, print unreliably whatever the compensation. A hole a layer encloses at some heights but that opens to the outside at others, such as one with a slot to the edge, gets a small step where compensation stops. The orientation check reports both with their locations.
+- Tessellation should resolve the smallest critical feature adequately; a smooth preview does not prove exported hole accuracy.
 
 ### First Layers and Bed Fit
 
-- First-layer spreading (elephant foot) can obstruct mating surfaces near the bed. Inspect the calibrated first-layer setup before proposing a bottom relief or slicer compensation. Check thin features and brim attachment; do not stack compensation blindly.
+- First-layer spreading (elephant foot) can obstruct mating surfaces near the bed. The process's elephant-foot compensation corrects it, and the project report gives the value in force. Check a printed first layer before changing it, and do not also model a bottom relief to make up for it. Check thin features and brim attachment, which the compensation thins.
 - Check the oriented part plus supports, brim, purge structures, and required machine clearances against the actual usable build area. A nominal rectangular build volume is insufficient for excluded regions, multi-tool modes, or sequential-print clearance.
 - Consider tall/narrow stability, small contact patches, large flat corners, contraction, and material-specific adhesion. A mesh being inside the bed envelope does not establish adhesion or freedom from warping.
 
@@ -72,6 +74,16 @@ Use this skill alongside the chosen CAD engine and visual-review workflow, not a
 - Check enclosure, nozzle/bed temperature limits, abrasive-filled-filament compatibility, drying/storage, bed-surface compatibility, and manufacturer ventilation guidance. Filled materials may improve stiffness without improving toughness or interlayer strength.
 - Give one reasoned material recommendation and a fallback when useful. Keep unspecified values unknown; never invent universal shrink factors, safe loads, or insert installation temperatures.
 
+## Before Printing
+
+Before a print whose fit or size matters, and always before a calibration coupon, ask the user to confirm:
+
+- The filament is dry. Damp filament, PETG and nylon especially, strings, bubbles and prints rough, off-size walls; dry it as its maker advises when in doubt.
+- Flow dynamics are calibrated for this filament on this printer and nozzle, with Bambu Studio's flow dynamics calibration or the printer's own at the start of a print. Uncalibrated flow bulges corners and changes wall widths.
+- The elephant-foot compensation in force suits the first layer. The project report shows the value, which comes from the process preset.
+
+These are the user's checks; the tools do not verify them. Measured compensation holds only for the filament and settings it was measured with: measure again after changing the filament's brand or the nozzle, or when the project report warns that the resolution or closing radius has changed.
+
 ## Evidence and Handoff
 
 Use separate statuses for each requirement: checked pass, checked fail, not checked, or not applicable with a reason. Label assumptions as provisional. A waived failure remains a failure with an accepted trade-off, not a pass. Do not weaken a requirement merely to make a report green.
@@ -79,14 +91,14 @@ Use separate statuses for each requirement: checked pass, checked fail, not chec
 Report these layers separately, identifying the model revision and actual printer/material/settings used where known:
 
 - Geometry: solid validity, intended body count, units, measured critical features, clearances, export/reimport checks, and limitations of any sampling.
-- Slicer: actual orientation and usable bed fit, missing walls/features, bridge direction, unsupported islands, support removal, first layers, and complete part toolpaths. Record whether a 3MF is geometry only (the `scripts/step --3mf` sidecar) or a Bambu Studio project from `scripts/print`, and whether its slice check ran. Give the user the project's 3MF path every time.
+- Slicer: actual orientation and usable bed fit, missing walls/features, bridge direction, unsupported islands, support removal, first layers, and complete part toolpaths. Record whether a 3MF is geometry only (the `scripts/step --3mf` sidecar) or a Bambu Studio project from `scripts/print`, the compensation each part sliced with (measured or unmeasured), and whether its slice check ran. Give the user the project's 3MF path every time.
 - Physical: coupon measurements, real assembly, insert retention, cycling, or appropriate load/temperature trials actually performed. State the test conditions and do not extrapolate them to untested safety claims.
 
 Stop and ask when a missing fit-critical measurement, conflicting constraints, or significant failure consequences prevent a responsible next step. Do not certify load-bearing, pressure-retaining, electrical, medical, or food-contact suitability from these checks. Do not send G-code, change live printer settings, or start a print without explicit user approval.
 
 ## Learning From Prints
 
-Start with the confirmed equipment and material notes already available; do not require a structured profile or calibration exercise before useful design work. When a print yields a reusable result, record the relevant model/feature, printer, nozzle, material, settings, orientation, measurement, and what worked or failed in the project's existing notes. Keep assumptions distinct from measurements, and check applicability before reusing a result for a different configuration. Introduce more structure only when repeated use needs it.
+Start with the confirmed equipment and material notes already available; do not require a structured profile or calibration exercise before useful design work. When a print yields a reusable result, record the relevant model/feature, printer, nozzle, material, settings, orientation, measurement, and what worked or failed in the project's existing notes. Measured hole and contour compensation belongs to the printer and filament rather than a project, so it goes in the print profile. Keep assumptions distinct from measurements, and check applicability before reusing a result for a different configuration. Introduce more structure only when repeated use needs it.
 
 ## Sources and Boundaries
 

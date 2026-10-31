@@ -8,7 +8,7 @@ from print.meshes import MeshError, load_mesh
 from print.orientation import CheckSettings, check_orientation
 
 
-SETTINGS = CheckSettings(layer_height=0.2, first_layer_height=0.2, line_width=0.42, support_threshold_deg=30)
+SETTINGS = CheckSettings(layer_height=0.2, first_layer_height=0.2, line_width=0.42, support_threshold_deg=30, nozzle_mm=0.4)
 
 
 def _mesh(tmp_path: Path, shape, name: str = "part", rotate=(0.0, 0.0, 0.0)):
@@ -117,3 +117,46 @@ def test_a_meshed_45_degree_chamfer_is_neither_an_overhang_nor_a_split_bed_face(
     report = check_orientation(_mesh(tmp_path, puck), SETTINGS)
     assert report.overhang_review_mm2 == 0
     assert report.lifted_near_bed == [] and report.flags == []
+
+
+def test_small_holes_are_measured_and_marks_are_only_counted(tmp_path):
+    from build123d import Sphere
+
+    plate = Pos(0, 0, 2) * Box(24, 10, 4) - Pos(-8, 0, 2) * Cylinder(0.3, 4) - Pos(0, 0, 2) * Cylinder(0.45, 4) - Pos(8, 0, 2) * Cylinder(1.5, 4)
+    plate -= Pos(8, 4, 4) * Sphere(0.6)  # a marking dimple, 0.6 mm deep
+    report = check_orientation(_mesh(tmp_path, plate), SETTINGS)
+    assert report.hole_check["enclosed"] == 4 and report.hole_check["small_shallow"] == 1
+    assert [hole.opens_at_mm for hole in report.holes] == [(), ()]
+    narrow, wider = sorted(report.holes, key=lambda hole: hole.across_mm)
+    pitch = report.hole_check["pitch_mm"]
+    assert narrow.across_mm == pytest.approx(0.6, abs=pitch) and wider.across_mm == pytest.approx(0.9, abs=pitch)
+    assert abs(narrow.model_xyz_mm[0] + 8) < 0.3 and abs(wider.model_xyz_mm[0]) < 0.3
+    assert narrow.print_z_mm[0] < 0.2 and narrow.print_z_mm[1] > 3.8
+    assert sum("mm across at its narrowest (under 1 mm" in flag for flag in report.flags) == 2
+
+
+def test_the_small_hole_limit_follows_the_nozzle():
+    from dataclasses import replace
+
+    assert SETTINGS.small_hole_mm == 1.0
+    assert replace(SETTINGS, nozzle_mm=0.6).small_hole_mm == pytest.approx(1.5)
+    assert replace(SETTINGS, nozzle_mm=0.2).small_hole_mm == 1.0
+
+
+def test_a_hole_that_opens_to_the_side_higher_up_is_flagged_for_its_step(tmp_path):
+    # Enclosed below z = 5; above it a slot runs from the hole out through the side.
+    slotted = Pos(0, 0, 5) * Box(20, 20, 10) - Pos(0, 0, 5) * Cylinder(3, 10) - Pos(5, 0, 7.5) * Box(10, 2, 5)
+    report = check_orientation(_mesh(tmp_path, slotted), SETTINGS)
+    (hole,) = report.holes
+    assert hole.across_mm is None and hole.print_z_mm[1] == pytest.approx(4.9, abs=0.11)
+    assert hole.opens_at_mm and hole.opens_at_mm[0] == pytest.approx(5.1, abs=0.11)
+    assert abs(hole.model_xyz_mm[0]) < 0.3 and abs(hole.model_xyz_mm[1]) < 0.3
+    assert any("runs to the outside at print height 5.1 mm" in flag and "leaves a step" in flag for flag in report.flags)
+
+
+def test_a_hole_over_the_edge_of_an_overhang_has_no_step(tmp_path):
+    # The flange's hole is enclosed wherever it exists; below it there is only air.
+    flange = Pos(0, 0, 5) * Box(10, 10, 10) + Pos(10, 0, 9) * Box(20, 10, 2) - Pos(14, 0, 9) * Cylinder(2, 2)
+    report = check_orientation(_mesh(tmp_path, flange), SETTINGS)
+    assert report.hole_check["enclosed"] == 1 and report.holes == []
+    assert not any("hole" in flag for flag in report.flags)
