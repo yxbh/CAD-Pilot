@@ -1,13 +1,12 @@
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-from build123d import Box, Compound, Cylinder, Pos, export_step, export_stl
+from build123d import Box, Compound, Cylinder, Polygon, Pos, Rot, export_step, export_stl, extrude
 
-from print import meshes
+from print import meshes, orientation
 from print.meshes import MeshError, load_mesh
 from print.orientation import CheckSettings, check_orientation
 
@@ -19,6 +18,35 @@ def _mesh(tmp_path: Path, shape, name: str = "part", rotate=(0.0, 0.0, 0.0)):
     path = tmp_path / f"{name}.step"
     export_step(shape, str(path))
     return load_mesh(path).oriented(rotate)
+
+
+def _layer(*rings, turn: float = 0.0, shift=(0.0, 0.0)):
+    """The thin places in one layer outline, on the raster a small part gets: rings of (x, y) points in mm,
+    the first the outside and the rest holes, turned ``turn`` degrees about the origin and then shifted."""
+    c, s = np.cos(np.radians(turn)), np.sin(np.radians(turn))
+    segments = []
+    for i, ring in enumerate(rings):
+        points = np.array(ring, dtype=float) @ np.array([[c, s], [-s, c]]) + shift
+        x, y = points.T
+        if (np.dot(x, np.roll(y, -1)) > np.dot(np.roll(x, -1), y)) != (i == 0):
+            points = points[::-1]  # the outside counterclockwise, holes clockwise: material on the left
+        segments.append(np.stack([points, np.roll(points, -1, axis=0)], axis=1))
+    segments = np.concatenate(segments)
+    pitch = SETTINGS.line_width / 4
+    winding, origin = orientation._raster(segments, pitch)
+    return orientation._thin_places(segments, winding, origin, pitch, SETTINGS.min_wall_mm)
+
+
+def _wall_with_rib(wall: float, rib: float, reach: float) -> list[tuple[float, float]]:
+    """A 12 mm wall along x, ``wall`` thick, with a rib ``rib`` thick standing ``reach`` off its middle."""
+    w, r = wall / 2, rib / 2
+    return [(-6, -w), (6, -w), (6, w), (r, w), (r, w + reach), (-r, w + reach), (-r, w), (-6, w)]
+
+
+def _wall_with_end(wall: float, angle: float) -> list[tuple[float, float]]:
+    """A 12 mm wall along x, ``wall`` thick, its right end cut to a corner of ``angle`` degrees."""
+    w = wall / 2
+    return [(-6, -w), (6 + wall / np.tan(np.radians(angle)), -w), (6, w), (-6, w)]
 
 
 def test_tee_overhangs_need_support_until_turned_over(tmp_path):
@@ -178,6 +206,74 @@ def test_identical_thin_walls_measure_alike_wherever_the_raster_falls(tmp_path):
     assert walls[0].thickness_mm == pytest.approx(walls[1].thickness_mm, abs=0.01)
 
 
+def test_a_wall_just_over_the_limit_is_not_thin_at_any_angle(tmp_path):
+    # 0.9 mm is over the 0.84 mm limit, though a raster turned 20 degrees to it reads it thin.
+    fin = Pos(0, 0, 1) * Box(20, 20, 2) + Pos(0.03, 0.03, 5) * Rot(0, 0, 20) * Box(12, 0.9, 6)
+    report = check_orientation(_mesh(tmp_path, fin), SETTINGS)
+    assert report.thin_walls == [] and not any("wall about" in flag for flag in report.flags)
+
+
+def test_a_thin_rib_or_spur_on_a_wall_just_over_the_limit_is_thin(tmp_path):
+    # The 0.86 and 0.9 mm walls are over the 0.84 mm limit; the 0.3 mm rib and 0.4 mm spur standing off them are not.
+    rib = Pos(-10, 0, 5) * (Box(12, 0.86, 6) + Pos(0, 4.43, 0) * Box(0.3, 8, 6))
+    spur = Pos(10, 0, 5) * Rot(0, 0, 20) * (Box(12, 0.9, 6) + Pos(2, 1.95, 0) * Box(0.4, 3, 6))
+    walls = check_orientation(_mesh(tmp_path, Pos(0, 0, 1) * Box(40, 30, 2) + rib + spur), SETTINGS).thin_walls
+    on_rib, on_spur = sorted(walls, key=lambda wall: wall.thickness_mm)
+    assert (on_rib.thickness_mm, on_spur.thickness_mm) == pytest.approx((0.3, 0.4), abs=0.01)
+    # Each is reported where it was measured: on the rib, and on the spur in the spur's own frame.
+    x, y, _ = on_rib.model_xyz_mm
+    assert abs(x + 10) <= 0.15 and 0.43 <= y <= 8.43
+    turn = np.radians(-20)
+    x, y = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]]) @ (np.array(on_spur.model_xyz_mm[:2]) - (10, 0))
+    assert abs(x - 2) <= 0.2 and 0.45 <= y <= 3.45
+
+
+def test_thin_walls_that_cross_or_turn_a_corner_are_measured_along_their_length(tmp_path):
+    # Where two 0.5 mm walls cross, or 0.6 mm walls turn a corner, a chord across reads about 0.7-0.85 mm.
+    cross = Pos(0, 0, 1) * Box(30, 30, 2) + Pos(0, 0, 5) * (Box(14, 0.5, 6) + Box(0.5, 14, 6))
+    shell = Pos(40, 0, 5) * (Box(20, 14, 10) - Box(18.8, 12.8, 10))
+    walls = check_orientation(_mesh(tmp_path, cross + shell), SETTINGS).thin_walls
+    assert sorted(wall.thickness_mm for wall in walls) == pytest.approx([0.5, 0.6], abs=0.01)
+
+
+def test_a_line_that_cuts_off_a_corner_of_a_wall_does_not_measure_it():
+    # Through a point just inside a corner the shortest line across cuts the corner off: it read 0.06 mm at the
+    # foot of this 0.3 mm rib on a 0.86 mm wall, and 0.13 mm at the 40-degree end of a 0.9 mm wall.
+    readings = [[thickness for thickness, _, _ in _layer(_wall_with_rib(0.86, 0.3, 0.45), turn=turn, shift=(0.02, 0.04))] for turn in (0, 20, 45, 70)]
+    assert readings[1] == pytest.approx([0.3], abs=0.01)
+    assert all(found == pytest.approx([0.3] * len(found), abs=0.01) for found in readings)
+    for turn in (0, 30, 45, 75):
+        assert _layer(_wall_with_end(0.9, 40), turn=turn, shift=(0.03, 0.02)) == []
+    # A tip sharper than TIP_DEG is thin near its point.
+    (tip,) = _layer(_wall_with_end(0.9, 15))
+    assert tip[0] < SETTINGS.min_wall_mm and tip[1][0] > 6
+
+
+def test_a_thin_place_reads_as_its_thinnest_part(tmp_path):
+    # A 0.3 mm rib on a 0.8 mm wall, both under the 0.84 mm limit, reads as the rib, where it stands; a wall
+    # tapering from 1.2 to 0.6 mm reads as its thin end.
+    rib = Pos(-10, 0, 5) * (Box(12, 0.8, 6) + Pos(2, 4.4, 0) * Box(0.3, 8, 6))
+    taper = Pos(10, 0, 2) * extrude(Polygon((-6, -0.6), (6, -0.3), (6, 0.3), (-6, 0.6), align=None), 6)
+    walls = check_orientation(_mesh(tmp_path, Pos(0, 0, 1) * Box(40, 30, 2) + rib + taper), SETTINGS).thin_walls
+    on_rib, on_taper = sorted(walls, key=lambda wall: wall.model_xyz_mm[0])
+    x, y, _ = on_rib.model_xyz_mm
+    assert on_rib.thickness_mm == pytest.approx(0.3, abs=0.01) and abs(x + 8) <= 0.15 and 0.4 <= y <= 8.4
+    assert on_taper.thickness_mm == pytest.approx(0.6, abs=0.05) and on_taper.model_xyz_mm[0] > 14
+
+
+def test_a_large_thin_place_is_measured_at_a_bounded_number_of_points(monkeypatch):
+    # A lattice of 2 mm cells with 0.6 mm webs is one thin place with some 3700 points along its middle; its
+    # one 0.4 mm web, shallower on the raster, still has points of its own among those measured.
+    measured = []
+    chords = orientation._chords
+    monkeypatch.setattr(orientation, "_chords", lambda segments, points, *rest, **named: measured.append(len(points)) or chords(segments, points, *rest, **named))
+    cells = [[(x, y), (x + 1.4, y), (x + 1.4, y + 1.4), (x, y + 1.4)] for x in np.arange(20) * 2 + 0.6 for y in np.arange(20) * 2 + 0.6]
+    for hole in cells[200:220]:  # the column to the right of x = 20 starts 0.2 mm sooner
+        hole[0], hole[3] = (hole[0][0] - 0.2, hole[0][1]), (hole[3][0] - 0.2, hole[3][1])
+    (place,) = _layer([(0, 0), (40.6, 0), (40.6, 40.6), (0, 40.6)], *cells, turn=13, shift=(0.02, 0.03))
+    assert place[0] == pytest.approx(0.4, abs=0.01) and sum(measured) < 400
+
+
 def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
     # One STEP body, and one STL, holding two boxes: neither is an assembly of parts, but both print as two pieces.
     two = Compound([Pos(10, 10, 5) * Box(20, 20, 10), Pos(50, 10, 5) * Box(20, 20, 10)])
@@ -202,6 +298,23 @@ def test_inward_facing_triangles_are_refused(tmp_path):
         load_mesh(tmp_path / "flipped.stl")
 
 
+def test_a_separate_shell_facing_inwards_is_refused_unless_it_is_a_void(tmp_path):
+    import trimesh
+
+    # Each shell is wound consistently on its own, so only where it lies tells a void from a flipped part.
+    outer = trimesh.creation.box(extents=(20, 20, 10))
+    beside = trimesh.creation.box(extents=(10, 10, 10))
+    beside.apply_translation((30, 0, 0))
+    beside.invert()
+    trimesh.util.concatenate([outer, beside]).export(tmp_path / "flipped.stl")
+    with pytest.raises(MeshError, match="a separate shell faces inwards but lies inside no other"):
+        load_mesh(tmp_path / "flipped.stl")
+    inside = trimesh.creation.box(extents=(10, 10, 4))
+    inside.invert()
+    trimesh.util.concatenate([outer, inside]).export(tmp_path / "hollow.stl")
+    assert load_mesh(tmp_path / "hollow.stl").bodies == 1
+
+
 def test_a_step_that_cannot_be_read_is_a_mesh_error(tmp_path):
     (tmp_path / "bad.step").write_text("garbage")
     with pytest.raises(MeshError, match="could not be read as STEP"):
@@ -222,15 +335,9 @@ def test_a_step_is_meshed_once_and_then_read_from_the_cache(tmp_path, monkeypatc
     assert load_mesh(path).size[2] == pytest.approx(12) and len(reads) == 2
 
 
-def test_without_trimesh_the_commands_load_and_meshing_names_the_workbench(tmp_path, monkeypatch):
-    export_stl(Box(10, 10, 10), str(tmp_path / "part.stl"))
-    monkeypatch.setitem(sys.modules, "trimesh", None)
-    with pytest.raises(MeshError, match="scripts/print needs trimesh, which .* cannot import; run it with the workbench's Python interpreter"):
-        load_mesh(tmp_path / "part.stl")
-    # A fresh interpreter without trimesh still loads the command line; commands that mesh nothing work.
-    scripts = Path(__file__).resolve().parents[2]
-    code = "import sys; sys.modules['trimesh'] = None; from print.cli import main; raise SystemExit(main(['slice', 'absent.3mf']))"
-    result = subprocess.run(
-        [sys.executable, "-c", code], cwd=tmp_path, env={**os.environ, "PYTHONPATH": str(scripts)}, capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 2 and "Project not found" in result.stderr, result.stderr
+def test_without_trimesh_the_command_line_names_the_workbench_interpreter(tmp_path):
+    launcher = Path(__file__).resolve().parents[1]
+    code = f"import runpy, sys; sys.modules['trimesh'] = None; sys.argv = ['print', 'presets']; runpy.run_path({str(launcher)!r}, run_name='__main__')"
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert result.returncode == 1, result.stderr
+    assert "scripts/print needs trimesh, which" in result.stderr and "run it with the workbench's Python interpreter" in result.stderr
