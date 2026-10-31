@@ -24,8 +24,9 @@ const workers = String(Math.max(1, Math.min(4, availableParallelism())));
 const logs = path.join(root, ".local", "check");
 const job = share && shares(count)[index - 1];
 if (job) {
-  console.log(`Share ${share}: about ${Math.round(job.load.python)} s of Python and ${Math.round(job.load.explorer)} s of Explorer tests on a CI runner`);
-  console.log(`  Python: ${job.python.join(" ") || "none"}\n  Explorer: ${job.explorer.join(" ") || "none"}`);
+  const { python, core, browser } = job.load;
+  console.log(`Share ${share}: about ${Math.round(python)} s of Python tests, ${Math.round(core)} s of Explorer tests and ${Math.round(browser)} s of browser scenarios on a CI runner`);
+  console.log(`  Python: ${job.python.join(" ") || "none"}\n  Explorer: ${[...job.core, ...job.browser].join(" ") || "none"}`);
 }
 // The Python environment is synced once (inexactly, like `uv run`) before the suites that use it start together;
 // the Explorer is built once before its suites, which then must not rebuild into the same folder. conftest.py keeps
@@ -50,7 +51,8 @@ const STAGES = {
   "--share": job && [
     env, build,
     ...(job.python.length ? [python(`python ${share}`, job.python)] : []),
-    ...(job.explorer.length ? [explorer(`explorer ${share}`, ...job.explorer)] : []),
+    ...(job.core.length ? [explorer(`explorer core ${share}`, ...job.core)] : []),
+    ...(job.browser.length ? [explorer(`explorer browser ${share}`, ...job.browser)] : []),
   ],
 }[mode];
 

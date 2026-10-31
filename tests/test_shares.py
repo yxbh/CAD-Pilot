@@ -54,8 +54,9 @@ def test_every_job_count_runs_each_test_file_exactly_once_on_every_platform():
     })()""")
     assert found["python"] and found["explorer"]
     for name, jobs in found["split"].items():
-        for suite in ("python", "explorer"):
-            assert sorted(file for job in jobs for file in job[suite]) == found[suite], (name, suite)
+        assert sorted(file for job in jobs for file in job["python"]) == found["python"], name
+        assert sorted(file for job in jobs for file in job["core"] + job["browser"]) == found["explorer"], name
+        assert all(file.endswith("-browser.test.mjs") for job in jobs for file in job["browser"]), name
 
 
 def test_the_python_files_are_those_pytest_collects(tmp_path):
