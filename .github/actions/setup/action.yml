@@ -1,13 +1,14 @@
 name: Set up the workbench
-description: Python environment and Node.js, plus the Explorer's packages and Playwright Chromium when asked.
+description: Python environment and Node.js, plus the Explorer's packages and Playwright's headless Chromium shell when asked.
 inputs:
   explorer:
-    description: Also install the Explorer's npm packages and Playwright Chromium.
+    description: Also install the Explorer's npm packages and Playwright's headless Chromium shell.
     default: "false"
 runs:
   using: composite
   steps:
-    # uv.lock and explorer/package-lock.json stay local, so each run resolves dependencies afresh.
+    # uv.lock and explorer/package-lock.json stay local, so each run resolves the Python dependencies afresh, and the
+    # Explorer's packages are resolved afresh once a day on each system.
     - uses: astral-sh/setup-uv@v10.3.3
       with:
         enable-cache: true
@@ -15,38 +16,40 @@ runs:
         python-version: "3.14"
     - run: uv sync
       shell: bash
-    - if: inputs.explorer != 'true'
-      uses: actions/setup-node@v7
+    - uses: actions/setup-node@v7
       with:
         node-version: 24
     - if: inputs.explorer == 'true'
-      uses: actions/setup-node@v7
-      with:
-        node-version: 24
-        cache: npm
-        cache-dependency-path: explorer/package.json
-    - if: inputs.explorer == 'true'
-      # No audit or funding requests: CI only needs the packages installed.
-      run: npm --prefix explorer install --no-audit --no-fund
-      shell: bash
-    - if: inputs.explorer == 'true'
-      id: playwright
+      id: versions
       shell: bash
       run: |
-        echo "version=$(uv run python -c 'from importlib.metadata import version; print(version("playwright"))' | tr -d '\r')" >> "$GITHUB_OUTPUT"
+        echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
+        echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+        echo "playwright=$(uv run --no-sync python -c 'from importlib.metadata import version; print(version("playwright"))' | tr -d '\r')" >> "$GITHUB_OUTPUT"
         case "$RUNNER_OS" in
           macOS) echo "browsers=$HOME/Library/Caches/ms-playwright" ;;
           Windows) echo "browsers=$LOCALAPPDATA\\ms-playwright" ;;
           *) echo "browsers=$HOME/.cache/ms-playwright" ;;
         esac >> "$GITHUB_OUTPUT"
+    # The day's first job on each system installs the packages the manifest allows then; later jobs that day reuse
+    # that tree instead of extracting it again.
+    - if: inputs.explorer == 'true'
+      id: packages
+      uses: actions/cache@v6
+      with:
+        path: explorer/node_modules
+        key: explorer-packages-${{ runner.os }}-${{ steps.versions.outputs.node }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}
+    - if: inputs.explorer == 'true' && steps.packages.outputs.cache-hit != 'true'
+      # No audit or funding requests: CI only needs the packages installed.
+      run: npm --prefix explorer install --no-audit --no-fund
+      shell: bash
+    # The renderer and the browser scenarios launch only the headless shell, and the runner images already carry the
+    # libraries it needs on Linux (install-deps adds only fonts there).
     - if: inputs.explorer == 'true'
       uses: actions/cache@v6
       with:
-        path: ${{ steps.playwright.outputs.browsers }}
-        key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+        path: ${{ steps.versions.outputs.browsers }}
+        key: playwright-shell-${{ runner.os }}-${{ steps.versions.outputs.playwright }}
     - if: inputs.explorer == 'true'
-      run: uv run python -m playwright install chromium
-      shell: bash
-    - if: inputs.explorer == 'true' && runner.os == 'Linux'
-      run: uv run python -m playwright install-deps chromium
+      run: uv run --no-sync python -m playwright install --only-shell chromium
       shell: bash

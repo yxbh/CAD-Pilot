@@ -14,7 +14,6 @@ dependencies = [
     "playwright",
     "scipy",
     "trimesh",
-    "vtk",
 ]
 
 [dependency-groups]
