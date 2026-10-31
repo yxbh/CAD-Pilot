@@ -15,8 +15,8 @@ export function cameraSummary(state, drawn) {
   };
 }
 
-// camera: the camera of the renderer that drew the current revision, if one has.
-export function stateSummary(state, { url, changedOnDisk = false, problem = "", camera } = {}) {
+// drawnCamera: the camera of the renderer that drew the current revision, if one has.
+export function stateSummary(state, { url, changedOnDisk = false, problem = "", drawnCamera } = {}) {
   const labels = new Map(state.parts.map((part) => [part.id, part.label]));
   const name = (id) => labels.get(id) ?? id;
   const steps = state.assembly?.steps ?? [];
@@ -34,7 +34,7 @@ export function stateSummary(state, { url, changedOnDisk = false, problem = "", 
   });
   const view = {
     revision: state.revision,
-    camera: cameraSummary(state, camera),
+    camera: cameraSummary(state, drawnCamera),
     appearance: state.appearance === "studio" ? `studio ${state.materialFinish}` : "inspect",
     ...(state.showEdges ? {} : { outlines: false }),
     ...(state.explode ? { explode: { amount: state.explode, direction: state.direction, ...(state.fixedId ? { fixed: name(state.fixedId) } : {}) } } : {}),

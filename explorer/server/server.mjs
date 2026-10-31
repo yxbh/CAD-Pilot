@@ -239,7 +239,7 @@ async function startOwnedService({
     }
     const current = getState();
     const report = { viewer: lastRendered, headless: lastHeadless }[current.renderers.drawn];
-    return stateSummary(current, { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, camera: report?.camera });
+    return stateSummary(current, { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera });
   }
 
   async function python(script, args) {

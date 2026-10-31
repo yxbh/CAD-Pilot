@@ -223,11 +223,13 @@ test("render writes a STEP's image without touching the project's viewer or save
   // An orthographic view is fitted to the image the same way at the default size as at a requested one of the same shape.
   const fitted = [];
   for (const size of [[], ["--size", "640x400"]]) {
-    const ortho = await explorer("render", "demo.step", "docs/ortho.png", ...size, "--projection", "orthographic");
+    const ortho = await explorer("render", "demo.step", "docs/ortho.png", ...size, "--projection", "orthographic", "--background", "#ffffff");
     assert.equal(ortho.code, 0, ortho.stderr);
-    fitted.push(ortho.json().camera.viewHeight);
+    const { camera, width } = ortho.json();
+    fitted.push({ viewHeight: camera.viewHeight, drawn: await drawnWidth(path.join(project, "docs", "ortho.png")) / width });
   }
-  assert.ok(Math.abs(fitted[0] / fitted[1] - 1) < 1e-9, `view heights ${fitted.join(" and ")} mm`);
+  assert.ok(Math.abs(fitted[0].viewHeight / fitted[1].viewHeight - 1) < 1e-9, `view heights ${fitted.map((fit) => fit.viewHeight).join(" and ")} mm`);
+  assert.ok(Math.abs(fitted[0].drawn - fitted[1].drawn) <= 2 / 640, `drawn ${fitted.map((fit) => fit.drawn).join(" and ")} of the width`);
 });
 
 test("simultaneous opens for one project share a single viewer", { timeout: 240_000 }, async (t) => {
