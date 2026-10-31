@@ -133,7 +133,12 @@ class BrowserSession:
             self.page.wait_for_timeout(10)
 
     def settled(self):
-        return self.wait(lambda state: state.get("rendered") and state["rendered"]["revision"] == state["revision"])
+        current = self.wait(lambda state: state.get("rendered") and state["rendered"]["revision"] == state["revision"])
+        # A page can stay busy after it reports a frame: after the first frame in Studio, which brings in new shaders and
+        # lighting, it answers nothing for seconds in software rendering, and for longer than an expectation's 30 s on a
+        # loaded CI runner. Nothing more is asked of it until it answers again, which it gets as long for as a first load.
+        self.page.wait_for_function("() => true", polling=100, timeout=120_000)
+        return current
 
     def command(self, name, data=None):
         response = self.page.request.post(self.url + "api/command", data={"name": name, "input": data or {}})

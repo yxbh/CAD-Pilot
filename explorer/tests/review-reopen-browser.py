@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import expect
-from browser_session import launch_chromium, sync_playwright
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 def run(url, output):
@@ -20,18 +20,8 @@ def run(url, output):
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(url)
 
-            def state():
-                return page.request.get(url + "api/state").json()
-
-            def settled():
-                deadline = time.monotonic() + 30
-                while True:
-                    value = state()
-                    if value.get("rendered") and value["rendered"]["revision"] == value["revision"]:
-                        return value
-                    assert time.monotonic() < deadline, value
-                    page.wait_for_timeout(50)
-
+            session = BrowserSession(page, url, errors)
+            state, settled = session.state, session.settled
             settled()
             for name, data in [
                 ("set_projection", {"projection": "orthographic"}),
