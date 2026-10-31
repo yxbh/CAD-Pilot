@@ -18,7 +18,7 @@ python <cad>/scripts/print profile
 python <cad>/scripts/print presets H2D 0.4 PETG
 ```
 
-`--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. Another interpreter that lacks the mesh libraries gets an error naming the workbench's.
+`--format json` gives machine-readable output; `--help` on each command lists every option. Bambu Studio must be installed; set `bambu_studio` in the personal print profile or the `BAMBU_STUDIO` environment variable when it is not in its usual place. Another interpreter that lacks its libraries gets an error saying to use the workbench's.
 
 ## The personal print profile
 
@@ -103,7 +103,7 @@ To measure a filament's compensation:
 - Bed contact: area and number of separate contact islands; undersides a little above the bed, which print on support or air, usually a bed face split into two heights.
 - Overhangs: area tilted past 45 degrees from vertical (a review trigger), and area past the slicer's support angle (needs support), by region.
 - Flat undersides: a bridge, held from below on opposite sides, with its span; an overhang, held on one side, with how far it reaches out; or an island, held nowhere. Each reports the material above it, so a thin wall laid on its side shows as a thin shelf.
-- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster and measured across the outline itself, so the raster pitch bounds the thickness error; thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
+- Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster, then measured across the outline itself on lines 5 degrees apart through points along their middle, and each one's thickness is the median of those: a straight wall reads within 0.1% of its thickness wherever the raster falls, and walls that cross or turn a corner read as thick as the walls themselves. A place that measures at least two line widths is not listed; where no line across it is found, the raster's own estimate stands, which can read up to two raster pitches thin. Thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
 - Holes the sampled layer outlines enclose: those narrower than the larger of 1 mm and 2.5 nozzle diameters, measured as the widest round pin that fits, with the heights they run through; and those that open to the outside at a neighbouring sampled height, with both heights. Small holes shallower than 1 mm, such as marking dimples, are counted rather than listed, and holes under about two raster pitches across are not seen.
 
 These are measurements of one orientation, not a printability verdict. Compare orientations with `check --rotate` before choosing one, and keep fit faces off bridges and support contact.
@@ -127,5 +127,5 @@ These are measurements of one orientation, not a printability verdict. Compare o
 
 - Bambu Studio and its system presets only; presets the user saved in the app are not read.
 - A project holds at most 36 plates.
-- Part meshes must be closed solids: every edge shared by exactly two triangles, and every triangle facing outwards. Separate solids in one file or body are counted and flagged. STEP faces are meshed to within 0.01 mm, and the mesh is kept in the cad tools' user cache (`CAD_PILOT_CACHE`), named by the file's contents, so checking the same STEP again skips meshing.
+- Part meshes must be closed solids: every edge shared by exactly two triangles, and every triangle facing out of the material, as a separate shell facing inwards does only when it is a void inside another. Separate solids in one file or body are counted and flagged. STEP faces are meshed to within 0.01 mm, and the mesh is kept in the cad tools' user cache (`CAD_PILOT_CACHE`), named by the file's contents, so checking the same STEP again skips meshing.
 - The layout packs each part's footprint rectangle.

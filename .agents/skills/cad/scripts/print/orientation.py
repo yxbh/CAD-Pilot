@@ -11,10 +11,11 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 from scipy import ndimage
+from trimesh.graph import connected_components, face_adjacency
 
 from .bambu import setting
 from .layout import Rect
-from .meshes import PrintMesh, trimesh_module
+from .meshes import PrintMesh
 
 
 ON_BED_MM = 1e-3
@@ -50,10 +51,11 @@ HOLE_MIN_HEIGHT_MM = 1.0
 # edge of an overhang there is nothing around it, and no step.
 OPEN_WALL_SHARE = 0.5
 # Each thin place is measured across the layer outline itself, on lines at this many headings through
-# up to CHORD_POINTS of its deepest raster points, so its thickness does not depend on where the
-# raster's pixels fall.
+# up to CHORD_POINTS points along its middle, so its thickness does not depend on where the raster's
+# pixels fall. Points are measured CHORD_BATCH at a time, which bounds the memory it takes.
 CHORD_HEADINGS = 36
 CHORD_POINTS = 9
+CHORD_BATCH = 4096
 REPORTED = 5
 
 
@@ -176,7 +178,7 @@ def _regions(mesh: PrintMesh, selected: np.ndarray, adjacency: np.ndarray) -> li
     if not len(indices):
         return []
     keep = selected[adjacency].all(axis=1)
-    groups = trimesh_module().graph.connected_components(adjacency[keep], nodes=indices, min_len=1)
+    groups = connected_components(adjacency[keep], nodes=indices, min_len=1)
     regions = []
     for group in groups:
         group = np.asarray(group)
@@ -188,6 +190,11 @@ def _regions(mesh: PrintMesh, selected: np.ndarray, adjacency: np.ndarray) -> li
             Region(round(float(areas.sum()), 2), _round((z.min(), z.max())), _round(mesh.model_point(centre)))
         )
     return sorted(regions, key=lambda region: -region.area_mm2)
+
+
+def _within(counts: np.ndarray) -> np.ndarray:
+    """For runs of these lengths laid end to end, each item's place in its own run."""
+    return np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
 
 
 def _fill(segments: np.ndarray, origin: tuple[float, float], shape: tuple[int, int], pitch: float) -> np.ndarray:
@@ -204,7 +211,7 @@ def _fill(segments: np.ndarray, origin: tuple[float, float], shape: tuple[int, i
     if not counts.sum():
         return outside
     owner = np.repeat(np.arange(len(segments)), counts)
-    rows = first[owner] + np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+    rows = first[owner] + _within(counts)
     y = origin[1] + (rows + 0.5) * pitch
     x = ax[owner] + (y - ay[owner]) * (bx[owner] - ax[owner]) / (by[owner] - ay[owner])
     columns = np.clip(np.ceil((x - origin[0]) / pitch - 0.5).astype(np.int64), 0, cols_n)
@@ -241,9 +248,39 @@ def _raster(segments: np.ndarray, pitch: float, pad: int = 2) -> tuple[np.ndarra
     return _fill(segments, (float(low[0]), float(low[1])), shape, pitch), (float(low[0]), float(low[1]))
 
 
+class _Grid:
+    """XY boxes bucketed once on a grid of square cells, so a point is tested only against the boxes
+    over its own cell."""
+
+    def __init__(self, low: np.ndarray, high: np.ndarray, cell: float) -> None:
+        self.origin = low.min(axis=0) if len(low) else np.zeros(2)
+        self.cell = cell
+        first = np.floor((low - self.origin) / cell).astype(np.int64)
+        last = np.floor((high - self.origin) / cell).astype(np.int64)
+        across, along = last[:, 0] - first[:, 0] + 1, last[:, 1] - first[:, 1] + 1
+        counts = across * along
+        owner = np.repeat(np.arange(len(low)), counts)
+        local = _within(counts)
+        keys = self._key(first[owner, 0] + local % across[owner], first[owner, 1] + local // across[owner])
+        order = np.argsort(keys, kind="stable")
+        self.keys, self.owner = keys[order], owner[order]
+
+    @staticmethod
+    def _key(cx: np.ndarray, cy: np.ndarray) -> np.ndarray:
+        return cx * (1 << 32) + cy
+
+    def pairs(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Each (x, y) point with each box over its cell, as indices of points and boxes, point by point
+        and boxes in order within each point."""
+        cells = np.floor((points - self.origin) / self.cell).astype(np.int64)
+        keys = self._key(cells[:, 0], cells[:, 1])
+        start, stop = np.searchsorted(self.keys, keys, "left"), np.searchsorted(self.keys, keys, "right")
+        counts = stop - start
+        return np.repeat(np.arange(len(points)), counts), self.owner[np.repeat(start, counts) + _within(counts)]
+
+
 class _VerticalRays:
-    """Rays straight up through a mesh. Triangles are bucketed once on an XY grid, so each ray tests
-    only the triangles over its cell."""
+    """Rays straight up through a mesh, each tested only against the triangles over its grid cell."""
 
     def __init__(self, mesh: PrintMesh) -> None:
         tri = mesh.triangles
@@ -253,36 +290,17 @@ class _VerticalRays:
         keep = np.flatnonzero(np.abs(det) > 1e-12)
         self.tri, self.det = tri[keep], det[keep]
         low, high = self.tri[:, :, :2].min(axis=1), self.tri[:, :, :2].max(axis=1)
-        self.origin = low.min(axis=0) if len(keep) else np.zeros(2)
-        extent = float((high.max(axis=0) - self.origin).max()) if len(keep) else 1.0
-        self.cell = max(float(np.median((high - low).max(axis=1))) if len(keep) else 1.0, extent / 512, 1e-3)
-        first = np.floor((low - self.origin) / self.cell).astype(np.int64)
-        last = np.floor((high - self.origin) / self.cell).astype(np.int64)
-        across, along = last[:, 0] - first[:, 0] + 1, last[:, 1] - first[:, 1] + 1
-        counts = across * along
-        owner = np.repeat(np.arange(len(keep)), counts)
-        local = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
-        cx = first[owner, 0] + local % across[owner]
-        cy = first[owner, 1] + local // across[owner]
-        order = np.argsort(self._key(cx, cy), kind="stable")
-        self.keys, self.owner = self._key(cx, cy)[order], owner[order]
-
-    @staticmethod
-    def _key(cx: np.ndarray, cy: np.ndarray) -> np.ndarray:
-        return cx * (1 << 32) + cy
+        extent = float((high.max(axis=0) - low.min(axis=0)).max()) if len(keep) else 1.0
+        cell = max(float(np.median((high - low).max(axis=1))) if len(keep) else 1.0, extent / 512, 1e-3)
+        self.grid = _Grid(low, high, cell)
 
     def heights_above(self, points: np.ndarray) -> np.ndarray:
         """For each (x, y, z) point, the distance up to the next surface (inf if none)."""
         points = np.asarray(points, dtype=float).reshape(-1, 3)
         result = np.full(len(points), np.inf)
-        cells = np.floor((points[:, :2] - self.origin) / self.cell).astype(np.int64)
-        keys = self._key(cells[:, 0], cells[:, 1])
-        start, stop = np.searchsorted(self.keys, keys, "left"), np.searchsorted(self.keys, keys, "right")
-        counts = stop - start
-        if not counts.sum():
+        ray, candidate = self.grid.pairs(points[:, :2])
+        if not len(ray):
             return result
-        ray = np.repeat(np.arange(len(points)), counts)
-        candidate = self.owner[np.repeat(start, counts) + np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)]
         t, d = self.tri[candidate], self.det[candidate]
         px, py, pz = points[ray, 0], points[ray, 1], points[ray, 2]
         a = ((t[:, 1, 1] - t[:, 2, 1]) * (px - t[:, 2, 0]) + (t[:, 2, 0] - t[:, 1, 0]) * (py - t[:, 2, 1])) / d
@@ -313,7 +331,7 @@ def _undersides(mesh: PrintMesh, flat: np.ndarray, adjacency: np.ndarray, shared
     if not len(indices):
         return found
     keep = flat[adjacency].all(axis=1)
-    for group in trimesh_module().graph.connected_components(adjacency[keep], nodes=indices, min_len=1):
+    for group in connected_components(adjacency[keep], nodes=indices, min_len=1):
         group = np.asarray(group)
         member = np.zeros(len(mesh.faces), dtype=bool)
         member[group] = True
@@ -392,9 +410,13 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     """Places in a layer thinner than the limit: pixels of its raster (the outline ``segments``' winding
     numbers on a grid from ``origin``) with no point deeper than half the limit nearby, in groups at
     least about as long as the limit. Each comes with its thickness, the point where that was measured
-    (its thickest, on the material) and its outline's box. The thickness is the shortest chord across
-    the outline through the place's deepest pixels, the largest of those at a few of them, since a
-    chord through a point near a corner cuts the corner."""
+    (on the material) and its outline's box.
+
+    The thickness is measured at points along the place's middle, its pixels at least as deep as their
+    thin neighbours, as the shortest chord across the outline through each, and is the median of those:
+    a point where thin walls meet or turn a corner reads long, and the walls themselves set the median.
+    A place it shows to be at least the limit thick is not thin. Where no chord is found, the raster's
+    own estimate stands, up to two pitches thin."""
     mask = winding != 0
     if not mask.any():
         return []
@@ -402,6 +424,7 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     thin = mask & (ndimage.maximum_filter(distance, size=window) < (limit_px + 1) / 2)
     if not thin.any():
         return []
+    middle = thin & (distance >= ndimage.maximum_filter(np.where(thin, distance, 0.0), size=3))
     labels, _ = ndimage.label(thin, structure=np.ones((3, 3)))
     pixels = np.flatnonzero(thin)
     label = labels.ravel()[pixels]
@@ -417,6 +440,27 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     np.maximum.at(high_rows, label, rows)
     np.minimum.at(low_cols, label, cols)
     np.maximum.at(high_cols, label, cols)
+    places = np.flatnonzero(sizes * pitch * pitch >= limit * limit)
+    if not len(places):
+        return []
+
+    # Each place's middle pixels in pixel order, grouped by one sort (every place has some: its deepest
+    # pixel is one), and up to CHORD_POINTS of them spread evenly through that order.
+    along = np.flatnonzero(middle.ravel()[pixels])
+    along = along[np.argsort(label[along], kind="stable")]
+    begin = np.searchsorted(label[along], places)
+    middles = np.searchsorted(label[along], places, "right") - begin
+    taken = np.minimum(middles, CHORD_POINTS)
+    owner = np.repeat(np.arange(len(places)), taken)
+    spacing = (middles - 1) / np.maximum(taken - 1, 1)
+    sample = along[begin[owner] + np.round(_within(taken) * spacing[owner]).astype(np.int64)]
+    points = np.column_stack([origin[0] + (cols[sample] + 0.5) * pitch, origin[1] + (rows[sample] + 0.5) * pitch])
+    chords = _chords(segments, points, winding[rows[sample], cols[sample]], reach=2 * limit + 2 * pitch)
+    # Each place's median chord (the upper one of an even count; equal chords in order of x, then y);
+    # chords not found sort last and count for nothing.
+    measured = np.isfinite(chords)
+    order = np.lexsort((points[:, 1], points[:, 0], chords, owner))
+    median = order[np.cumsum(taken) - taken + np.bincount(owner, weights=measured, minlength=len(places)).astype(np.int64) // 2]
 
     def x(col) -> float:
         return origin[0] + (float(col) + 0.5) * pitch
@@ -424,53 +468,87 @@ def _thin_places(segments: np.ndarray, winding: np.ndarray, origin: tuple[float,
     def y(row) -> float:
         return origin[1] + (float(row) + 0.5) * pitch
 
-    places = []
-    for index in np.flatnonzero(sizes * pitch * pitch >= limit * limit):
-        tied = np.flatnonzero((label == index) & (depth == deepest[index]))
-        measured = []
-        for pixel in tied[np.unique(np.linspace(0, len(tied) - 1, min(len(tied), CHORD_POINTS)).round().astype(int))]:
-            at = (x(cols[pixel]), y(rows[pixel]))
-            chord = _chord(segments, np.array(at), int(winding[rows[pixel], cols[pixel]]), reach=2 * limit + 2 * pitch)
-            if chord is not None:
-                measured.append((chord, at))
-        # The raster's own estimate, up to two pitches thin, only where no chord is that short.
-        thickness, at = max(measured) if measured else (max(2 * float(deepest[index]) - 1, 1) * pitch, (x(cols[tied[0]]), y(rows[tied[0]])))
-        box = Rect(x(low_cols[index]), y(low_rows[index]), x(high_cols[index]), y(high_rows[index]))
-        places.append((thickness, at, box))
-    return places
+    found = []
+    for index, chosen in zip(places.tolist(), median.tolist()):
+        thickness = float(chords[chosen]) if measured[chosen] else max(2 * float(deepest[index]) - 1, 1) * pitch
+        if thickness < limit:
+            box = Rect(x(low_cols[index]), y(low_rows[index]), x(high_cols[index]), y(high_rows[index]))
+            found.append((thickness, (float(points[chosen, 0]), float(points[chosen, 1])), box))
+    return found
 
 
 def _cross(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     return p[..., 0] * q[..., 1] - p[..., 1] * q[..., 0]
 
 
-def _chord(segments: np.ndarray, point: np.ndarray, winding: int, reach: float) -> float | None:
-    """The shortest chord through ``point`` across the material of a layer outline: on lines through it
+def _chords(segments: np.ndarray, points: np.ndarray, windings: np.ndarray, reach: float) -> np.ndarray:
+    """The shortest chord through each point across the material of a layer outline: on lines through it
     at evenly spread headings, the distance between where the line leaves the material on either side,
-    by the nonzero winding rule, ``winding`` being the point's own winding number. Only outline within
-    ``reach`` of the point counts; None when no chord is that short."""
-    near = segments[np.all(segments.min(axis=1) <= point + reach, axis=1) & np.all(segments.max(axis=1) >= point - reach, axis=1)]
-    if not len(near) or winding == 0:
-        return None
+    by the nonzero winding rule, ``windings`` being the points' own winding numbers (none of them 0).
+    Only outline within ``reach`` of a point counts; inf where no chord is that short. A point is tried
+    only against the segments whose box comes within reach of it, and a segment only on the headings
+    toward it."""
+    rays = 2 * CHORD_HEADINGS
     # Half a step off the axes, so no line runs along an axis-aligned edge or through its corners.
-    headings = (np.arange(2 * CHORD_HEADINGS) + 0.5) * math.pi / CHORD_HEADINGS
-    ray = np.stack([np.cos(headings), np.sin(headings)], axis=1)[:, None, :]
-    start, edge = near[None, :, 0], (near[:, 1] - near[:, 0])[None]
-    offset = start - point
-    across = _cross(ray, edge)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = _cross(offset, edge) / across
-        s = _cross(offset, ray) / across
-    hit = (np.abs(across) > 1e-12) & (t > 0) & (t <= reach) & (s >= 0) & (s < 1)
-    distance = np.where(hit, t, np.inf)
-    order = np.argsort(distance, axis=1)
-    distance = np.take_along_axis(distance, order, axis=1)
-    # Crossing an edge from its inside (left) to its outside lowers the winding number by one.
-    level = winding + np.cumsum(np.take_along_axis(np.where(hit, -np.sign(across), 0), order, axis=1), axis=1)
-    leaves = np.isfinite(distance) & (level == 0)
-    exits = np.where(leaves.any(axis=1), distance[np.arange(len(headings)), leaves.argmax(axis=1)], np.inf)
-    chord = float((exits[:CHORD_HEADINGS] + exits[CHORD_HEADINGS:]).min())
-    return chord if math.isfinite(chord) else None
+    headings = (np.arange(rays) + 0.5) * math.pi / CHORD_HEADINGS
+    direction = np.stack([np.cos(headings), np.sin(headings)], axis=1)
+    low, high = segments.min(axis=1), segments.max(axis=1)
+    # Boxes grown a little past the reach, so rounding never leaves a segment off a point's cell.
+    grid = _Grid(low - 1.001 * reach, high + 1.001 * reach, reach)
+    exits = np.full((len(points), rays), np.inf)
+    for begin in range(0, len(points), CHORD_BATCH):
+        batch = slice(begin, begin + CHORD_BATCH)
+        point, segment = grid.pairs(points[batch])
+        at = points[batch][point]
+        near = np.all(low[segment] <= at + reach, axis=1) & np.all(high[segment] >= at - reach, axis=1)
+        point, segment, at = point[near], segment[near], at[near]
+        offset = segments[segment, 0] - at
+        edge = segments[segment, 1] - segments[segment, 0]
+        # The headings between the directions to the segment's ends, the shorter way round, and one more
+        # on each side; the exact test below decides which cross it.
+        start = np.arctan2(offset[:, 1], offset[:, 0])
+        end = segments[segment, 1] - at
+        sweep = np.remainder(np.arctan2(end[:, 1], end[:, 0]) - start + math.pi, 2 * math.pi) - math.pi
+        first = np.floor(np.minimum(start, start + sweep) * CHORD_HEADINGS / math.pi - 0.5).astype(np.int64)
+        count = np.minimum(np.ceil(np.abs(sweep) * CHORD_HEADINGS / math.pi).astype(np.int64) + 3, rays)
+        pair = np.repeat(np.arange(len(segment)), count)
+        heading = (first[pair] + _within(count)) % rays
+        ray = direction[heading]
+        across = _cross(ray, edge[pair])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = _cross(offset, edge)[pair] / across
+            s = _cross(offset[pair], ray) / across
+        hit = (np.abs(across) > 1e-12) & (t > 0) & (t <= reach) & (s >= 0) & (s < 1)
+        # Crossing an edge from its inside (left) to its outside lowers the winding number by one.
+        crossings = point[pair[hit]] * rays + heading[hit], t[hit], -np.sign(across[hit])
+        exits[batch] = _exits(*crossings, np.repeat(windings[batch], rays)).reshape(-1, rays)
+    return (exits[:, :CHORD_HEADINGS] + exits[:, CHORD_HEADINGS:]).min(axis=1)
+
+
+def _exits(ray: np.ndarray, distance: np.ndarray, step: np.ndarray, start: np.ndarray) -> np.ndarray:
+    """Where each ray leaves the material: the distance of the first crossing along it after which its
+    winding number, from ``start`` and changed by each crossing's ``step``, is 0; inf where none is.
+    Crossings are given by the ray they are on, their distance and their step."""
+    exits = np.full(len(start), np.inf)
+    nearest = np.full(len(start), np.inf)
+    np.minimum.at(nearest, ray, distance)
+    first = distance == nearest[ray]
+    # Most rays start in one solid and leave it at their nearest crossing, which no other crossing ties.
+    alone = first & (np.bincount(ray[first], minlength=len(start))[ray] == 1)
+    leaves = alone & (start[ray] == 1) & (step == -1)
+    exits[ray[leaves]] = distance[leaves]
+    # The rest count their crossings in order of distance, ties in the order given.
+    rest = np.isinf(exits[ray])
+    ray, distance, step = ray[rest], distance[rest], step[rest]
+    order = np.lexsort((distance, ray))
+    ray, distance, step = ray[order], distance[order], step[order]
+    level = np.cumsum(step)
+    begins = np.diff(ray, prepend=-1) != 0
+    level += start[ray] - (level - step)[begins][np.cumsum(begins) - 1]
+    ray, distance = ray[level == 0], distance[level == 0]
+    first = np.diff(ray, prepend=-1) != 0
+    exits[ray[first]] = distance[first]
+    return exits
 
 
 @dataclass
@@ -710,7 +788,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
         "pitch_mm": round(pitch, 3),
         "layers_sampled": int(len(heights)),
         "thin_places": len(walls),
-        "method": "layer outlines rasterised at layer centres; thickness is the shortest chord across the outline through a thin place's deepest raster points",
+        "method": "layer outlines rasterised at layer centres; thickness is the median of the shortest chords across the outline through points along a thin place's middle",
     }
     return walls, method, *holes.report(mesh, step)
 
@@ -718,7 +796,7 @@ def _scan_layers(mesh: PrintMesh, settings: CheckSettings, flat_heights: np.ndar
 def check_orientation(mesh: PrintMesh, settings: CheckSettings) -> OrientationReport:
     """Measure a mesh already turned into its print orientation (lowest point at z = 0)."""
     tri, normals, areas = mesh.triangles, mesh.normals, mesh.areas
-    adjacency, shared_edges = trimesh_module().graph.face_adjacency(mesh.faces, return_edges=True)
+    adjacency, shared_edges = face_adjacency(mesh.faces, return_edges=True)
     z_low, z_high = tri[:, :, 2].min(axis=1), tri[:, :, 2].max(axis=1)
     downward = normals[:, 2] < 0
     tilt = np.degrees(np.arcsin(np.clip(-normals[:, 2], -1.0, 1.0)))

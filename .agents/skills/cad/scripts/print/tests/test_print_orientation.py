@@ -1,11 +1,10 @@
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-from build123d import Box, Compound, Cylinder, Pos, export_step, export_stl
+from build123d import Box, Compound, Cylinder, Pos, Rot, export_step, export_stl
 
 from print import meshes
 from print.meshes import MeshError, load_mesh
@@ -178,6 +177,21 @@ def test_identical_thin_walls_measure_alike_wherever_the_raster_falls(tmp_path):
     assert walls[0].thickness_mm == pytest.approx(walls[1].thickness_mm, abs=0.01)
 
 
+def test_a_wall_just_over_the_limit_is_not_thin_at_any_angle(tmp_path):
+    # 0.9 mm is over the 0.84 mm limit, though a raster turned 20 degrees to it reads it thin.
+    fin = Pos(0, 0, 1) * Box(20, 20, 2) + Pos(0.03, 0.03, 5) * Rot(0, 0, 20) * Box(12, 0.9, 6)
+    report = check_orientation(_mesh(tmp_path, fin), SETTINGS)
+    assert report.thin_walls == [] and not any("wall about" in flag for flag in report.flags)
+
+
+def test_thin_walls_that_cross_or_turn_a_corner_are_measured_along_their_length(tmp_path):
+    # Where two 0.5 mm walls cross, or 0.6 mm walls turn a corner, a chord across reads about 0.7-0.85 mm.
+    cross = Pos(0, 0, 1) * Box(30, 30, 2) + Pos(0, 0, 5) * (Box(14, 0.5, 6) + Box(0.5, 14, 6))
+    shell = Pos(40, 0, 5) * (Box(20, 14, 10) - Box(18.8, 12.8, 10))
+    walls = check_orientation(_mesh(tmp_path, cross + shell), SETTINGS).thin_walls
+    assert sorted(wall.thickness_mm for wall in walls) == pytest.approx([0.5, 0.6], abs=0.01)
+
+
 def test_separate_lumps_count_as_separate_solids_and_voids_do_not(tmp_path):
     # One STEP body, and one STL, holding two boxes: neither is an assembly of parts, but both print as two pieces.
     two = Compound([Pos(10, 10, 5) * Box(20, 20, 10), Pos(50, 10, 5) * Box(20, 20, 10)])
@@ -202,6 +216,23 @@ def test_inward_facing_triangles_are_refused(tmp_path):
         load_mesh(tmp_path / "flipped.stl")
 
 
+def test_a_separate_shell_facing_inwards_is_refused_unless_it_is_a_void(tmp_path):
+    import trimesh
+
+    # Each shell is wound consistently on its own, so only where it lies tells a void from a flipped part.
+    outer = trimesh.creation.box(extents=(20, 20, 10))
+    beside = trimesh.creation.box(extents=(10, 10, 10))
+    beside.apply_translation((30, 0, 0))
+    beside.invert()
+    trimesh.util.concatenate([outer, beside]).export(tmp_path / "flipped.stl")
+    with pytest.raises(MeshError, match="a separate shell faces inwards but lies inside no other"):
+        load_mesh(tmp_path / "flipped.stl")
+    inside = trimesh.creation.box(extents=(10, 10, 4))
+    inside.invert()
+    trimesh.util.concatenate([outer, inside]).export(tmp_path / "hollow.stl")
+    assert load_mesh(tmp_path / "hollow.stl").bodies == 1
+
+
 def test_a_step_that_cannot_be_read_is_a_mesh_error(tmp_path):
     (tmp_path / "bad.step").write_text("garbage")
     with pytest.raises(MeshError, match="could not be read as STEP"):
@@ -222,15 +253,9 @@ def test_a_step_is_meshed_once_and_then_read_from_the_cache(tmp_path, monkeypatc
     assert load_mesh(path).size[2] == pytest.approx(12) and len(reads) == 2
 
 
-def test_without_trimesh_the_commands_load_and_meshing_names_the_workbench(tmp_path, monkeypatch):
-    export_stl(Box(10, 10, 10), str(tmp_path / "part.stl"))
-    monkeypatch.setitem(sys.modules, "trimesh", None)
-    with pytest.raises(MeshError, match="scripts/print needs trimesh, which .* cannot import; run it with the workbench's Python interpreter"):
-        load_mesh(tmp_path / "part.stl")
-    # A fresh interpreter without trimesh still loads the command line; commands that mesh nothing work.
-    scripts = Path(__file__).resolve().parents[2]
-    code = "import sys; sys.modules['trimesh'] = None; from print.cli import main; raise SystemExit(main(['slice', 'absent.3mf']))"
-    result = subprocess.run(
-        [sys.executable, "-c", code], cwd=tmp_path, env={**os.environ, "PYTHONPATH": str(scripts)}, capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 2 and "Project not found" in result.stderr, result.stderr
+def test_without_trimesh_the_command_line_names_the_workbench_interpreter(tmp_path):
+    launcher = Path(__file__).resolve().parents[1]
+    code = f"import runpy, sys; sys.modules['trimesh'] = None; sys.argv = ['print', 'presets']; runpy.run_path({str(launcher)!r}, run_name='__main__')"
+    result = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert result.returncode == 1, result.stderr
+    assert "scripts/print needs trimesh, which" in result.stderr and "run it with the workbench's Python interpreter" in result.stderr
