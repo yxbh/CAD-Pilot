@@ -5,10 +5,10 @@ import math
 from pathlib import Path
 
 from PIL import Image, ImageChops
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
 from browser_smoke import ReferenceMarkup
-from browser_session import BrowserSession, launch_chromium
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 def run(url, output):

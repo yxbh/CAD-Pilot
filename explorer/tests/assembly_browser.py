@@ -7,9 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-from browser_session import BrowserSession, launch_chromium
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 SPACER_LIFT, COVER_LIFT = 45, 70
 

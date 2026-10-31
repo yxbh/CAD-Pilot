@@ -12,8 +12,8 @@ import threading
 from pathlib import Path
 from queue import Empty, Queue
 
-from playwright.sync_api import expect, sync_playwright
-from browser_session import launch_chromium
+from playwright.sync_api import expect
+from browser_session import launch_chromium, sync_playwright
 
 
 HARNESS = r"""

@@ -5,8 +5,8 @@ import json
 import math
 from pathlib import Path
 
-from playwright.sync_api import expect, sync_playwright
-from browser_session import BrowserSession, launch_chromium
+from playwright.sync_api import expect
+from browser_session import BrowserSession, launch_chromium, sync_playwright
 
 
 # Observe the actual R3F store through React's devtools contract, without a
