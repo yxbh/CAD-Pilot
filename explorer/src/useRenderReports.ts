@@ -7,8 +7,13 @@ import type { CameraController } from "./camera.ts";
 import type { GeometryResources } from "./resources.ts";
 import { edgeScreenPoint } from "./edgePicking.ts";
 import { clipCadEdges, visibleFacePoint, visibleFaceTriangleCount } from "./section.ts";
+import type { AnalysisView } from "./analysis/useAnalysis.ts";
 
-export function useRenderReports({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError }: {
+// A view is reported once per revision and analysis: the background renderer draws a capture's own analysis settings
+// at the view's revision.
+const reportKey = (state: ViewState, analysis: AnalysisView) => `${state.revision}:${analysis.key}`;
+
+export function useRenderReports({ model, state, amount, stepPosition, sectionPosition, active, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError }: {
   model: Model;
   state: ViewState;
   amount: number;
@@ -17,6 +22,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
   active: boolean;
   placements: Placement[];
   resources: GeometryResources;
+  analysis: AnalysisView;
   controller: CameraController;
   fitted: RefObject<string>;
   contextLost: RefObject<boolean>;
@@ -24,18 +30,18 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
   onError: (message: string) => void;
 }) {
   const { size, invalidate, gl, scene } = useThree();
-  const lastReported = useRef(-1);
+  const lastReported = useRef("");
   const reportLifetime = useRef({ active: false });
-  const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements });
-  latest.current = { model, state, amount, stepPosition, sectionPosition, active, placements };
+  const latest = useRef({ model, state, amount, stepPosition, sectionPosition, active, placements, analysis });
+  latest.current = { model, state, amount, stepPosition, sectionPosition, active, placements, analysis };
   useLayoutEffect(() => {
     const lifetime = { active };
     reportLifetime.current = lifetime;
     return () => { lifetime.active = false; };
   }, [model, state.revision, active]);
-  useEffect(() => { if (active) invalidate(); }, [state.revision, placements, sectionPosition, active, invalidate]);
+  useEffect(() => { if (active) invalidate(); }, [state.revision, placements, sectionPosition, active, invalidate, analysis.key, analysis.ready, analysis.arrived]);
   const invalidateReport = useCallback(() => {
-    lastReported.current = -1;
+    lastReported.current = "";
     invalidate();
   }, [invalidate]);
   const assertCaptureReady = useCallback(() => {
@@ -44,7 +50,8 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
     if (current.amount !== current.state.explode) throw new Error("Finish adjusting the explosion slider before capturing");
     if (current.stepPosition !== current.state.step) throw new Error("Wait for the assembly step to finish moving before capturing");
     if (current.sectionPosition !== current.state.section.position) throw new Error("Finish adjusting the section plane before capturing");
-    if (lastReported.current !== current.state.revision ||
+    if (!current.analysis.ready) throw new Error("The analysis view is still being computed. Capture it again once it has settled.");
+    if (lastReported.current !== reportKey(current.state, current.analysis) ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) {
       throw new Error("The view is still updating. Capture it again once it has settled.");
     }
@@ -52,10 +59,11 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
 
   useFrame(() => {
     const current = latest.current;
-    if (!current.active || contextLost.current || lastReported.current === current.state.revision || current.model.topologyRevision !== current.state.topologyRevision ||
+    if (!current.active || contextLost.current || !current.analysis.ready || lastReported.current === reportKey(current.state, current.analysis) ||
+        current.model.topologyRevision !== current.state.topologyRevision ||
         current.amount !== current.state.explode || current.stepPosition !== current.state.step || current.sectionPosition !== current.state.section.position ||
         fitted.current !== `${current.state.topologyRevision}:${current.state.fitNonce}`) return;
-    lastReported.current = current.state.revision;
+    lastReported.current = reportKey(current.state, current.analysis);
     const camera = controller.camera;
     const visible = current.placements.filter((part) => !current.state.hiddenIds.includes(part.node.id));
     camera.updateMatrixWorld();
@@ -89,11 +97,14 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
       selectedPointScreen = [(point.x + 1) * size.width / 2, (1 - point.y) * size.height / 2];
     }
     // Counted from what is mounted for drawing, not from the manifest, so a dropped overlay or surface shows up.
-    let faultMarks = 0, sectionOutlineSegments = 0, meshTriangles = 0, pickingTrees = 0;
+    let faultMarks = 0, sectionOutlineSegments = 0, meshTriangles = 0, pickingTrees = 0, triangleEdgeSegments = 0, normalArrows = 0, analysisSurfaces = 0;
     scene.traverseVisible((object) => {
       const geometry = (object as { geometry?: { index?: { count: number } | null; instanceCount?: number; boundsTree?: unknown; getAttribute?: (name: string) => { count: number } } }).geometry;
       if (object.userData.meshFault) faultMarks += object.type === "Points" ? geometry?.getAttribute?.("position").count ?? 0 : geometry?.instanceCount ?? 0;
       if (object.userData.sectionOutline) sectionOutlineSegments += geometry?.instanceCount ?? 0;
+      if (object.userData.triangleEdges) triangleEdgeSegments += (geometry?.index?.count ?? 0) / 2;
+      if (object.userData.normalArrows) normalArrows += geometry?.instanceCount ?? 0;
+      if (object.userData.analysisMap && object.userData.analysisMap !== "none") analysisSurfaces++;
       if (object.userData.meshSurface) {
         meshTriangles += (geometry?.index?.count ?? 0) / 3;
         if (geometry?.boundsTree) pickingTrees++;
@@ -117,6 +128,7 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
       pixels: [gl.domElement.width, gl.domElement.height],
       selectedPoint: current.state.selectedPoint, selectedPointScreen,
       faultMarks, sectionOutlineSegments, meshTriangles, pickingTrees,
+      analysisKey: current.analysis.key, analysisStats: current.analysis.stats, triangleEdgeSegments, normalArrows, analysisSurfaces,
       ghostParts: visible.filter((part) => part.node.ghost).length,
       positions: visible.map((part) => ({ id: part.node.id, position: part.matrix.slice(12, 15) })),
       renderer: "React Three Fiber / WebGL2",

@@ -11,7 +11,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, isMesh, mergeBounds, placeParts, sceneOrigin, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type PointSelection, type ViewState } from "./model.ts";
 import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
-import { edgeAtSegment, GeometryResources, type EdgeRange, type FaultResources, type PartResources } from "./resources.ts";
+import { edgeAtSegment, GeometryResources, type AnalysisResources, type EdgeRange, type FaultResources, type PartResources } from "./resources.ts";
 import { prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
 import { useRenderReports } from "./useRenderReports.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
@@ -25,6 +25,11 @@ import {
   clipCadEdges, sceneSectionPlane, sectionMeshRaycast, sectionOutlineSegments,
   visibleFacePoint, visibleFaceTriangleCount,
 } from "./section.ts";
+import { ANALYSIS_COLORS, FAULT_COLORS, type AnalysisLegend, type AnalysisSettings } from "../shared/analysis.mjs";
+import { AnalysisShading } from "./analysis/material.ts";
+import { useAnalysis, type AnalysisView } from "./analysis/useAnalysis.ts";
+import { withLegend } from "./analysis/legend.ts";
+import { LegendOverlay } from "./ui/LegendOverlay.tsx";
 
 type Props = {
   model: Model;
@@ -216,10 +221,7 @@ function SectionCap({ placement, resources, origin, capCenter, section, plane, p
   </>;
 }
 
-// Mesh faults drawn through the surface so hidden ones show too: open edges red, edges on more than two
-// triangles magenta, edges whose triangles wind the same way orange, zero-area triangles as yellow dots.
-const FAULT_COLORS = { open: "#ff4d4d", overshared: "#ff4dff", flipped: "#ffa64d", degenerate: "#ffe14d" };
-
+// Mesh faults (shared/analysis.mjs FAULT_COLORS) are drawn through the surface so hidden ones show too.
 function FaultLines({ geometry, color, clippingPlane }: { geometry: LineSegmentsGeometry; color: string; clippingPlane: Plane | null }) {
   const { size } = useThree();
   const lines = useMemo(() => new LineSegments2(geometry, new LineMaterial({ color, linewidth: 2.5, transparent: true, opacity: 0.95, depthTest: false })), [geometry, color]);
@@ -241,6 +243,16 @@ function MeshFaults({ faults, clippingPlane }: { faults: FaultResources; clippin
   </>;
 }
 
+// Per-face normals as short two-pixel lines, hidden where the surface is in front of them.
+function NormalArrows({ geometry, clippingPlane }: { geometry: LineSegmentsGeometry; clippingPlane: Plane | null }) {
+  const { size } = useThree();
+  const lines = useMemo(() => new LineSegments2(geometry, new LineMaterial({ vertexColors: true, linewidth: 2 })), [geometry]);
+  useEffect(() => () => lines.material.dispose(), [lines]);
+  lines.material.resolution.set(size.width, size.height);
+  lines.material.clippingPlanes = clippingPlane ? [clippingPlane] : [];
+  return <primitive object={lines} raycast={() => null} userData={{ normalArrows: true }} />;
+}
+
 function PointMarker({ point }: { point: number[] }) {
   const geometry = useMemo(() => {
     const result = new BufferGeometry();
@@ -257,10 +269,17 @@ function sectionAxis(axis: SectionSettings["axis"]) {
   return axis === "x" ? 0 : axis === "y" ? 1 : 2;
 }
 
-function PartMesh({ placement, resources, faults, origin, section, clippingPlane, selected, faceId, edgeId, point, hovered, hoverFaceId, hoverEdgeId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
+// A colour map is read from the surface's colour, so metal and clear-coat finishes would hide it.
+const MAPPED_FINISH = { roughness: 0.55, metalness: 0, clearcoat: 0, clearcoatRoughness: 0 };
+
+function PartMesh({ placement, resources, faults, analysis, analysisData, shading, showValues, origin, section, clippingPlane, selected, faceId, edgeId, point, hovered, hoverFaceId, hoverEdgeId, selectionMode, pickingEnabled, studio, finish, showEdges, onSelect, onHover, onHoverEnd }: {
   placement: Placement;
   resources: PartResources;
   faults: FaultResources | null;
+  analysis: AnalysisSettings;
+  analysisData: AnalysisResources;
+  shading: AnalysisShading;
+  showValues: (values: Float32Array) => void;
   origin: number[];
   section: SectionSettings;
   clippingPlane: Plane | null;
@@ -304,10 +323,23 @@ function PartMesh({ placement, resources, faults, origin, section, clippingPlane
   const color = new Color(...node.color);
   const wholePartSelected = selected && !selectedFace && !selectedEdge;
   const wholePartHovered = hovered && !wholePartSelected;
+  // Ghosts stay plain references. A map that reads values per vertex waits for them, shading normally meanwhile.
+  const values = analysis.map === "thickness" ? analysisData.thickness?.values
+    : analysis.map === "curvature" ? analysisData.curvature?.[analysis.curvature] : undefined;
+  const map = ghost || ((analysis.map === "thickness" || analysis.map === "curvature") && !values) ? "none" : analysis.map;
+  const backfaces = !ghost && analysis.backfaces;
+  const triangleEdges = !ghost && analysis.triangleEdges ? analysisData.edges : undefined;
+  const normalArrows = !ghost && analysis.normals ? analysisData.normals : undefined;
+  useLayoutEffect(() => { if (values) showValues(values); }, [values, showValues]);
+  const program = AnalysisShading.key(map, backfaces);
+  const patch = useMemo(() => shading.patch(map, backfaces), [shading, map, backfaces]);
+  const finishSettings = map === "overhang" || map === "thickness" || map === "curvature"
+    ? { ...MAPPED_FINISH, envMapIntensity: studio ? 0.35 : 0 }
+    : studio ? appearanceFor(finish) : { roughness: 0.45, metalness: 0.15, clearcoat: 0, clearcoatRoughness: 0, envMapIntensity: 0 };
   return (
     <group matrix={matrix} matrixAutoUpdate={false}>
       <mesh ref={surface} name={ghost ? "reference-surface" : "cad-surface"} castShadow={studio && !ghost} receiveShadow={studio && !ghost}
-        userData={{ meshSurface: mesh }}
+        userData={{ meshSurface: mesh, analysisMap: map }}
         raycast={(raycaster, hits) => {
           if (ghost || !surface.current) return;
           sectionMeshRaycast(surface.current, raycaster, hits, clippingPlane);
@@ -334,14 +366,23 @@ function PartMesh({ placement, resources, faults, origin, section, clippingPlane
         onHoverEnd(node.id);
       }}>
         <primitive object={geometry} attach="geometry" />
-        <meshPhysicalMaterial color={wholePartSelected ? "#7ee7da" : wholePartHovered ? "#79aeb9" : color}
-          {...(studio ? appearanceFor(finish) : { roughness: 0.45, metalness: 0.15, clearcoat: 0, clearcoatRoughness: 0, envMapIntensity: 0 })}
+        <meshPhysicalMaterial key={program} onBeforeCompile={patch} customProgramCacheKey={() => program}
+          color={wholePartSelected ? "#7ee7da" : wholePartHovered ? "#79aeb9" : color}
+          {...finishSettings}
           emissive={wholePartSelected ? "#167b75" : wholePartHovered ? "#134d59" : "#000000"}
           emissiveIntensity={wholePartSelected ? 0.3 : wholePartHovered ? 0.18 : 0}
-          flatShading={mesh} transparent={ghost} opacity={ghost ? 0.28 : 1} depthWrite={!ghost}
-          side={section.enabled || ghost || (mesh && !part.closed) ? DoubleSide : FrontSide} clippingPlanes={clippingPlane ? [clippingPlane] : []}
-          clipShadows={section.enabled} />
+          flatShading={mesh} transparent={ghost} opacity={ghost ? 0.28 : 1} depthWrite={!ghost} toneMapped={map !== "zebra"}
+          side={backfaces || section.enabled || ghost || (mesh && !part.closed) ? DoubleSide : FrontSide} clippingPlanes={clippingPlane ? [clippingPlane] : []}
+          clipShadows={section.enabled}
+          // Triangle edges are drawn on the surface itself, so it steps back a little in depth.
+          polygonOffset={!!triangleEdges} polygonOffsetFactor={1} polygonOffsetUnits={1} />
       </mesh>
+      {triangleEdges && <lineSegments raycast={() => undefined} userData={{ triangleEdges: true }}>
+        <primitive object={triangleEdges} attach="geometry" />
+        <lineBasicMaterial color={ANALYSIS_COLORS.triangleEdges} transparent opacity={0.42} depthWrite={false}
+          clippingPlanes={clippingPlane ? [clippingPlane] : []} />
+      </lineSegments>}
+      {normalArrows && <NormalArrows geometry={normalArrows} clippingPlane={clippingPlane} />}
       {edges && !ghost && <lineSegments visible={!resources.cadEdges && (showEdges || wholePartSelected || wholePartHovered)} raycast={() => undefined}>
         <primitive object={edges} attach="geometry" />
         <lineBasicMaterial color={wholePartSelected ? "#c5fff5" : wholePartHovered ? "#c9edf2" : "#0e2533"} transparent
@@ -365,7 +406,7 @@ function PartMesh({ placement, resources, faults, origin, section, clippingPlane
   );
 }
 
-function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, placements, resources, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; axes: AxisStore }) {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, placements, resources, analysis, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; analysis: AnalysisView; axes: AxisStore }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
@@ -374,8 +415,13 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
   const activeView = useRef(active);
   activeView.current = active;
   const { invalidateReport, assertCaptureReady } = useRenderReports({
-    model, state, amount, stepPosition, sectionPosition, active, placements, resources, controller, fitted, contextLost, onRendered, onError,
+    model, state, amount, stepPosition, sectionPosition, active, placements, resources, analysis, controller, fitted, contextLost, onRendered, onError,
   });
+  // A capture carries the legend that explains its colours.
+  const legend = useRef<AnalysisLegend | null>(analysis.legend);
+  legend.current = analysis.legend;
+  const stats = useRef(analysis.stats);
+  stats.current = analysis.stats;
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
   useLayoutEffect(() => observeGraphicsContext(gl.domElement, () => {
@@ -460,8 +506,8 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
       assertCaptureReady();
       gl.render(scene, controller.camera);
       return {
-        dataUrl: gl.domElement.toDataURL("image/png"), width: gl.domElement.width, height: gl.domElement.height,
-        camera: controller.snapshot(),
+        dataUrl: legend.current ? withLegend(gl.domElement, legend.current, gl.getPixelRatio()) : gl.domElement.toDataURL("image/png"),
+        width: gl.domElement.width, height: gl.domElement.height, camera: controller.snapshot(), analysisStats: stats.current,
       };
     });
     return () => registerCapture(null);
@@ -483,6 +529,13 @@ export default function Scene(props: Props) {
   // Geometry is built once per composed model: arranging files gives a new model object over the same parts.
   const resources = useMemo(() => new GeometryResources(model), [model.parts]);
   const axes = useMemo(createAxisStore, []);
+  const shading = useMemo(() => new AnalysisShading(), []);
+  useEffect(() => () => shading.dispose(), [shading]);
+  const shown = useMemo(() => placements.filter((part) => !state.hiddenIds.includes(part.node.id)), [placements, state.hiddenIds]);
+  // The legend lists fault colours only while a shown mesh has faults to draw.
+  const faultsShown = state.showFaults && shown.some(({ part, node }) => !node.ghost && part.faults && Object.values(part.faults).some(Boolean));
+  const analysis = useAnalysis({ analysis: state.analysis, placements: shown, resources, origin, faults: faultsShown, onError: props.onError });
+  shading.update(state.analysis, { plate: analysis.plate, curvatureScale: analysis.stats.curvatureScale });
   const pickingEnabled = props.active && amount === state.explode && stepPosition === state.step && sectionPosition === state.section.position && !state.loading;
   // Dense meshes that can be picked get their picking trees from a worker; ghosts, hidden parts and the background
   // renderer, which never picks, do not ask.
@@ -498,7 +551,7 @@ export default function Scene(props: Props) {
   useEffect(() => setHovered(null), [model.topologyRevision, state.selectionMode, state.hiddenIds, state.explode, state.direction, state.fixedId, state.step, state.stepMode,
     state.section.enabled, state.section.axis, state.section.position, state.section.flipped, pickingEnabled]);
   useEffect(() => () => resources.dispose(), [resources]);
-  const displayedBounds = mergeBounds(placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((part) => part.bounds)) || model.bounds;
+  const displayedBounds = mergeBounds(shown.map((part) => part.bounds)) || model.bounds;
   const gridSize = Math.max(diagonal(model.bounds) * 2, 100);
   const studio = state.appearance === "studio";
   const capSize = Math.max(diagonal(displayedBounds) * 2, diagonal(model.bounds) * 2, 100);
@@ -533,7 +586,7 @@ export default function Scene(props: Props) {
         {!props.background && <gridHelper args={[gridSize, 24, "#2a485a", "#172f40"]} rotation={[Math.PI / 2, 0, 0]}
           position={[0, 0, displayedBounds.min[2] - origin[2] - 1]} />}
       </>}
-      {placements.filter((part) => !state.hiddenIds.includes(part.node.id)).map((placement) => (
+      {shown.map((placement) => (
         <PartMesh key={placement.node.id} placement={placement} resources={resources.get(placement.part)} origin={origin}
           faults={state.showFaults && !placement.node.ghost ? resources.faults(placement.part) : null}
           selected={state.selectedIds.includes(placement.node.id)}
@@ -546,19 +599,22 @@ export default function Scene(props: Props) {
           selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}
           section={section} clippingPlane={clippingPlane}
           studio={studio} finish={state.materialFinish} showEdges={state.showEdges}
+          analysis={state.analysis} analysisData={resources.analysis(placement.part)} shading={shading}
+          showValues={(values) => resources.showValues(placement.part, values)}
           onSelect={props.onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />
       ))}
-      {clippingPlane && placements.filter((part) => !state.hiddenIds.includes(part.node.id) && !part.node.ghost).map((placement, index) => (
+      {clippingPlane && shown.filter((part) => !part.node.ghost).map((placement, index) => (
         placement.part.sectionCaps === true
           ? <SectionCap key={`section:${placement.node.id}`} placement={placement} resources={resources.get(placement.part)}
             origin={origin} capCenter={capCenter} section={section} plane={clippingPlane} planeGeometry={capGeometry}
             order={10 + index * 3} studio={studio} />
           : <SectionOutline key={`section:${placement.node.id}`} placement={placement} origin={origin} section={section} order={10 + index * 3} />
       ))}
-      {stepPosition !== null && <SequenceTrails placements={placements.filter((part) => !state.hiddenIds.includes(part.node.id))} origin={origin} />}
-      <Rig {...props} placements={placements} resources={resources} axes={axes} />
+      {stepPosition !== null && <SequenceTrails placements={shown} origin={origin} />}
+      <Rig {...props} placements={placements} resources={resources} analysis={analysis} axes={axes} />
     </Canvas>
     {props.active && !props.headless && <AxisIndicator store={axes} onChoose={props.onView} />}
+    {!props.headless && analysis.legend && <LegendOverlay legend={analysis.legend} />}
     </>
   );
 }

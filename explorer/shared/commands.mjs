@@ -2,6 +2,7 @@ import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS } from "./view-settings.mj
 import { SECTION_AXES } from "./section.mjs";
 import { STEP_MODES } from "./placement.mjs";
 import { MESH_UNITS, MESH_UP_AXES } from "./mesh.mjs";
+import { ANALYSIS_MAPS, CURVATURE_KINDS } from "./analysis.mjs";
 
 export const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 // The most part ids one command takes.
@@ -13,6 +14,18 @@ const vector = (description) => ({ type: "array", items: { type: "number" }, min
 const frame = {
   units: { enum: MESH_UNITS, description: "Mesh files only: the unit their numbers are in. auto uses the file's declared unit, else metres for models under 2.5 units across, else millimetres." },
   up: { enum: MESH_UP_AXES, description: "Mesh files only: the axis that points up in the file. auto is Y for OBJ and GLB, Z otherwise. Shown Z-up either way." },
+};
+// Every setting is optional: set_analysis changes the ones given, and a capture's analysis applies to that image only.
+const analysis = {
+  map: { enum: ANALYSIS_MAPS, description: "Colour map: overhang tints faces facing down more than overhangAngle from vertical, toward buildDirection; thickness colours walls against minimumWall, measured inward from each triangle; curvature colours mean or gaussian curvature estimated from the drawn triangles; zebra draws reflection stripes; none shades normally." },
+  triangleEdges: { type: "boolean", description: "Draw every triangle edge thinly over the shading." },
+  backfaces: { type: "boolean", description: "Colour the back of every triangle, so inside-out parts and holes show." },
+  normals: { type: "boolean", description: "Draw per-face normals as short lines, thinned out on dense meshes." },
+  overhangAngle: { type: "number", minimum: 0, exclusiveMaximum: 90, description: "Degrees from vertical (default 45): 0 is an upright wall, 90 a flat underside." },
+  buildDirection: vector("The direction the part builds up in, on the view's world axes (default [0,0,1], +Z). Explorer Z is the model's up, not a print orientation."),
+  minimumWall: { type: "number", exclusiveMinimum: 0, maximum: 1000, description: "Thickness in mm below which walls are coloured red (default 1). A review threshold, not a print rule." },
+  curvature: { enum: CURVATURE_KINDS, description: "mean (1/mm) or gaussian (1/mm^2)." },
+  curvatureScale: { type: ["number", "null"], exclusiveMinimum: 0, description: "The curvature at either end of the colour scale, or null to fit it to the shown parts." },
 };
 const fileId = { type: "string", description: "A file in the view, as state lists them under view.files: main, ref1, ref2 ..." };
 
@@ -56,6 +69,8 @@ export const COMMANDS = Object.freeze({
   }, ["id", "triangle", "point", "topologyRevision"]),
   set_selection_mode: command("Choose face, edge, point or whole-part picking. Meshes have no CAD faces or edges: face and edge picking select their whole part.",
     { mode: { enum: ["face", "edge", "point", "part"] } }, ["mode"]),
+  set_analysis: command("Colour or overlay every shown part, STEP or mesh, to inspect its drawn triangles: a colour map (overhang, wall thickness, curvature or zebra stripes) and overlays (triangle edges, back faces, normals), each with a legend. Display only; the source files are unchanged.",
+    analysis),
   set_faults: command("Show or hide mesh faults: open edges (red), edges shared by more than two triangles (magenta), edges whose triangles wind the same way (orange) and zero-area triangles (yellow dots). Visual only; nothing is repaired.",
     { visible: { type: "boolean" } }, ["visible"]),
   set_auto_copy: command("Enable clipboard copying for future user selections. Selection never inserts or sends a chat message.",
@@ -102,6 +117,7 @@ export const COMMANDS = Object.freeze({
     width: { type: "integer", minimum: 16, maximum: 4096 },
     height: { type: "integer", minimum: 16, maximum: 4096 },
     background: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Background colour for this image only, such as #ffffff." },
+    analysis: { ...objectSchema(analysis), description: "Analysis settings for this image only, over the view's own (see set_analysis)." },
   }, [], { revision: "unchecked", render: "capture", duringReview: true }),
   list_reviews: read("List saved drawing review summaries."),
   get_review: read("Read a review's source, captured pose and mark count without image bytes.", { id: { type: "string" } }, ["id"]),

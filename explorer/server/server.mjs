@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, mkdtemp, rm, stat, realpath } from "node:fs/promises";
 import path from "node:path";
-import { changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
+import { analysisInput, changeView, initialState, loadedView, PrototypeError, validateCommandRevision, validateMeasuredCleanup } from "./protocol.mjs";
+import { analysisFields, analysisReport, validateAnalysis } from "../shared/analysis.mjs";
 import { commandDefinition } from "../shared/commands.mjs";
 import { createReference, formatSelection } from "../shared/references.mjs";
 import { composerAttachment } from "./composer.mjs";
@@ -142,6 +143,10 @@ async function startOwnedService({
     try { validateSection(savedSection); }
     catch (error) { throw new PrototypeError("invalid_saved_section", `Invalid saved section settings: ${error.message}`, 422); }
   }
+  if (saved?.state?.analysis !== undefined) {
+    try { validateAnalysis(saved.state.analysis); }
+    catch (error) { throw new PrototypeError("invalid_saved_analysis", `Invalid saved analysis settings: ${error.message}`, 422); }
+  }
   // Files a restore left out are reported by the start that left them out, not by later ones.
   let state = { ...initialState(), ...saved?.state, droppedFiles: [] };
   delete state.autoAdd;
@@ -239,7 +244,10 @@ async function startOwnedService({
     }
     const current = getState();
     const report = { viewer: lastRendered, headless: lastHeadless }[current.renderers.drawn];
-    return stateSummary(current, { url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera });
+    return stateSummary(current, {
+      url: origin && `${origin}/${token}/`, changedOnDisk, problem: renderProblem, drawnCamera: report?.camera,
+      drawnAnalysis: report?.revision === current.revision ? report.analysisStats : undefined,
+    });
   }
 
   async function python(script, args) {
@@ -587,8 +595,13 @@ async function startOwnedService({
   // itself as the client so the image matches what that person sees.
   // The background page has one drawing surface, so its captures (each with its own size and backdrop) take turns.
   async function captureImage(input = {}) {
-    const { client, ...requested } = input;
+    const { client, analysis, ...requested } = input;
     const options = captureOptions(requested);
+    // An image's own analysis settings are drawn by the background renderer, which waits for the data they need.
+    if (analysis !== undefined) {
+      if (client !== undefined) throw new PrototypeError("bad_capture", "A viewer page captures what it shows; capture without a client to choose analysis settings");
+      options.analysis = analysisInput(state.analysis, analysis);
+    }
     if (client !== undefined) return captureFrom(client, options);
     const turn = headlessCaptures.then(() => captureFrom(undefined, options));
     headlessCaptures = turn.catch(() => {});
@@ -615,7 +628,7 @@ async function startOwnedService({
       const timer = setTimeout(() => {
         captures.delete(id);
         reject(new PrototypeError("capture_timeout", "The renderer did not return an image", 408));
-      }, 30_000);
+      }, options.analysis && analysisFields(options.analysis).length ? renderTimeoutMs : 30_000);
       const request = { id, revision, reviewId: review?.id ?? null, reviewVersion: review?.version, ...options };
       captures.set(id, { ...request, kind: target[1].kind, resolve, reject, timer });
       send(target[0], "capture", request);
@@ -629,6 +642,8 @@ async function startOwnedService({
     if (bytes.length > maxImageBytes || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") throw new PrototypeError("invalid_image", "Invalid or oversized PNG");
     if (payload.camera) validateCamera(payload.camera);
     const imagePath = path.join(captureDir, `${hash(bytes).slice(0, 32)}.png`);
+    // The analysis the image shows, with the numbers its legend printed.
+    const analysis = analysisReport(pending.analysis ?? state.analysis, payload.analysisStats);
     const result = {
       path: imagePath, width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20), by: pending.kind,
       revision: state.revision, documentRevision: state.documentRevision, topologyRevision: state.topologyRevision,
@@ -638,6 +653,7 @@ async function startOwnedService({
       camera: payload.camera ?? state.camera, cameraPreset: state.cameraPreset, cameraPinned: state.cameraPinned, projection: state.projection,
       appearance: state.appearance, materialFinish: state.materialFinish, showEdges: state.showEdges,
       section: state.section,
+      ...(analysis ? { analysis } : {}),
     };
     if (await stat(imagePath).then(() => true, () => false)) await markUsed(imagePath);
     else await writeFile(imagePath, bytes);

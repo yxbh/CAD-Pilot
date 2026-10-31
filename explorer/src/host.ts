@@ -1,5 +1,6 @@
 import type { EdgeSelection, FaceSelection, Model, PointSelection, ViewState } from "./model.ts";
 import type { CameraState } from "../shared/view-settings.mjs";
+import type { AnalysisSettings, AnalysisStats } from "../shared/analysis.mjs";
 export type { CameraState } from "../shared/view-settings.mjs";
 import type { Review } from "./drawing/types.ts";
 import type { DrawingState } from "../shared/drawing.mjs";
@@ -8,7 +9,7 @@ import { attachMeshGeometry, meshViews } from "../shared/mesh.mjs";
 import { copyPreparedReference, createClipboardWriter, type NativeCopyResult } from "./clipboard.ts";
 import { post, request } from "./api.ts";
 
-export type ViewCapture = { dataUrl: string; width: number; height: number; camera: CameraState };
+export type ViewCapture = { dataUrl: string; width: number; height: number; camera: CameraState; analysisStats?: AnalysisStats };
 export type RenderReport = {
   revision: number; modelHash: string; topologyRevision: string; visibleParts: number;
   selectedIds: string[]; selectedFace: FaceSelection | null; highlightedTriangles: number;
@@ -16,6 +17,8 @@ export type RenderReport = {
   selectedFaceScreen: number[] | null; bounds: { min: number[]; max: number[] } | null;
   pixels: [number, number];
   selectedPoint: PointSelection | null; selectedPointScreen: number[] | null; faultMarks: number; sectionOutlineSegments: number; ghostParts: number; meshTriangles: number; pickingTrees: number;
+  // The analysis drawn: its settings' key, its legend's numbers, and what was mounted for it.
+  analysisKey: string; analysisStats: AnalysisStats; triangleEdgeSegments: number; normalArrows: number; analysisSurfaces: number;
   positions: { id: string; position: number[] }[];
   renderer: string; inFrame: boolean; geometryDefinitions: number; geometryIds: { id: string; geometry: string }[];
   camera: CameraState; appearance: ViewState["appearance"]; materialFinish: ViewState["materialFinish"];
@@ -26,6 +29,8 @@ export type RenderReport = {
 export type CaptureRequest = {
   id: string; revision: number; reviewId?: string | null; reviewVersion?: number;
   width?: number; height?: number; background?: string;
+  // Analysis settings for this image only, drawn by the background renderer.
+  analysis?: AnalysisSettings;
 };
 // A person's viewer page, or the background page that draws views when no visible tab does.
 export type RendererKind = "viewer" | "headless";

@@ -33,7 +33,8 @@ export async function saveCopy(project, source, target) {
  * requested view and draws it in the background renderer. The view actions are the same ones `do` accepts. The answer's
  * camera is the one that drew the image, in the shape every answer reports (summary.mjs cameraSummary).
  * options: { units, up (how to read a mesh), width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
- * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns] }.
+ * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns],
+ * analysis: a set_analysis input }.
  */
 export async function renderOnce({ project, file, output, runtimeRoot, options = {}, log = () => {} }) {
   const target = await projectOutput(project, output);
@@ -64,6 +65,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
         ...(options.outlines !== undefined ? { showEdges: options.outlines } : {}),
       });
     }
+    if (options.analysis) await run("set_analysis", options.analysis);
     if (options.view) {
       const angle = /^(-?[\d.]+):(-?[\d.]+)$/.exec(options.view);
       await run("set_view", angle ? { azimuth: Number(angle[1]), elevation: Number(angle[2]) } : { preset: options.view });
@@ -75,6 +77,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
       model: state.modelName, file: state.source.file, revision: revisionLabel(state.source.sha256), generatedAt: state.source.generatedAt,
       camera: cameraSummary(state, captured.camera),
       ...(state.section.enabled ? { section: state.section } : {}),
+      ...(captured.analysis ? { analysis: captured.analysis } : {}),
     };
   } finally {
     await service.close();

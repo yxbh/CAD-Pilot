@@ -32,12 +32,21 @@ select { color: var(--text-color-default, #c3dbe1); background: var(--background
 .axis-indicator { position: absolute; right: 8px; bottom: 22px; width: 100px; height: 100px; pointer-events: none; user-select: none; border-radius: 50%; background: #0b172233; }
 .axis-indicator > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .axis-indicator button { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; width: 24px; height: 24px; padding: 0; border: 1px solid currentColor; background: #15212ee6; font: 600 10px var(--font-mono, monospace); pointer-events: auto; }
+.analysis-legend { position: absolute; top: 12px; left: 12px; z-index: 4; pointer-events: none; }
 .axis-caption { position: absolute; width: 100%; bottom: -13px; color: #9ab1bf; text-align: center; font-size: 9px; }
 .appearance-popover, .section-popover { position: absolute; top: 86px; right: 12px; z-index: 15; padding: 5px 12px 10px; background: var(--background-color-default, #14212c); border: 1px solid var(--border-color-default, #4a606b); border-radius: 7px; box-shadow: 0 5px 18px #0006; }
 .appearance-popover { width: 236px; }
 .appearance-popover .panel-heading { padding: 0; }
 .appearance-popover > label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .appearance-popover select { margin-left: auto; }
+.analysis-popover { width: 252px; }
+.analysis-popover fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.analysis-popover fieldset > label, .analysis-number { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.analysis-popover select { margin-left: auto; max-width: 132px; }
+.analysis-number input { margin-left: auto; width: 64px; }
+.analysis-number span { min-width: 26px; color: var(--text-color-muted, #a0b3bc); font-size: 11px; }
+.analysis-overlays { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border-color-default, #2b3d48); }
+.analysis-overlays label { display: flex; align-items: center; gap: 8px; }
 .appearance-popover p { color: var(--text-color-muted, #a0b3bc); font-size: 11px; line-height: 1.5; margin-bottom: 0; }
 .section-popover { width: min(292px, calc(100vw - 24px)); max-height: calc(100dvh - 154px); overflow-y: auto; }
 .section-popover .panel-heading { padding: 0; }

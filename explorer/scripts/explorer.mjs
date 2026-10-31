@@ -9,6 +9,7 @@ import { PrototypeError } from "../server/protocol.mjs";
 import { projectOutput, renderOnce, saveCopy } from "../server/render-once.mjs";
 import { pruneRuntime } from "../server/runtime-store.mjs";
 import { cameraSummary, revisionLabel } from "../server/summary.mjs";
+import { ANALYSIS_MAPS, parseDirection } from "../shared/analysis.mjs";
 
 export { actionInput };
 
@@ -24,12 +25,16 @@ Run from the design project's root folder. Results are printed as JSON.
   do <action> [input]   Run a view action. Give its input as key=value pairs, which survive any shell,
                         e.g. do set_section enabled=true axis=y position=10, or as one JSON object. --full as for state
   capture [out.png]     Save an image of the current view, drawn in the background; no viewer page needs to be open.
-                        --size 1600x1000 and --background "#ffffff" change this image only
+                        --size 1600x1000, --background "#ffffff" and the analysis options below change this image only
   render <file> <out.png>
                         Render a STEP or mesh file to a PNG without opening or changing a viewer: --size WxH, --view iso|top|...|AZ:EL,
                         --projection, --appearance inspect|studio, --finish, --outlines on|off, --background "#rrggbb",
                         --section x[:position][:flipped], --explode amount[:direction], --step N[:buildup], --hide "label,label",
-                        and for a mesh --units mm|cm|m|in|ft|um and --up z|y
+                        the analysis options below, and for a mesh --units mm|cm|m|in|ft|um and --up z|y
+  Analysis options (render and capture): --map none|overhang|thickness|curvature|zebra,
+                        --overlays triangles,backfaces,normals (or none), --overhang degrees[:direction such as -z or 0,0,1],
+                        --wall mm (minimum wall), --curvature mean|gaussian[:scale]; --overhang, --wall and --curvature
+                        choose their map
   inspect <reference>   Resolve a copied cadproto:v2 reference (the viewer need not be running)
   prune [--dry-run] [--all] [--copilot]
                         Remove old snapshots, model caches and captures that no saved setup shows (--all: regardless
@@ -41,14 +46,16 @@ Run from the design project's root folder. Results are printed as JSON.
 // Actions that need a Copilot chat composer or are owned by the page itself are not offered here.
 const UNAVAILABLE = new Set(["add_reference_to_chat", "save_camera"]);
 const actionNames = () => Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas && !UNAVAILABLE.has(name));
-const valued = new Set(["--view", "--size", "--units", "--up", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide"]);
+const ANALYSIS_FLAGS = ["map", "overlays", "overhang", "wall", "curvature"];
+const valued = new Set(["--view", "--size", "--units", "--up", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide",
+  ...ANALYSIS_FLAGS.map((flag) => `--${flag}`)]);
 const switches = new Set(["--full", "--dry-run", "--all", "--copilot"]);
 // The flags each command reads (--view, which names the setup, goes with every command); any other is refused rather
 // than silently ignored.
 const COMMAND_FLAGS = {
-  open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full"], stop: [], inspect: [], actions: [],
+  open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full", ...ANALYSIS_FLAGS], stop: [], inspect: [], actions: [],
   prune: ["dry-run", "all", "copilot"],
-  render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide"],
+  render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide", ...ANALYSIS_FLAGS],
 };
 // The most arguments each command reads; open and render say what theirs are, and do and inspect take any number.
 const MOST_ARGUMENTS = { state: 0, stop: 0, actions: 0, prune: 0, capture: 1 };
@@ -90,6 +97,52 @@ function imageSize(text) {
   return { width: Number(match[1]), height: Number(match[2]) };
 }
 
+const OVERLAYS = { triangles: "triangleEdges", backfaces: "backfaces", normals: "normals" };
+const buildDirection = (text, flag) => {
+  try { return parseDirection(text); }
+  catch (error) { throw new PrototypeError("bad_arguments", `${flag}: ${error.message}`); }
+};
+
+// The analysis flags as one set_analysis input, or undefined without any. --overhang, --wall and --curvature set
+// their map's settings and choose that map.
+export function analysisOptions(flags) {
+  if (!ANALYSIS_FLAGS.some((flag) => flags[flag] !== undefined)) return undefined;
+  const input = {};
+  const choose = (map, flag) => {
+    if (flags.map !== undefined && flags.map !== map) throw new PrototypeError("bad_arguments", `${flag} belongs to --map ${map}, not --map ${flags.map}`);
+    input.map = map;
+  };
+  if (flags.map !== undefined) {
+    if (!ANALYSIS_MAPS.includes(flags.map)) throw new PrototypeError("bad_arguments", `--map takes ${ANALYSIS_MAPS.join(", ")}; got "${flags.map}"`);
+    input.map = flags.map;
+  }
+  if (flags.overlays !== undefined) {
+    const names = flags.overlays === "none" ? [] : flags.overlays.split(",").map((name) => name.trim()).filter(Boolean);
+    const unknown = names.filter((name) => !Object.hasOwn(OVERLAYS, name));
+    if (unknown.length || !names.length && flags.overlays !== "none") {
+      throw new PrototypeError("bad_arguments", `--overlays takes ${Object.keys(OVERLAYS).join(", ")} separated by commas, or none; got "${flags.overlays}"`);
+    }
+    for (const [name, key] of Object.entries(OVERLAYS)) input[key] = names.includes(name);
+  }
+  if (flags.overhang !== undefined) {
+    choose("overhang", "--overhang");
+    const [angle, ...rest] = flags.overhang.split(":");
+    if (angle !== "") input.overhangAngle = number(angle, "--overhang");
+    if (rest.length) input.buildDirection = buildDirection(rest.join(":"), "--overhang");
+  }
+  if (flags.wall !== undefined) {
+    choose("thickness", "--wall");
+    input.minimumWall = number(flags.wall, "--wall");
+  }
+  if (flags.curvature !== undefined) {
+    choose("curvature", "--curvature");
+    const [kind, scale] = flags.curvature.split(":");
+    input.curvature = kind;
+    if (scale !== undefined) input.curvatureScale = number(scale, "--curvature");
+  }
+  return input;
+}
+
 // Render flags are a shell-friendly spelling of the same view actions `do` runs.
 export function renderOptions(flags) {
   const options = {
@@ -115,6 +168,7 @@ export function renderOptions(flags) {
     options.step = { step: number(step, "--step"), ...(mode ? { mode } : {}) };
   }
   if (flags.hide !== undefined) options.hide = flags.hide.split(",").map((label) => label.trim()).filter(Boolean);
+  options.analysis = analysisOptions(flags);
   return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined));
 }
 
@@ -184,13 +238,14 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   if (command === "capture" || (command === "do" && args[0] === "capture_image")) {
     const out = command === "capture" ? args[0] : undefined;
     const target = out && await projectOutput(location.project, out);
-    const input = command === "capture" ? { ...imageSize(flags.size), background: flags.background } : actionInput(args.slice(1));
+    const input = command === "capture" ? { ...imageSize(flags.size), background: flags.background, analysis: analysisOptions(flags) } : actionInput(args.slice(1));
     const result = await call(record, "api/capture", input);
     const saved = target ? { saved: await saveCopy(location.project, result.path, target) } : {};
     if (flags.full) return { ...result, ...saved };
     return {
       path: result.path, ...saved, width: result.width, height: result.height, model: result.modelName,
       revision: revisionLabel(result.source.sha256), viewRevision: result.revision, camera: cameraSummary(result, result.camera),
+      ...(result.analysis ? { analysis: result.analysis } : {}),
     };
   }
   if (command === "do") {
