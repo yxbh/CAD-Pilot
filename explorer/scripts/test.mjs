@@ -1,62 +1,35 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { buildExplorer } from "./incremental-build.mjs";
+import { isBrowser, testFiles } from "./test-files.mjs";
 
-const USAGE = "Usage: node scripts/test.mjs core|browser|shard <i>/<n> [--no-build] [--list] [--durations <file>]";
+const USAGE = "Usage: node scripts/test.mjs core|browser|<test file>... [--no-build] [--durations <file>]";
+const cwd = fileURLToPath(new URL("../", import.meta.url));
+const tests = testFiles();
 let options;
 try {
-  options = parseArgs({ allowPositionals: true, options: { "no-build": { type: "boolean" }, list: { type: "boolean" }, durations: { type: "string" } } });
+  options = parseArgs({ allowPositionals: true, options: { "no-build": { type: "boolean" }, durations: { type: "string" } } });
 } catch {
   options = null;
 }
-const [mode, part] = options?.positionals ?? [];
-const shard = mode === "shard" && /^(\d+)\/(\d+)$/.exec(part ?? "");
-const count = options?.positionals.length;
-if (!((["core", "browser"].includes(mode) && count === 1) || (shard && +shard[1] >= 1 && +shard[1] <= +shard[2] && count === 2))) {
+// core or browser runs every file of that kind; CI's jobs name their share of the files (tools/shares.mjs).
+const named = [...new Set(options?.positionals)];
+const kind = named.length === 1 && ["core", "browser"].includes(named[0]) ? named[0] : null;
+if (!named.length || !(kind || named.every((file) => tests.includes(file)))) {
   console.error(USAGE);
   process.exit(2);
 }
-const cwd = fileURLToPath(new URL("../", import.meta.url));
-const tests = (await readdir(new URL("../tests/", import.meta.url))).filter((name) => /\.test\.(mjs|ts)$/.test(name)).sort();
-const isBrowser = (file) => file.endsWith("-browser.test.mjs");
-
-// What each test file adds to its shard's time on this platform's CI runners (tests/durations.json, which
-// scripts/durations.mjs refreshes from CI runs). Shards take the files longest first, each to the shard with the least
-// time so far; a file not listed counts as the median of its kind, browser or core.
-const measured = JSON.parse(await readFile(new URL("../tests/durations.json", import.meta.url), "utf8"))[process.platform] ?? {};
-const median = (browser) => {
-  const kind = Object.entries(measured).filter(([name]) => isBrowser(name) === browser).map(([, seconds]) => seconds).sort((a, b) => a - b);
-  return kind[Math.floor(kind.length / 2)] ?? 1;
-};
-const medians = { true: median(true), false: median(false) };
-const estimate = (file) => measured[file] ?? medians[isBrowser(file)];
-function shardFiles(index, count) {
-  const shards = Array.from({ length: count }, () => ({ seconds: 0, files: [] }));
-  for (const file of [...tests].sort((a, b) => estimate(b) - estimate(a) || a.localeCompare(b))) {
-    const lightest = shards.reduce((best, candidate) => (candidate.seconds < best.seconds ? candidate : best));
-    lightest.seconds += estimate(file);
-    lightest.files.push(file);
-  }
-  return shards[index - 1];
-}
-
-const selected = shard ? shardFiles(+shard[1], +shard[2]) : null;
-const files = selected ? selected.files : tests.filter((file) => isBrowser(file) === (mode === "browser"));
-if (selected) console.log(`Shard ${part}: ${selected.files.join(", ") || "nothing"} (about ${Math.round(selected.seconds)} s on a CI runner)`);
-if (options.values.list) {
-  console.log(JSON.stringify(files));
-  process.exit(0);
-}
+const files = kind ? tests.filter((file) => isBrowser(file) === (kind === "browser")) : named;
 // Browser suites and the launcher's background viewers serve the built page. tools/check.mjs builds once before
 // running suites at the same time, so they must not rebuild into the same folder.
 if (!options.values["no-build"]) await buildExplorer();
 
 // With --durations, each run also reports its files' times (scripts/durations-reporter.mjs), and each file is recorded
-// at what it adds to its shard's time: its tests' time over the number of files run at once, plus an equal share of
+// at what it adds to the run's time: its tests' time over the number of files run at once, plus an equal share of
 // the rest of the run's wall-clock time (starting the files' processes, imports and fixtures), which tests do not see.
 const reports = options.values.durations ? await mkdtemp(path.join(tmpdir(), "explorer-durations-")) : null;
 const timed = {};
@@ -76,11 +49,13 @@ function run(name, files, filesAtOnce, concurrency) {
 }
 // Browser scenarios render WebGL, in software where there is no GPU, and build Python fixtures, so only a few files
 // run at once: a quarter of the cores, at most three. Each test process starts one Python host and Chromium for its
-// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process, so its
-// whole shard shares a single host. Core files run as many at once as Node runs by default, one fewer than the cores.
+// scenarios (tests/python-host.mjs). A 3- or 4-core CI runner runs the files one at a time, all in one process with a
+// single host. Core files run as many at once as Node runs by default, one fewer than the cores.
 const coreFilesAtOnce = Math.max(1, availableParallelism() - 1);
 const browserFilesAtOnce = Math.max(1, Math.min(3, Math.floor(availableParallelism() / 4)));
-const browserOptions = browserFilesAtOnce === 1 ? ["--test-isolation=none"] : [`--test-concurrency=${browserFilesAtOnce}`];
+// Node 22 knows the one-process option only by its experimental name.
+const isolation = Number(process.versions.node.split(".")[0]) >= 24 ? "--test-isolation" : "--experimental-test-isolation";
+const browserOptions = browserFilesAtOnce === 1 ? [`${isolation}=none`] : [`--test-concurrency=${browserFilesAtOnce}`];
 const statuses = [
   run("core", files.filter((file) => !isBrowser(file)), coreFilesAtOnce, [`--test-concurrency=${coreFilesAtOnce}`]),
   run("browser", files.filter(isBrowser), browserFilesAtOnce, browserOptions),

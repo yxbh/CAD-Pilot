@@ -44,13 +44,24 @@ def generate(project: Path, names: list[str], *options: str) -> subprocess.Compl
 
 
 def generate_by_options(project: Path, options: dict[str, tuple[str, ...]]) -> dict[str, subprocess.CompletedProcess]:
-    """Each model's run: one run per set of options, the runs at the same time."""
+    """Each model's run: one run per set of options, the runs at the same time.
+
+    A model that fails stops its run, so the models of a failed run are run again one at a time: each then has a run of
+    its own, and only the failing model's tests fail.
+    """
     groups = collections.defaultdict(list)
     for name, model_options in options.items():
         groups[model_options].append(name)
+
+    def runs(names: list[str], model_options: tuple[str, ...]) -> dict[str, subprocess.CompletedProcess]:
+        run = generate(project, names, *model_options)
+        if run.returncode == 0 or len(names) == 1:
+            return dict.fromkeys(names, run)
+        return {name: generate(project, [name], *model_options) for name in names}
+
     with ThreadPoolExecutor() as pool:
-        runs = {tuple(names): pool.submit(generate, project, names, *model_options) for model_options, names in groups.items()}
-    return {name: run.result() for names, run in runs.items() for name in names}
+        groups_run = [pool.submit(runs, names, model_options) for model_options, names in groups.items()]
+    return {name: run for group in groups_run for name, run in group.result().items()}
 
 
 def lines_naming(run: subprocess.CompletedProcess) -> dict[str | None, list[str]]:

@@ -1,5 +1,6 @@
-"""The workbench's pytest-xdist scheduling (conftest.py), run on stand-in tests."""
+"""The workbench's pytest-xdist scheduling and duration records (conftest.py), run on stand-in tests."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -82,13 +83,13 @@ CRASH = textwrap.dedent(
 )
 
 
-def _pytest(folder, files, *args):
+def _pytest(folder, files, *args, paths=None):
     shutil.copy(ROOT / "conftest.py", folder / "conftest.py")
     for name, text in files.items():
         (folder / name).write_text(text, encoding="utf-8")
     # A hang fails here, by its timeout, rather than holding the suite.
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(folder), str(folder), *args],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", str(folder), *(paths or [str(folder)]), *args],
         cwd=folder, capture_output=True, text=True, timeout=120,
     )
 
@@ -114,3 +115,16 @@ def test_an_explicit_distribution_mode_keeps_xdists_own(tmp_path):
     run = _pytest(tmp_path, {"test_stand_ins.py": STAND_INS}, "-n", "2", "--dist", "each")
     assert run.returncode == 0, run.stdout + run.stderr
     assert "18 passed" in run.stdout, "each test runs on every worker"
+
+
+def test_a_run_of_named_files_records_what_each_added(tmp_path):
+    files = {f"test_{name}.py": "def test_one():\n    pass\n" for name in "abcde"}
+    # CI's jobs name their files (tools/shares.mjs); recorded alone and through pytest-xdist's workers, which pass their
+    # reports on.
+    for named, workers in ((["test_a.py", "test_b.py"], ()), (["test_c.py", "test_d.py", "test_e.py"], ("-n", "2"))):
+        target = tmp_path / "logs" / f"{named[0]}.json"
+        run = _pytest(tmp_path, files, "--record-durations", str(target), *workers, paths=named)
+        assert run.returncode == 0, run.stdout + run.stderr
+        report = json.loads(target.read_text(encoding="utf-8"))
+        assert report["platform"] == sys.platform and all(seconds >= 0 for seconds in report["seconds"].values())
+        assert sorted(report["seconds"]) == named, report

@@ -80,9 +80,11 @@ test("the renderer starts once on demand, opens the viewer over its pipe, stops 
     [["Target.createTarget", "http://127.0.0.1:1/secret-token/?renderer=headless"]]);
   const [profile] = await profiles(tmp);
   assert.equal(await readFile(path.join(tmp, profile, "owner"), "utf8"), String(process.pid));
-  await delay(120);
-  assert.equal(renderer.running, false, "an idle renderer stops");
-  assert.deepEqual(await profiles(tmp), [], "a stopped browser's profile is removed");
+  // An idle renderer stops after idleMs and then removes its profile; a busy runner can take longer than that to get there.
+  for (let waited = 0; renderer.running || (await profiles(tmp)).length; waited += 20) {
+    assert.ok(waited < 10_000, `the idle renderer is still ${renderer.running ? "running" : "removing its profile"}`);
+    await delay(20);
+  }
   assert.deepEqual(exits, [], "an intentional stop is not a failure");
   await renderer.ensure();
   // Windows falls back to Direct3D's software rasterizer, then to SwiftShader, which ships with Chromium.

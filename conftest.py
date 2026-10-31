@@ -1,10 +1,48 @@
 """Test-run settings shared by every suite under the workbench."""
 
 import ast
+import json
+import sys
+import time
+from collections import defaultdict
 from functools import cache
 from pathlib import Path
 
 import pytest
+
+
+def pytest_addoption(parser):
+    parser.getgroup("workbench").addoption("--record-durations", metavar="FILE", help="write what each test file added to this run's time to FILE")
+
+
+def _file(nodeid):
+    return nodeid.partition("::")[0]
+
+
+class _Durations:
+    """Each file's time as a share of the run: its tests' time over the workers, plus an equal part of the rest of the
+    run's wall-clock time (starting workers, collecting, imports), which the tests do not see. The Explorer's runner
+    records its files the same way (explorer/scripts/test.mjs)."""
+
+    def __init__(self, target, workers):
+        self.target, self.workers, self.start, self.seconds = Path(target), workers, time.monotonic(), defaultdict(float)
+
+    def pytest_runtest_logreport(self, report):
+        self.seconds[_file(report.nodeid)] += report.duration
+
+    def pytest_sessionfinish(self):
+        wall = time.monotonic() - self.start
+        rest = max(0.0, wall - sum(self.seconds.values()) / self.workers)
+        seconds = {file: value / self.workers + rest / len(self.seconds) for file, value in sorted(self.seconds.items())}
+        self.target.parent.mkdir(parents=True, exist_ok=True)
+        self.target.write_text(json.dumps({"platform": sys.platform, "seconds": seconds}) + "\n", encoding="utf-8")
+
+
+def pytest_configure(config):
+    # Only the process that reports the run records it; pytest-xdist's workers pass their reports to it.
+    target = config.getoption("record_durations")
+    if target and not hasattr(config, "workerinput"):
+        config.pluginmanager.register(_Durations(target, config.getoption("numprocesses", None) or 1), "workbench-durations")
 
 
 @pytest.hookimpl(optionalhook=True)
