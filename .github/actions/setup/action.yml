@@ -37,8 +37,11 @@ runs:
         path: explorer/node_modules
         key: explorer-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('explorer/package.json') }}-${{ steps.versions.outputs.day }}
     - if: steps.packages.outputs.cache-hit != 'true'
-      # No audit or funding requests: CI only needs the packages installed.
-      run: npm --prefix explorer install --no-audit --no-fund
+      # No audit or funding requests: CI only needs the packages installed. Run from the Explorer's folder: the Windows
+      # image's own npm 10, with npm_config_prefix set for the whole machine, took `npm --prefix explorer install` to
+      # mean the workbench root's package.json, which there is none of.
+      run: npm install --no-audit --no-fund
+      working-directory: explorer
       shell: bash
     # The built page, as the first job to build these sources with this package tree saved it: the build checks the stamp
     # it leaves against its own inputs (explorer/scripts/incremental-build.mjs) and builds again if any differ, so the
