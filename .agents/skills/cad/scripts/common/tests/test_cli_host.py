@@ -88,12 +88,14 @@ class CliHostTests(unittest.TestCase):
         first, second = (cli_host.run(script, cwd=self.root) for _ in range(2))
         self.assertEqual((0, first.stdout), (second.returncode, second.stdout))
 
-    def test_message_levels_one_command_turns_down_are_back_for_the_next(self) -> None:
-        # STEP export turns OCCT's messages down to failures for the rest of a process.
+    def test_message_printers_one_command_changes_are_back_for_the_next(self) -> None:
+        # Reading or writing a STEP sends OCCT's messages to standard error, and export turns them down to failures,
+        # for the rest of a process.
         quiet = self.script("quiet.py", """\
-            from OCP.Message import Message, Message_Gravity
-            for printer in Message.DefaultMessenger_s().Printers():
-                printer.SetTraceLevel(Message_Gravity.Message_Fail)
+            from OCP.Message import Message, Message_Gravity, Message_PrinterOStream
+            messenger = Message.DefaultMessenger_s()
+            messenger.RemovePrinters(Message_PrinterOStream.get_type_descriptor_s())
+            messenger.AddPrinter(Message_PrinterOStream("cerr", False, Message_Gravity.Message_Fail))
         """)
         warns = self.script("warns.py", """\
             from OCP.Message import Message, Message_Gravity
