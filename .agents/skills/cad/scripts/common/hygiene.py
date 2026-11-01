@@ -223,8 +223,8 @@ def check_part(shape, *, round_radius: float | None = None, sliver: float = DEFA
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
-    from OCP.TopAbs import TopAbs_SHELL, TopAbs_SOLID
-    from OCP.TopExp import TopExp
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_SHELL, TopAbs_SOLID
+    from OCP.TopExp import TopExp, TopExp_Explorer
     from OCP.TopoDS import TopoDS
     from OCP.collections import IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher
 
@@ -282,6 +282,14 @@ def check_part(shape, *, round_radius: float | None = None, sliver: float = DEFA
 
     for ordinal in range(1, report.faces + 1):
         face = TopoDS.Face(faces_map.FindKey(ordinal))
+        if not TopExp_Explorer(face, TopAbs_EDGE).More():
+            found.append(Finding(
+                "unbounded-face",
+                "has a face with no edges, which nothing closes: a STEP leaves one when a reference to its edges does not "
+                "resolve",
+                faces=(ordinal,),
+            ))
+            continue
         area, width = _face_width(face)
         if width < sliver:
             found.append(Finding("sliver-face", f"has a sliver face about {width:.3g} mm wide ({area:.3g} mm2)", faces=(ordinal,), value=width))

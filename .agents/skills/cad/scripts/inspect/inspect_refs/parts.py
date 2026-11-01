@@ -9,10 +9,6 @@ from common.selector_types import SelectorProfile
 from . import lookup
 from .inspect import EntryContextProvider, load_entry_context_for_target
 
-# OCCT puts a side nothing closes, such as that of a face a damaged STEP left without its edges, at 1e100 mm. Turning
-# the part to place it leaves at least 1e100 / √3 of that, still nowhere near any real part's size.
-_UNBOUNDED_MM = 1e90
-
 
 def _rounded(values: object, digits: int = 3) -> list[float] | None:
     if not isinstance(values, (list, tuple)) or len(values) != 3:
@@ -61,11 +57,10 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
         occurrence_id = str(row["id"])
         if occurrence_id not in index.leaf_occurrence_ids:
             continue
+        # A box OCCT left open, around a face nothing closes, has been cleared from the index (lookup.without_open_boxes).
+        unbounded = "bbox" in row and row["bbox"] is None
         bbox = row.get("bbox") if isinstance(row.get("bbox"), dict) else {}
         low, high = _rounded(bbox.get("min")), _rounded(bbox.get("max"))
-        unbounded = bool(low and high) and any(abs(value) >= _UNBOUNDED_MM for value in low + high)
-        if unbounded:
-            low = high = None
         shapes = shapes_by_occurrence.get(occurrence_id, [])
         volumes = [float(shape["volume"]) for shape in shapes if isinstance(shape.get("volume"), (int, float))]
         transform = row.get("transform")

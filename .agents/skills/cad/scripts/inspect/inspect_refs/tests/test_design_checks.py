@@ -207,11 +207,20 @@ class DesignChecksTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("Unresolved Reference", result.stderr)
         # The box's face that lost its edges has nothing closing it, so the box has no size; the lid keeps its own.
-        box, lid = json.loads(result.stdout)["parts"]
+        listing = json.loads(result.stdout)
+        box, lid = listing["parts"]
+        self.assertTrue(listing["ok"])
         self.assertEqual((True, None, None, None, None), (box["unbounded"], box["size"], box["center"], box["min"], box["max"]))
         self.assertEqual((False, [20.0, 20.0, 1.0]), (lid["unbounded"], lid["size"]))
-        text = self.run_tool("inspect", "parts", "broken.step", "--format", "text").stdout
-        self.assertIn("size unbounded", text)
+        self.assertIn("size unbounded", self.run_tool("inspect", "parts", "broken.step", "--format", "text").stdout)
+        # The other commands give it, and the whole STEP, no box either, rather than one 1e100 mm across.
+        for args in (("frame", box["ref"]), ("refs", box["ref"], "--positioning"), ("refs", "@cad[broken]", "--facts")):
+            with self.subTest(args=args):
+                answer = self.run_tool("inspect", *args)
+                self.assertEqual(0, answer.returncode, answer.stdout + answer.stderr)
+                self.assertNotIn("e+100", answer.stdout)
+        hygiene = self.inspect_json("hygiene", "broken.step", "--parts", "box", expect=1)
+        self.assertIn("unbounded-face", [finding["check"] for finding in hygiene["parts"][0]["findings"]])
         # A design that reads the STEP itself, before the workbench reads or writes one.
         (self.root / "uses.py").write_text("from build123d import import_step\n\ndef gen_step():\n    return import_step('broken.step')\n")
         result = self.run_tool("step", "uses.py", "-o", "out/uses.step")
