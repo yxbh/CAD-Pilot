@@ -56,6 +56,7 @@ from common.glb_mesh_payload import (
 )
 from common.cache import sha256_file
 from common.metadata import DEFAULT_MESH_ANGULAR_TOLERANCE
+from common.occt_messages import occt_messages_to_stderr
 from common.part_names import own_label, root_name
 from common.selector_types import SelectorBundle, SelectorProfile
 
@@ -789,6 +790,7 @@ def _load_occurrence_tree(
     doc = TDocStd_Document(TCollection_ExtendedString("BinXCAF"))
     app.NewDocument(TCollection_ExtendedString("BinXCAF"), doc)
 
+    occt_messages_to_stderr()
     reader = STEPCAFControl_Reader()
     reader.SetColorMode(True)
     reader.SetNameMode(True)

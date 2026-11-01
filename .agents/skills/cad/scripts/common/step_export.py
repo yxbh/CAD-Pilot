@@ -9,6 +9,7 @@ from typing import Any
 from common.atomic_replace import replacing
 from common.part_names import own_label, root_name, tree_names
 from common.cache import sha256_file
+from common.occt_messages import occt_messages_to_stderr
 from common.step_scene import LoadedStepScene, load_step_scene_from_xcaf_doc
 
 
@@ -349,8 +350,8 @@ def export_xcaf_doc_step_scene(
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    messenger = Message.DefaultMessenger_s()
-    for printer in messenger.Printers():
+    occt_messages_to_stderr()
+    for printer in Message.DefaultMessenger_s().Printers():
         printer.SetTraceLevel(Message_Gravity(Message_Gravity.Message_Fail))
 
     session = XSControl_WorkSession()

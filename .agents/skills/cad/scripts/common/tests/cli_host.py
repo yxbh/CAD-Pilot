@@ -8,7 +8,7 @@ PYTHONPATH, nothing on standard input, and everything written to file descriptor
 run (and stop the host, which cannot run them apart from its own) and C's buffered output is flushed. The workbench's
 own modules, and a design project's, are imported afresh for each run and dropped after it, since some fix their
 design root from the working folder when imported. The libraries stay loaded; of their state the host puts back what
-the workbench's tools change, OCCT's message levels, and any other a command changes carries over to the next command
+the workbench's tools change, OCCT's message printers, and any other a command changes carries over to the next command
 in that host, as do environment variables Python reads only as it starts, other than PYTHONPATH. A host runs one
 command at a time, so a test process keeps as many as it runs commands at once. Each tool's launcher is still started
 as a process of its own by its tests, and ``test_cli_host.py`` checks that commands answer alike either way.
@@ -238,15 +238,20 @@ def _run(job: dict, library_state) -> tuple[int, bool]:
 
 
 def _library_state():
-    """What puts back the library state the workbench's tools change: OCCT's message printers' trace levels, which
-    STEP export turns down for the rest of the process."""
+    """What puts back the library state the workbench's tools change: OCCT's message printers, which reading or
+    writing a STEP sends to standard error, and their trace levels, which STEP export turns down, for the rest of the
+    process."""
     from OCP.Message import Message
 
-    levels = [(printer, printer.GetTraceLevel()) for printer in Message.DefaultMessenger_s().Printers()]
+    messenger = Message.DefaultMessenger_s()
+    printers = [(printer, printer.GetTraceLevel()) for printer in messenger.Printers()]
 
     def restore():
-        for printer, level in levels:
+        for printer in list(messenger.Printers()):
+            messenger.RemovePrinter(printer)
+        for printer, level in printers:
             printer.SetTraceLevel(level)
+            messenger.AddPrinter(printer)
 
     return restore
 

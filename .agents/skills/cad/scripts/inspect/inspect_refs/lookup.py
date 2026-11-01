@@ -7,6 +7,38 @@ from typing import Any
 from common import cad_ref_syntax as syntax
 
 
+# OCCT puts a side nothing closes, such as that of a face a damaged STEP left without its edges, at 1e100 mm; placing a
+# part never brings that near any real part's size.
+_OPEN_MM = 1e90
+_BOXED_TABLES = (("occurrences", "occurrenceColumns"), ("shapes", "shapeColumns"), ("faces", "faceColumns"), ("edges", "edgeColumns"))
+
+
+def _open(box: object) -> bool:
+    return isinstance(box, dict) and any(
+        isinstance(value, (int, float)) and abs(value) >= _OPEN_MM
+        for corner in (box.get("min"), box.get("max")) if isinstance(corner, list)
+        for value in corner
+    )
+
+
+def without_open_boxes(manifest: dict[str, Any]) -> dict[str, Any]:
+    """The manifest with each box OCCT left open, the entry's own and its rows', as None: such a box has no size."""
+    cleared = dict(manifest)
+    if _open(manifest.get("bbox")):
+        cleared["bbox"] = None
+    tables = manifest.get("tables") if isinstance(manifest.get("tables"), dict) else {}
+    for table_name, columns_name in _BOXED_TABLES:
+        columns, rows = tables.get(columns_name), manifest.get(table_name)
+        if not isinstance(columns, list) or "bbox" not in columns or not isinstance(rows, list):
+            continue
+        at = columns.index("bbox")
+        cleared[table_name] = [
+            [*row[:at], None, *row[at + 1:]] if isinstance(row, list) and len(row) > at and _open(row[at]) else row
+            for row in rows
+        ]
+    return cleared
+
+
 def _table_rows(manifest: dict[str, Any], table_name: str, columns_name: str) -> list[dict[str, Any]]:
     columns = manifest.get("tables", {}).get(columns_name)
     rows = manifest.get(table_name)

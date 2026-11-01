@@ -44,7 +44,7 @@ Enumerate `--topology` only for selector discovery or debugging; it is expensive
 python <cad>/scripts/inspect parts path/to/model.step --format text
 ```
 
-Each part has its name and the path of labelled groups, size, bounding-box centre, local-frame origin, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. A part with no name, a name a kernel made up (`COMPOUND`, `SOLID` and other type names in capitals, `=>[0:1:1:3]`) or a name of digits alone, which other writers use for ids, is named after its group (`kit 1`, `kit 2`) and, in a STEP from elsewhere, marked unlabelled; an unlabelled group is left out of part paths. CAD Explorer shows the same names. `hygiene --parts`, `clearance`, `gen_poses()` and the Explorer's assembly steps match these names with `*` and `?`; a labelled group's name covers its parts, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` cannot catch an `Anchor v3` root.
+Each part has its name and the path of labelled groups, size, bounding-box centre, local-frame origin, solid count, volume and an occurrence ref such as `@cad[path/to/model#o1.2]`. A part with a face nothing closes, as a damaged STEP leaves when its reader cannot resolve a reference (the reader says so on standard error), is marked unbounded and has no size, centre or box, as it has none in `frame` and `refs` either; `hygiene` reports its `unbounded-face`. A part with no name, a name a kernel made up (`COMPOUND`, `SOLID` and other type names in capitals, `=>[0:1:1:3]`) or a name of digits alone, which other writers use for ids, is named after its group (`kit 1`, `kit 2`) and, in a STEP from elsewhere, marked unlabelled; an unlabelled group is left out of part paths. CAD Explorer shows the same names. `hygiene --parts`, `clearance`, `gen_poses()` and the Explorer's assembly steps match these names with `*` and `?`; a labelled group's name covers its parts, and a group holding every part, such as a labelled top-level assembly, never matches, so `Anchor *` cannot catch an `Anchor v3` root.
 
 ## Geometry hygiene
 
@@ -58,6 +58,7 @@ Each finding names the part, says what is wrong in plain words and gives the `@c
 - `split-face`: several faces on one surface, the seam a viewer shows across a flat face.
 - `sliver-face` and `short-edge`: narrower or shorter than `--sliver` (0.05 mm), usually left by a Boolean between nearly coincident faces.
 - `open-edge`, `non-manifold`, `no-solid` and `invalid`: geometry that does not enclose a volume properly or fails the kernel's validity check.
+- `unbounded-face`: a face with no edges, which nothing closes, as a STEP leaves when a reference to its edges does not resolve (the reader says so on standard error); the part has no size.
 - `sharp-edge` and `small-round`: with `--round R`, the project's comfort radius, convex edges whose faces meet at 15 degrees or more, and rounds tighter than R (spline fillets included). Without `--round` they are only counted.
 
 `--parts` limits it to some parts; parts with the same shape are checked once. A finding is a prompt to look, not a verdict: a crisp edge or several solids can be intended. Self-intersection is checked by `scripts/step` at generation. `build123d-modeling.md` covers fusing before rounding and merging split faces.

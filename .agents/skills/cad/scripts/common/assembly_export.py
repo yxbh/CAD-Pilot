@@ -202,6 +202,9 @@ def _load_step_shape(step_path: Path):
 
     import build123d
 
+    from common.occt_messages import occt_messages_to_stderr
+
+    occt_messages_to_stderr()
     try:
         return build123d.import_step(step_path)
     except Exception as exc:

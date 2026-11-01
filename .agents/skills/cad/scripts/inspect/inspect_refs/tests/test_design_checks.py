@@ -6,6 +6,7 @@ and runs the launchers as an agent would.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -195,6 +196,36 @@ class DesignChecksTests(unittest.TestCase):
                 self.assertEqual(2, result.returncode, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertIn(message, json.loads(result.stdout)["errors"][0]["message"])
+
+    def test_the_step_reader_s_complaints_go_to_stderr_not_stdout(self) -> None:
+        self.generate("box", NAMED_LIKE_ITS_FILE)
+        step_text = (self.root / "out" / "box.step").read_text()
+        broken, count = re.subn(r"(ADVANCED_FACE\('[^']*',\()#\d+", r"\g<1>#999999", step_text, count=1)
+        self.assertEqual(1, count)
+        (self.root / "broken.step").write_text(broken)
+        result = self.run_tool("inspect", "parts", "broken.step")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("Unresolved Reference", result.stderr)
+        # The box's face that lost its edges has nothing closing it, so the box has no size; the lid keeps its own.
+        listing = json.loads(result.stdout)
+        box, lid = listing["parts"]
+        self.assertTrue(listing["ok"])
+        self.assertEqual((True, None, None, None, None), (box["unbounded"], box["size"], box["center"], box["min"], box["max"]))
+        self.assertEqual((False, [20.0, 20.0, 1.0]), (lid["unbounded"], lid["size"]))
+        self.assertIn("size unbounded", self.run_tool("inspect", "parts", "broken.step", "--format", "text").stdout)
+        # The other commands give it, and the whole STEP, no box either, rather than one 1e100 mm across.
+        for args in (("frame", box["ref"]), ("refs", box["ref"], "--positioning"), ("refs", "@cad[broken]", "--facts")):
+            with self.subTest(args=args):
+                answer = self.run_tool("inspect", *args)
+                self.assertEqual(0, answer.returncode, answer.stdout + answer.stderr)
+                self.assertNotIn("e+100", answer.stdout)
+        hygiene = self.inspect_json("hygiene", "broken.step", "--parts", "box", expect=1)
+        self.assertIn("unbounded-face", [finding["check"] for finding in hygiene["parts"][0]["findings"]])
+        # A design that reads the STEP itself, before the workbench reads or writes one.
+        (self.root / "uses.py").write_text("from build123d import import_step\n\ndef gen_step():\n    return import_step('broken.step')\n")
+        result = self.run_tool("step", "uses.py", "-o", "out/uses.step")
+        self.assertNotIn("Unresolved Reference", result.stdout)
+        self.assertIn("Unresolved Reference", result.stderr)
 
     def test_refs_to_a_step_inside_the_root_are_reported_from_the_root(self) -> None:
         self.generate("box", NAMED_LIKE_ITS_FILE)
