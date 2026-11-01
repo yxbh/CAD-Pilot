@@ -211,10 +211,10 @@ def _load_step_context(
 ) -> EntryContext:
     artifact = step_topology(target, require_selector=(profile != SelectorProfile.SUMMARY))
     if artifact.selector_bundle is None:
-        manifest = artifact.manifest
+        manifest = lookup.without_open_boxes(artifact.manifest)
         selector_index = None
     else:
-        manifest = artifact.selector_bundle.manifest
+        manifest = lookup.without_open_boxes(artifact.selector_bundle.manifest)
         selector_index = lookup.build_selector_index(manifest, buffers=artifact.selector_bundle.buffers)
 
     resolved_kind = _entry_kind_from_manifest(

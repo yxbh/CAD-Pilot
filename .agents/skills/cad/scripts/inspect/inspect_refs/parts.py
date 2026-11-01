@@ -57,6 +57,8 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
         occurrence_id = str(row["id"])
         if occurrence_id not in index.leaf_occurrence_ids:
             continue
+        # A box OCCT left open, around a face nothing closes, has been cleared from the index (lookup.without_open_boxes).
+        unbounded = "bbox" in row and row["bbox"] is None
         bbox = row.get("bbox") if isinstance(row.get("bbox"), dict) else {}
         low, high = _rounded(bbox.get("min")), _rounded(bbox.get("max"))
         shapes = shapes_by_occurrence.get(occurrence_id, [])
@@ -72,6 +74,7 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
             "labelled": bool(row.get("name") or row.get("sourceName")),
             "path": paths[occurrence_id],
             "ref": syntax.build_cad_token(context.cad_path, occurrence_id),
+            "unbounded": unbounded,
             "size": [round(high[i] - low[i], 3) for i in range(3)] if low and high else None,
             "center": [round((high[i] + low[i]) / 2, 3) for i in range(3)] if low and high else None,
             "min": low,
@@ -89,7 +92,10 @@ def format_parts_text(result: dict[str, object], *, quiet: bool, verbose: bool) 
     for part in result.get("parts", []):
         if not isinstance(part, dict):
             continue
-        size = "x".join(f"{value:g}" for value in part["size"]) if part.get("size") else "?"
+        if part.get("unbounded"):
+            size = "unbounded (a face nothing closes, as in a damaged STEP: see hygiene)"
+        else:
+            size = "x".join(f"{value:g}" for value in part["size"]) if part.get("size") else "?"
         center = ", ".join(f"{value:g}" for value in part["center"]) if part.get("center") else "?"
         solids = part.get("solids")
         extra = "" if solids == 1 else f"  {solids} solids"
