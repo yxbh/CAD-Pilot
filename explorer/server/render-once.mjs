@@ -34,7 +34,7 @@ export async function saveCopy(project, source, target) {
  * camera is the one that drew the image, in the shape every answer reports (summary.mjs cameraSummary).
  * options: { units, up (how to read a mesh), width, height, background, view (preset or "azimuth:elevation"), projection, appearance, finish,
  * outlines, section: { axis, position, flipped }, explode: { amount, direction }, step: { step, mode }, hide: [label patterns],
- * analysis: a set_analysis input }.
+ * analysis: a set_analysis input, samples and seconds: ray trace the image (see capture_image) }.
  */
 export async function renderOnce({ project, file, output, runtimeRoot, options = {}, log = () => {} }) {
   const target = await projectOutput(project, output);
@@ -70,7 +70,9 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
       const angle = /^(-?[\d.]+):(-?[\d.]+)$/.exec(options.view);
       await run("set_view", angle ? { azimuth: Number(angle[1]), elevation: Number(angle[2]) } : { preset: options.view });
     }
-    const captured = await service.captureImage({ width: options.width, height: options.height, background: options.background });
+    const captured = await service.captureImage({
+      width: options.width, height: options.height, background: options.background, samples: options.samples, seconds: options.seconds,
+    });
     const state = service.getState();
     return {
       saved: await saveCopy(project, captured.path, target), width: captured.width, height: captured.height,
@@ -78,6 +80,7 @@ export async function renderOnce({ project, file, output, runtimeRoot, options =
       camera: cameraSummary(state, captured.camera),
       ...(state.section.enabled ? { section: state.section } : {}),
       ...(captured.analysis ? { analysis: captured.analysis } : {}),
+      ...(captured.raytrace ? { raytrace: captured.raytrace } : {}),
     };
   } finally {
     await service.close();

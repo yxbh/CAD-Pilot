@@ -1,5 +1,5 @@
 import { Canvas, events, useThree, type ThreeEvent } from "@react-three/fiber";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   AlwaysStencilFunc, BackSide, BufferAttribute, BufferGeometry, Color, DecrementWrapStencilOp, DoubleSide,
   EdgesGeometry, FrontSide, IncrementWrapStencilOp, KeepStencilOp, Matrix4, Mesh, NotEqualStencilFunc,
@@ -10,7 +10,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { center, diagonal, edgeSegments, faceAtTriangle, facePositions, hoverTarget, isMesh, mergeBounds, placeParts, sceneOrigin, type CadEdge, type CadFace, type HoverTarget, type Model, type Part, type Placement, type PointSelection, type ViewState } from "./model.ts";
-import type { CameraState, RenderReport, ViewCapture } from "./host.ts";
+import type { CameraState, CaptureView, RenderReport } from "./host.ts";
 import { edgeAtSegment, GeometryResources, type AnalysisResources, type EdgeRange, type FaultResources, type PartResources } from "./resources.ts";
 import { prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
 import { useRenderReports } from "./useRenderReports.ts";
@@ -26,6 +26,8 @@ import {
   visibleFacePoint, visibleFaceTriangleCount,
 } from "./section.ts";
 import { ANALYSIS_COLORS, FAULT_COLORS, type AnalysisLegend, type AnalysisSettings } from "../shared/analysis.mjs";
+import { analysisDrawn, traceLimits } from "../shared/raytrace.mjs";
+import { createTraceStore, RayTraced, TraceStatus, type TraceControl } from "./raytrace/RayTraced.tsx";
 import { AnalysisShading } from "./analysis/material.ts";
 import { useAnalysis, type AnalysisView } from "./analysis/useAnalysis.ts";
 import { withLegend } from "./analysis/legend.ts";
@@ -40,7 +42,7 @@ type Props = {
   active: boolean;
   onSelect: (id: string, faceId?: string, edgeId?: string, point?: Pick<PointSelection, "triangle" | "point">) => void;
   onError: (message: string) => void;
-  registerCapture: (capture: (() => ViewCapture) | null) => void;
+  registerCapture: (capture: CaptureView | null) => void;
   onRendered: (report: RenderReport) => Promise<unknown>;
   onCameraChange: (camera: CameraState) => void;
   onView: (preset: ViewPreset) => void;
@@ -269,6 +271,13 @@ function sectionAxis(axis: SectionSettings["axis"]) {
   return axis === "x" ? 0 : axis === "y" ? 1 : 2;
 }
 
+const STUDIO_BACKGROUND = "#29313d";
+// Where Studio's floor lies (Studio.tsx), for the ray-traced view to trace the same floor.
+function studioFloor({ min, max }: { min: number[]; max: number[] }) {
+  const span = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.001);
+  return { z: min[2] - span * 0.002, size: span * 12, center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2] as [number, number] };
+}
+
 // A colour map is read from the surface's colour, so metal and clear-coat finishes would hide it.
 const MAPPED_FINISH = { roughness: 0.55, metalness: 0, clearcoat: 0, clearcoatRoughness: 0 };
 
@@ -406,7 +415,9 @@ function PartMesh({ placement, resources, faults, analysis, analysisData, shadin
   );
 }
 
-function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, background, placements, resources, analysis, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & { placements: Placement[]; resources: GeometryResources; analysis: AnalysisView; axes: AxisStore }) {
+function Rig({ model, state, amount, stepPosition, sectionPosition, active, headless, background, placements, resources, analysis, trace, axes, onError, registerCapture, onRendered, onCameraChange }: Omit<Props, "onSelect"> & {
+  placements: Placement[]; resources: GeometryResources; analysis: AnalysisView; trace: RefObject<TraceControl | null>; axes: AxisStore;
+}) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
   const controls = useRef<OrbitControls | null>(null);
@@ -422,6 +433,8 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
   legend.current = analysis.legend;
   const stats = useRef(analysis.stats);
   stats.current = analysis.stats;
+  const traced = useRef(false);
+  traced.current = state.appearance === "raytraced";
   const cameraChanged = useRef(onCameraChange);
   cameraChanged.current = onCameraChange;
   useLayoutEffect(() => observeGraphicsContext(gl.domElement, () => {
@@ -502,8 +515,16 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
     headless ? `${size.width}x${size.height}:${state.cameraPinned ? JSON.stringify(state.camera) : ""}` : ""]);
 
   useEffect(() => {
-    registerCapture(() => {
+    registerCapture((limits) => {
       assertCaptureReady();
+      // A ray-traced view is captured once it has traced far enough; its picture is then on the canvas.
+      if (traced.current) {
+        if (!trace.current) throw new Error("The ray-traced view is not ready");
+        return trace.current.settle(limits ?? traceLimits()).then((report) => ({
+          dataUrl: gl.domElement.toDataURL("image/png"), width: gl.domElement.width, height: gl.domElement.height,
+          camera: controller.snapshot(), trace: report,
+        }));
+      }
       gl.render(scene, controller.camera);
       return {
         dataUrl: legend.current ? withLegend(gl.domElement, legend.current, gl.getPixelRatio()) : gl.domElement.toDataURL("image/png"),
@@ -511,7 +532,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
       };
     });
     return () => registerCapture(null);
-  }, [controller, gl, scene, registerCapture, assertCaptureReady]);
+  }, [controller, gl, scene, registerCapture, assertCaptureReady, trace]);
 
   return null;
 }
@@ -530,12 +551,17 @@ export default function Scene(props: Props) {
   const resources = useMemo(() => new GeometryResources(model), [model.parts]);
   const axes = useMemo(createAxisStore, []);
   const shading = useMemo(() => new AnalysisShading(), []);
+  // The ray-traced view draws Studio's light and finishes, without analysis views, section cuts or outlines.
+  const traced = state.appearance === "raytraced";
+  const trace = useRef<TraceControl | null>(null);
+  const traceStore = useMemo(createTraceStore, []);
+  const drawnAnalysis = analysisDrawn(state.appearance, state.analysis);
   useEffect(() => () => shading.dispose(), [shading]);
   const shown = useMemo(() => placements.filter((part) => !state.hiddenIds.includes(part.node.id)), [placements, state.hiddenIds]);
   // The legend lists fault colours only while a shown mesh has faults to draw.
   const faultsShown = state.showFaults && shown.some(({ part, node }) => !node.ghost && part.faults && Object.values(part.faults).some(Boolean));
-  const analysis = useAnalysis({ analysis: state.analysis, placements: shown, resources, origin, faults: faultsShown, onError: props.onError });
-  shading.update(state.analysis, { plate: analysis.plate, curvatureScale: analysis.stats.curvatureScale });
+  const analysis = useAnalysis({ analysis: drawnAnalysis, placements: shown, resources, origin, faults: faultsShown && !traced, onError: props.onError });
+  shading.update(drawnAnalysis, { plate: analysis.plate, curvatureScale: analysis.stats.curvatureScale });
   const pickingEnabled = props.active && amount === state.explode && stepPosition === state.step && sectionPosition === state.section.position && !state.loading;
   // Dense meshes that can be picked get their picking trees from a worker; ghosts, hidden parts and the background
   // renderer, which never picks, do not ask.
@@ -553,7 +579,7 @@ export default function Scene(props: Props) {
   useEffect(() => () => resources.dispose(), [resources]);
   const displayedBounds = mergeBounds(shown.map((part) => part.bounds)) || model.bounds;
   const gridSize = Math.max(diagonal(model.bounds) * 2, 100);
-  const studio = state.appearance === "studio";
+  const studio = state.appearance !== "inspect";
   const capSize = Math.max(diagonal(displayedBounds) * 2, diagonal(model.bounds) * 2, 100);
   const capGeometry = useMemo(() => new PlaneGeometry(capSize, capSize), [capSize]);
   useEffect(() => () => capGeometry.dispose(), [capGeometry]);
@@ -575,7 +601,7 @@ export default function Scene(props: Props) {
         gl.localClippingEnabled = true;
         gl.domElement.setAttribute("aria-label", "Interactive model");
       }}>
-      <color attach="background" args={[props.background ?? (studio ? "#29313d" : "#0b1722")]} />
+      <color attach="background" args={[props.background ?? (studio ? STUDIO_BACKGROUND : "#0b1722")]} />
       {/* A custom backdrop is for presentation images: it replaces Studio's floor and leaves out the inspection grid. */}
       <StudioStage bounds={stageBounds} enabled={studio} floor={!props.background} />
       {!studio && <>
@@ -593,13 +619,14 @@ export default function Scene(props: Props) {
           faceId={state.selectedFace?.nodeId === placement.node.id ? state.selectedFace.faceId : null}
           edgeId={state.selectedEdge?.nodeId === placement.node.id ? state.selectedEdge.edgeId : null}
           point={state.selectedPoint?.nodeId === placement.node.id ? state.selectedPoint.point : null}
-          hovered={hovered?.nodeId === placement.node.id && hovered.faceId === null && !hovered.edgeId}
+          // A hovered part's colour would start the trace over at every move of the pointer.
+          hovered={!traced && hovered?.nodeId === placement.node.id && hovered.faceId === null && !hovered.edgeId}
           hoverFaceId={state.selectionMode === "face" && hovered?.nodeId === placement.node.id ? hovered.faceId : null}
           hoverEdgeId={state.selectionMode === "edge" && hovered?.nodeId === placement.node.id ? hovered.edgeId ?? null : null}
           selectionMode={state.selectionMode} pickingEnabled={pickingEnabled}
           section={section} clippingPlane={clippingPlane}
           studio={studio} finish={state.materialFinish} showEdges={state.showEdges}
-          analysis={state.analysis} analysisData={resources.analysis(placement.part)} shading={shading}
+          analysis={drawnAnalysis} analysisData={resources.analysis(placement.part)} shading={shading}
           showValues={(values) => resources.showValues(placement.part, values)}
           onSelect={props.onSelect} onHover={onHover} onHoverEnd={onHoverEnd} />
       ))}
@@ -611,10 +638,13 @@ export default function Scene(props: Props) {
           : <SectionOutline key={`section:${placement.node.id}`} placement={placement} origin={origin} section={section} order={10 + index * 3} />
       ))}
       {stepPosition !== null && <SequenceTrails placements={shown} origin={origin} />}
-      <Rig {...props} placements={placements} resources={resources} analysis={analysis} axes={axes} />
+      {traced && <RayTraced page={!props.headless} background={props.background ?? STUDIO_BACKGROUND}
+        floor={props.background ? null : studioFloor(stageBounds)} control={trace} store={traceStore} />}
+      <Rig {...props} placements={placements} resources={resources} analysis={analysis} trace={trace} axes={axes} />
     </Canvas>
     {props.active && !props.headless && <AxisIndicator store={axes} onChoose={props.onView} />}
     {!props.headless && analysis.legend && <LegendOverlay legend={analysis.legend} />}
+    {!props.headless && traced && <TraceStatus store={traceStore} />}
     </>
   );
 }

@@ -45,8 +45,9 @@ export function useRenderReports({ model, state, amount, stepPosition, sectionPo
     lastReported.current = "";
     invalidate();
   }, [invalidate]);
-  // A new backdrop is drawn at the same revision, so it needs a report of its own, as a new size does.
-  useLayoutEffect(invalidateReport, [background, invalidateReport]);
+  // A new backdrop, or a capture's own ray tracing, is drawn at the same revision, so it needs a report of its own, as a new
+  // size does.
+  useLayoutEffect(invalidateReport, [background, state.appearance, invalidateReport]);
   const assertCaptureReady = useCallback(() => {
     const current = latest.current;
     if (!current.active || contextLost.current) throw new Error("The live model renderer is not available for capture");

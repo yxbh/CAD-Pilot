@@ -28,9 +28,11 @@ Run from the design project's root folder. Results are printed as JSON.
                         --size 1600x1000, --background "#ffffff" and the analysis options below change this image only
   render <file> <out.png>
                         Render a STEP or mesh file to a PNG without opening or changing a viewer: --size WxH, --view iso|top|...|AZ:EL,
-                        --projection, --appearance inspect|studio, --finish, --outlines on|off, --background "#rrggbb",
+                        --projection, --appearance inspect|studio|raytraced, --finish, --outlines on|off, --background "#rrggbb",
                         --section x[:position][:flipped], --explode amount[:direction], --step N[:buildup], --hide "label,label",
                         the analysis options below, and for a mesh --units mm|cm|m|in|ft|um and --up z|y
+  Ray tracing (render and capture): --samples N and --time seconds draw the image path traced, stopping at whichever
+                        comes first (128 samples and 60 s by default; software WebGL stops within 20 s and says so)
   Analysis options (render and capture): --map none|overhang|thickness|curvature|zebra,
                         --overlays triangles,backfaces,normals (or none), --overhang degrees[:direction such as -z or 0,0,1],
                         --wall mm (minimum wall), --curvature mean|gaussian[:scale]; --overhang, --wall and --curvature
@@ -47,15 +49,16 @@ Run from the design project's root folder. Results are printed as JSON.
 const UNAVAILABLE = new Set(["add_reference_to_chat", "save_camera"]);
 const actionNames = () => Object.keys(COMMANDS).filter((name) => COMMANDS[name].canvas && !UNAVAILABLE.has(name));
 const ANALYSIS_FLAGS = ["map", "overlays", "overhang", "wall", "curvature"];
+const TRACE_FLAGS = ["samples", "time"];
 const valued = new Set(["--view", "--size", "--units", "--up", "--background", "--projection", "--appearance", "--finish", "--outlines", "--section", "--explode", "--step", "--hide",
-  ...ANALYSIS_FLAGS.map((flag) => `--${flag}`)]);
+  ...[...ANALYSIS_FLAGS, ...TRACE_FLAGS].map((flag) => `--${flag}`)]);
 const switches = new Set(["--full", "--dry-run", "--all", "--copilot"]);
 // The flags each command reads (--view, which names the setup, goes with every command); any other is refused rather
 // than silently ignored.
 const COMMAND_FLAGS = {
-  open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full", ...ANALYSIS_FLAGS], stop: [], inspect: [], actions: [],
+  open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full", ...ANALYSIS_FLAGS, ...TRACE_FLAGS], stop: [], inspect: [], actions: [],
   prune: ["dry-run", "all", "copilot"],
-  render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide", ...ANALYSIS_FLAGS],
+  render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide", ...ANALYSIS_FLAGS, ...TRACE_FLAGS],
 };
 // The most arguments each command reads; open and render say what theirs are, and do and inspect take any number.
 const MOST_ARGUMENTS = { state: 0, stop: 0, actions: 0, prune: 0, capture: 1 };
@@ -147,6 +150,14 @@ export function analysisOptions(flags) {
   return input;
 }
 
+// --samples and --time as capture_image's samples and seconds: either draws the image ray traced.
+export function traceOptions(flags) {
+  return {
+    ...(flags.samples !== undefined ? { samples: number(flags.samples, "--samples") } : {}),
+    ...(flags.time !== undefined ? { seconds: number(flags.time, "--time") } : {}),
+  };
+}
+
 // Render flags are a shell-friendly spelling of the same view actions `do` runs.
 export function renderOptions(flags) {
   const options = {
@@ -173,6 +184,7 @@ export function renderOptions(flags) {
   }
   if (flags.hide !== undefined) options.hide = flags.hide.split(",").map((label) => label.trim()).filter(Boolean);
   options.analysis = analysisOptions(flags);
+  Object.assign(options, traceOptions(flags));
   return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined));
 }
 
@@ -242,7 +254,8 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   if (command === "capture" || (command === "do" && args[0] === "capture_image")) {
     const out = command === "capture" ? args[0] : undefined;
     const target = out && await projectOutput(location.project, out);
-    const input = command === "capture" ? { ...imageSize(flags.size), background: flags.background, analysis: analysisOptions(flags) } : actionInput(args.slice(1));
+    const input = command === "capture"
+      ? { ...imageSize(flags.size), background: flags.background, analysis: analysisOptions(flags), ...traceOptions(flags) } : actionInput(args.slice(1));
     const result = await call(record, "api/capture", input);
     const saved = target ? { saved: await saveCopy(location.project, result.path, target) } : {};
     if (flags.full) return { ...result, ...saved };
@@ -250,6 +263,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
       path: result.path, ...saved, width: result.width, height: result.height, model: result.modelName,
       revision: revisionLabel(result.source.sha256), viewRevision: result.revision, camera: cameraSummary(result, result.camera),
       ...(result.analysis ? { analysis: result.analysis } : {}),
+      ...(result.raytrace ? { raytrace: result.raytrace } : {}),
     };
   }
   if (command === "do") {

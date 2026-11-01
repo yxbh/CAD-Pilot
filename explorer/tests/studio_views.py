@@ -111,7 +111,7 @@ def run(url, output):
             page.get_by_role("button", name="Appearance settings", exact=True).click()
             expect(page.get_by_role("dialog", name="Appearance settings")).to_be_visible()
             finishes = {}
-            for finish in ["plastic", "satin", "polished", "rubber"]:
+            for finish in ["matte", "plastic", "satin", "polished", "rubber"]:
                 before_revision = state()["revision"]
                 page.get_by_role("combobox", name="Studio finish").select_option(finish)
                 wait(lambda current: current["revision"] > before_revision)

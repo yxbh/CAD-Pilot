@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS, viewAngle } from "../shared/view-settings.mjs";
+import { APPEARANCES, MATERIAL_FINISHES, PROJECTIONS, VIEW_PRESETS, viewAngle } from "../shared/view-settings.mjs";
 import { commandDefinition, MAX_PART_IDS } from "../shared/commands.mjs";
 import {
   defaultSection, pruneSectionSelection, reconcileSectionWithDisplay, SECTION_AXES, sectionAxisIndex, sectionEntityVisible, sectionSupport, validateSection,
@@ -27,7 +27,7 @@ export function initialState() {
     assembly: null, step: null, stepMode: "exploded",
     loading: false, error: "",
     activeReviewId: null, camera: null, cameraPinned: false,
-    projection: "perspective", appearance: "inspect", materialFinish: "plastic", showEdges: true, analysis: defaultAnalysis(),
+    projection: "perspective", appearance: "inspect", materialFinish: "matte", showEdges: true, analysis: defaultAnalysis(),
     section: { enabled: false, axis: "x", position: 0, flipped: false },
     // Where the main file came from: project-relative path (empty for uploads and the demo), its modified time, size
     // and SHA-256, which is the revision a person is told about; documentRevision identifies the whole view.
@@ -254,11 +254,11 @@ export function changeView(state, model, name, input = {}) {
     case "set_appearance":
       if (input.mode === undefined && input.finish === undefined && input.showEdges === undefined) throw new PrototypeError("bad_appearance", "Supply a mode, finish or outline setting");
       if (input.mode !== undefined) {
-        if (!["inspect", "studio"].includes(input.mode)) throw new PrototypeError("bad_appearance", "Choose inspect or studio");
+        if (!APPEARANCES.includes(input.mode)) throw new PrototypeError("bad_appearance", "Choose inspect, studio or raytraced");
         next.appearance = input.mode;
       }
       if (input.finish !== undefined) {
-        if (!MATERIAL_FINISHES.includes(input.finish)) throw new PrototypeError("bad_finish", "Choose plastic, satin, polished or rubber");
+        if (!MATERIAL_FINISHES.includes(input.finish)) throw new PrototypeError("bad_finish", "Choose matte, plastic, satin, polished or rubber");
         next.materialFinish = input.finish;
       }
       if (input.showEdges !== undefined) {

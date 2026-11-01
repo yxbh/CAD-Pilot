@@ -1,4 +1,4 @@
-export type MaterialFinish = 'plastic' | 'satin' | 'polished' | 'rubber'
+export type MaterialFinish = 'matte' | 'plastic' | 'satin' | 'polished' | 'rubber'
 
 type Appearance = {
   roughness: number
@@ -9,6 +9,14 @@ type Appearance = {
 }
 
 const presets: Record<MaterialFinish, Appearance> = {
+  // The default: a plain, unglazed look, like a print or bisque, whose broad highlights leave the shape to read.
+  matte: {
+    roughness: 0.6,
+    metalness: 0,
+    clearcoat: 0,
+    clearcoatRoughness: 1,
+    envMapIntensity: 0.7,
+  },
   plastic: {
     roughness: 0.38,
     metalness: 0,
