@@ -205,8 +205,13 @@ class DesignChecksTests(unittest.TestCase):
         (self.root / "broken.step").write_text(broken)
         result = self.run_tool("inspect", "parts", "broken.step")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertTrue(json.loads(result.stdout)["ok"])
         self.assertIn("Unresolved Reference", result.stderr)
+        # The box's face that lost its edges has nothing closing it, so the box has no size; the lid keeps its own.
+        box, lid = json.loads(result.stdout)["parts"]
+        self.assertEqual((True, None, None, None, None), (box["unbounded"], box["size"], box["center"], box["min"], box["max"]))
+        self.assertEqual((False, [20.0, 20.0, 1.0]), (lid["unbounded"], lid["size"]))
+        text = self.run_tool("inspect", "parts", "broken.step", "--format", "text").stdout
+        self.assertIn("size unbounded", text)
         # A design that reads the STEP itself, before the workbench reads or writes one.
         (self.root / "uses.py").write_text("from build123d import import_step\n\ndef gen_step():\n    return import_step('broken.step')\n")
         result = self.run_tool("step", "uses.py", "-o", "out/uses.step")

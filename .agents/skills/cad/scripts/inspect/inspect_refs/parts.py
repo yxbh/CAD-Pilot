@@ -9,6 +9,10 @@ from common.selector_types import SelectorProfile
 from . import lookup
 from .inspect import EntryContextProvider, load_entry_context_for_target
 
+# OCCT puts a side nothing closes, such as that of a face a damaged STEP left without its edges, at 1e100 mm. Turning
+# the part to place it leaves at least 1e100 / √3 of that, still nowhere near any real part's size.
+_UNBOUNDED_MM = 1e90
+
 
 def _rounded(values: object, digits: int = 3) -> list[float] | None:
     if not isinstance(values, (list, tuple)) or len(values) != 3:
@@ -59,6 +63,9 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
             continue
         bbox = row.get("bbox") if isinstance(row.get("bbox"), dict) else {}
         low, high = _rounded(bbox.get("min")), _rounded(bbox.get("max"))
+        unbounded = bool(low and high) and any(abs(value) >= _UNBOUNDED_MM for value in low + high)
+        if unbounded:
+            low = high = None
         shapes = shapes_by_occurrence.get(occurrence_id, [])
         volumes = [float(shape["volume"]) for shape in shapes if isinstance(shape.get("volume"), (int, float))]
         transform = row.get("transform")
@@ -72,6 +79,7 @@ def list_parts(target: str, *, context_provider: EntryContextProvider | None = N
             "labelled": bool(row.get("name") or row.get("sourceName")),
             "path": paths[occurrence_id],
             "ref": syntax.build_cad_token(context.cad_path, occurrence_id),
+            "unbounded": unbounded,
             "size": [round(high[i] - low[i], 3) for i in range(3)] if low and high else None,
             "center": [round((high[i] + low[i]) / 2, 3) for i in range(3)] if low and high else None,
             "min": low,
@@ -89,7 +97,10 @@ def format_parts_text(result: dict[str, object], *, quiet: bool, verbose: bool) 
     for part in result.get("parts", []):
         if not isinstance(part, dict):
             continue
-        size = "x".join(f"{value:g}" for value in part["size"]) if part.get("size") else "?"
+        if part.get("unbounded"):
+            size = "unbounded (a face nothing closes, as in a damaged STEP: see hygiene)"
+        else:
+            size = "x".join(f"{value:g}" for value in part["size"]) if part.get("size") else "?"
         center = ", ".join(f"{value:g}" for value in part["center"]) if part.get("center") else "?"
         solids = part.get("solids")
         extra = "" if solids == 1 else f"  {solids} solids"
