@@ -200,7 +200,7 @@ def test_heavy_readers_are_held_to_their_caps_before_they_parse(tmp_path, monkey
     assert mesh._reader(extension, path.read_bytes())[:2] == (reader, 12)
     monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 12)
     assert len(mesh.load(path).parts[0].triangles) == 12, "A file at its cap opens"
-    for parser in ("_stl", "_obj", "_scene"):
+    for parser in ("_stl", "_obj", "_3mf", "_scene"):
         monkeypatch.setattr(mesh, parser, lambda *args: pytest.fail("parsed a file over its reader's cap"))
     monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 11)
     with pytest.raises(mesh.MeshError, match=f"11 triangles, the most the viewer reads from {reader.upper()}"):
@@ -227,6 +227,38 @@ def test_counts_before_parsing_find_every_triangle_tag_and_ply_header(tmp_path, 
     monkeypatch.setattr(mesh, "MAX_TRIANGLES", 12)
     with pytest.raises(mesh.MeshError, match="more than 36 vertices"):
         mesh.load(path)
+
+
+def test_components_in_an_object_file_place_only_their_own_object(tmp_path):
+    import zipfile
+
+    # Bambu Studio's layout: the build places an assembly whose components point into an object file. That file's
+    # ids are its own, so its object 1 is not the root's assembly 1.
+    def obj(index, shape):
+        vertices = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in shape.vertices)
+        triangles = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in shape.faces)
+        return f'<object id="{index}" type="model"><mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object>'
+
+    cylinder = trimesh.creation.cylinder(5, 10)
+    spaces = ('xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+              'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"')
+    root = (f'<model unit="millimeter" {spaces}><resources><object id="1" type="model"><components>'
+            '<component p:path="/3D/Objects/object_1.model" objectid="1"/>'
+            '<component p:path="/3D/Objects/object_1.model" objectid="2" transform="1 0 0 0 1 0 0 0 1 40 0 0"/>'
+            '<component p:path="/3D/Objects/object_2.model" objectid="1"/>'
+            '</components></object></resources><build>'
+            '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 100 0"/><item objectid="1"/></build></model>')
+    path = tmp_path / "plate.3mf"
+    with zipfile.ZipFile(path, "w") as files:
+        files.writestr("3D/3dmodel.model", root)
+        files.writestr("3D/Objects/object_1.model", f"<model {spaces}><resources>{obj(1, BOX)}{obj(2, cylinder)}</resources></model>")
+    document = mesh.load(path)
+    assert [(part.label, len(part.triangles)) for part in document.parts] == [("1", 12), ("2", len(cylinder.faces))]
+    assert all(part.closed for part in document.parts) and document.parts[0].volume == pytest.approx(6000)
+    assert [(node.label, node.part, node.matrix[:3, 3].tolist()) for node in document.nodes] == [
+        ("1", 0, [0, 100, 0]), ("2", 1, [40, 100, 0]), ("1_1", 0, [0, 0, 0]), ("2_1", 1, [40, 0, 0])]
+    assert document.warnings == ["3D/Objects/object_2.model: object 1 is placed but not defined, so it is not shown."]
+    assert mesh._reader("3mf", path.read_bytes())[1] == sum(len(part.triangles) for part in document.parts)
 
 
 def test_a_part_of_only_repeated_corners_is_all_zero_area(tmp_path):
