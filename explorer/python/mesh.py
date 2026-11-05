@@ -45,14 +45,20 @@ MAX_INPUT_BYTES = LIMITS["maxBytes"]
 # Reading peaks at about 125 bytes per triangle for binary STL, 100 for binary PLY and 190 for GLB: 1.6 to 3 GB at
 # this cap, and up to twice that where the allocator keeps freed blocks cached (macOS on a large-memory Mac).
 MAX_TRIANGLES = LIMITS["maxTriangles"]
-# The text and XML readers take far more: OBJ 350 to 740 bytes per triangle, ASCII PLY 650, 3MF 1,600 (trimesh
-# builds an XML tree) and ASCII STL 1,750. Their files are counted before they are parsed and held to 4 million
-# triangles (3MF peaks near 6.5 GB there), ASCII STL to 2 million (3.5 GB). Their memory also grows with vertex
-# lines and text, about 10 bytes per file byte, so they keep a 300 MB file limit.
+# The text and XML readers take far more: OBJ 350 to 740 bytes per triangle, ASCII PLY 650, 3MF 1,600 (each object's
+# XML tree is built before it is read; under 200 split into many objects) and ASCII STL 1,750. Their files are
+# counted before they are parsed and held to 4 million triangles (3MF peaks near 6.5 GB there), ASCII STL to
+# 2 million (3.5 GB). Their memory also grows with vertex lines and text, about 10 bytes per file byte, so they keep
+# a 300 MB file limit.
 READER_TRIANGLES = {"obj": 4_000_000, "ascii ply": 4_000_000, "3mf": 4_000_000, "ascii stl": 2_000_000}
 READER_BYTES = 300 * 1024 * 1024
-# A 3MF triangle, with or without a namespace prefix; the match is far shorter than the 256 bytes kept between chunks.
-TRIANGLE_TAG = re.compile(rb"<(?:[\w.-]{1,64}:)?triangle\s")
+# A 3MF triangle's tag in its UTF-8 text, whatever its namespace prefix: always ten bytes, so a file counted in
+# chunks that overlap by nine counts each tag once. Bytes per chunk; no count depends on it.
+TRIANGLE_TAG = re.compile(rb"[<:]triangle[\s/]")
+COUNT_BYTES = 1 << 24
+ROOT_MODEL = "3d/3dmodel.model"
+# The production extension's path, on a component or build item whose object is in another model file of the archive.
+PRODUCTION_PATH = "{http://schemas.microsoft.com/3dmanufacturing/production/2015/06}path"
 MAX_PARTS = 1_000
 MAX_NODES = 10_000
 MAX_OUTLINE_SEGMENTS = 250_000
@@ -160,24 +166,26 @@ def _reader(fmt: str, data: bytes) -> tuple[str, int, int]:
     if fmt == "3mf":
         count, cap = 0, _limit("3mf")
         try:
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                for name in archive.namelist():
-                    if count > cap:
-                        break
-                    if not name.lower().endswith(".model"):
-                        continue
-                    with archive.open(name) as stream:
-                        # Each chunk is counted up to its last "<", the rest with the next, so no tag is split.
-                        rest = b""
-                        while count <= cap and (chunk := stream.read(1 << 24)):
-                            block = rest + chunk
-                            cut = block.rfind(b"<", max(len(block) - 256, 0))
-                            cut = len(block) if cut < 0 else cut
-                            count += len(TRIANGLE_TAG.findall(block, 0, cut))
-                            rest = block[cut:]
-                        count += len(TRIANGLE_TAG.findall(rest))
+            archive = zipfile.ZipFile(io.BytesIO(data))
         except Exception:  # A damaged archive is left to the reader to report.
-            pass
+            return "3mf", 0, 0
+        with archive:
+            for name in archive.namelist():
+                if count > cap:
+                    break
+                if not name.lower().endswith(".model"):
+                    continue
+                # A damaged member counts as far as it reads, and the others still count.
+                try:
+                    with archive.open(name) as stream:
+                        # A tag that runs into the next chunk starts in the last nine bytes, which go with it.
+                        rest = b""
+                        while count <= cap and (chunk := stream.read(COUNT_BYTES)):
+                            block = rest + chunk
+                            count += len(TRIANGLE_TAG.findall(block))
+                            rest = block[-9:]
+                except Exception:
+                    continue
         return "3mf", count, 0
     return fmt, 0, 0
 
@@ -291,6 +299,139 @@ def _obj(data: bytes, stem: str) -> list[SourcePart]:
         remap[used] = np.arange(len(used))
         parts.append(SourcePart(name, points[used], remap[triangles]))
     return parts
+
+
+def _3mf_transform(text: str | None) -> np.ndarray:
+    # Twelve numbers for row vectors, three per row: the columns of the 3 x 4 matrix.
+    matrix = np.eye(4)
+    if text is not None:
+        values = _numbers(text, np.float64)
+        if values.size != 12:
+            raise MeshError(f"3MF transform {text[:80]!r} is not twelve numbers.")
+        matrix[:3] = values.reshape(4, 3).T
+    return matrix
+
+
+def _3mf_mesh(element, label: str) -> tuple[np.ndarray, np.ndarray] | None:
+    mesh = element.find("{*}mesh")
+    if mesh is None:
+        return None
+    corners = [f"{vertex.get('x')} {vertex.get('y')} {vertex.get('z')}" for vertex in mesh.iterfind("{*}vertices/{*}vertex")]
+    points, count = _numbers(" ".join(corners), np.float64), len(corners)
+    del corners
+    if points.size != 3 * count:
+        raise MeshError(f"3MF object {label!r} has a vertex that is not three numbers.")
+    faces = [f"{triangle.get('v1')} {triangle.get('v2')} {triangle.get('v3')}" for triangle in mesh.iterfind("{*}triangles/{*}triangle")]
+    index, size = _numbers(" ".join(faces), np.int64), 3 * len(faces)
+    del faces
+    if index.size != size:
+        raise MeshError(f"3MF object {label!r} has a triangle whose corners are not three vertex numbers.")
+    if size and (index.min() < 0 or index.max() >= count):
+        raise MeshError(f"3MF object {label!r} refers to a vertex that does not exist.")
+    return points.reshape(-1, 3), index.reshape(-1, 3)
+
+
+def _unique(label: str, taken: dict[str, int]) -> str:
+    """label, or the first of label_1, label_2 and so on not yet given. taken holds every label given, each with the
+    last number tried after it."""
+    name, number = label, taken.get(label, 0)
+    while name in taken:
+        number += 1
+        name = f"{label}_{number}"
+    taken[label] = number
+    taken.setdefault(name, 0)
+    return name
+
+
+def _3mf(data: bytes, stem: str, warnings: list[str]) -> tuple[list[SourcePart], list[SourceNode], str]:
+    """Read a 3MF object by object. A component may place an object of another model file in the archive, as Bambu
+    Studio's files do, and each file's object ids are its own, so objects are kept by file and id and each file the
+    build reaches is parsed once. Only UTF-8 .model files are read, as 3MF requires and as _reader counted them, so the
+    parse builds no triangle that was not counted. Colours are not read."""
+    from lxml import etree
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except Exception as error:
+        raise MeshError(f"Could not read the 3MF file: {error}") from error
+    entries = {name.lower(): name for name in archive.namelist()}
+    if ROOT_MODEL not in entries:
+        raise MeshError("This 3MF has no 3D/3dmodel.model.")
+    models: dict[str, tuple[dict, list, str | None]] = {}
+
+    def model(path: str) -> tuple[dict, list, str | None]:
+        """A model file's objects by id as (label, mesh, components), its build items as (path, id, transform,
+        part number) and its unit; a component is (path, id, transform)."""
+        key = path.lower()
+        if key in models:
+            return models[key]
+        objects, items, unit = {}, [], None
+        if key in entries and key.endswith(".model"):
+            try:
+                with archive.open(entries[key]) as stream:
+                    for _, element in etree.iterparse(stream, tag=("{*}model", "{*}object", "{*}build"), encoding="utf-8",
+                                                      resolve_entities=False, no_network=True, load_dtd=False):
+                        kind = etree.QName(element).localname
+                        if kind == "object":
+                            label = element.get("name") or str(element.get("id"))
+                            components = [((part.get(PRODUCTION_PATH) or path).lstrip("/"), part.get("objectid"),
+                                           _3mf_transform(part.get("transform")))
+                                          for part in element.iterfind("{*}components/{*}component")]
+                            objects[element.get("id")] = (label, _3mf_mesh(element, label), components)
+                            # Each object's elements go once it is read, so a file's tree is never held whole.
+                            element.clear()
+                        elif kind == "build":
+                            items = [((item.get(PRODUCTION_PATH) or path).lstrip("/"), item.get("objectid"),
+                                      _3mf_transform(item.get("transform")), item.get("partnumber"))
+                                     for item in element.iterfind("{*}item")]
+                        elif kind == "model":
+                            unit = element.get("unit")
+            except MeshError:
+                raise
+            except Exception as error:  # A damaged archive member or malformed XML.
+                raise MeshError(f"Could not read {entries[key]} in the 3MF file: {error}") from error
+        models[key] = objects, items, unit
+        return models[key]
+
+    root = entries[ROOT_MODEL]
+    _, items, unit = model(root)
+    parts: list[SourcePart] = []
+    nodes: list[SourceNode] = []
+    definitions: dict[tuple[str, str], int] = {}
+    part_labels: dict[str, int] = {}
+    node_labels: dict[str, int] = {}
+
+    def warn(message: str) -> None:
+        if message not in warnings:
+            warnings.append(message)
+
+    # Depth first in file order, so parts and placements keep the file's order. Placements are counted as they are
+    # found, before any is expanded, so components that contain themselves or multiply are refused at once. An
+    # assembly's placement counts too, so the bound is twice the placements a file may show: room for an assembly
+    # around each part, as Bambu Studio writes them.
+    stack = items[::-1]
+    placements = len(stack)
+    while stack:
+        if placements > 2 * MAX_NODES:
+            raise MeshError("The file has more parts or placements than the viewer supports.")
+        path, objectid, matrix, label = stack.pop()
+        found = model(path)[0].get(objectid)
+        if found is None:
+            warn(f"{path}: object {objectid} is placed but not defined, so it is not shown.")
+            continue
+        name, geometry, components = found
+        if geometry is not None and not len(geometry[1]):
+            warn(f"{path}: object {objectid} has no triangles, so it is not shown.")
+        elif geometry is not None:
+            key = (path.lower(), objectid)
+            if key not in definitions:
+                definitions[key] = len(parts)
+                # trimesh names a mesh it writes without a name geometry_0; the part is called after the file instead.
+                parts.append(SourcePart(_unique(stem if name == "geometry_0" else name, part_labels), *geometry))
+            nodes.append(SourceNode(_unique(label or parts[definitions[key]].label, node_labels), definitions[key], matrix))
+        placements += len(components)
+        stack.extend((child_path, child, matrix @ transform, None) for child_path, child, transform in reversed(components))
+    return parts, nodes, unit or "millimeter"
 
 
 def _visual_color(geometry) -> list[float] | None:
@@ -545,13 +686,15 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
     elif fmt == "obj":
         parts = _obj(data, stem)
         nodes = [SourceNode(part.label, index, np.eye(4)) for index, part in enumerate(parts)]
+    elif fmt == "3mf":
+        parts, nodes, declared = _3mf(data, stem, warnings)
     else:
         parts, nodes, declared = _scene(data, fmt, stem, warnings)
     # trimesh keeps the file's bytes in reference cycles; collect them before the large arrays are made.
     del data
     gc.collect()
     if not parts or not nodes:
-        raise MeshError("The file contains no triangles.")
+        raise MeshError(" ".join(["The file contains no triangles.", *warnings]))
     if len(parts) > MAX_PARTS or len(nodes) > MAX_NODES:
         raise MeshError("The file has more parts or placements than the viewer supports.")
     if sum(len(part.triangles) for part in parts) > limit:
