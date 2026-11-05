@@ -327,10 +327,22 @@ def _3mf_mesh(element, label: str) -> tuple[np.ndarray, np.ndarray] | None:
     return points.reshape(-1, 3), index.reshape(-1, 3)
 
 
-def _3mf(data: bytes, warnings: list[str]) -> tuple[list[SourcePart], list[SourceNode], str]:
+def _unique(label: str, taken: dict[str, int]) -> str:
+    """label, or the first of label_1, label_2 and so on not yet given. taken holds every label given, each with the
+    last number tried after it."""
+    name, number = label, taken.get(label, 0)
+    while name in taken:
+        number += 1
+        name = f"{label}_{number}"
+    taken[label] = number
+    taken.setdefault(name, 0)
+    return name
+
+
+def _3mf(data: bytes, stem: str, warnings: list[str]) -> tuple[list[SourcePart], list[SourceNode], str]:
     """Read a 3MF object by object. A component may place an object of another model file in the archive, as Bambu
     Studio's files do, and each file's object ids are its own, so objects are kept by file and id and each file the
-    build reaches is parsed once. Colours are not read."""
+    build reaches is parsed once. Only .model files are read, the ones _reader counted. Colours are not read."""
     from lxml import etree
 
     try:
@@ -348,7 +360,7 @@ def _3mf(data: bytes, warnings: list[str]) -> tuple[list[SourcePart], list[Sourc
         if key in models:
             return models[key]
         objects, items, unit = {}, [], None
-        if key in entries:
+        if key in entries and key.endswith(".model"):
             try:
                 with archive.open(entries[key]) as stream:
                     for _, element in etree.iterparse(stream, tag=("{*}model", "{*}object", "{*}build"),
@@ -380,27 +392,18 @@ def _3mf(data: bytes, warnings: list[str]) -> tuple[list[SourcePart], list[Sourc
     parts: list[SourcePart] = []
     nodes: list[SourceNode] = []
     definitions: dict[tuple[str, str], int] = {}
-    taken: set[str] = set()
-    tried: dict[str, int] = {}
-
-    def unique(label: str) -> str:
-        name, number = label, tried.get(label, 0)
-        while name in taken:
-            number += 1
-            name = f"{label}_{number}"
-        tried[label] = number
-        taken.add(name)
-        return name
-
-    # Depth first in file order, so parts and placements keep the file's order. Every object placed counts towards
-    # the placement limit, which also ends components that contain themselves.
+    part_labels: dict[str, int] = {}
+    node_labels: dict[str, int] = {}
+    # Depth first in file order, so parts and placements keep the file's order. Placements are counted as they are
+    # found, before any is expanded, so components that contain themselves or multiply are refused at once. An
+    # assembly's placement counts too, so the bound is twice the placements a file may show: room for an assembly
+    # around each part, as Bambu Studio writes them.
     stack = [(path, objectid, matrix, partnumber) for objectid, path, matrix, partnumber in reversed(items)]
-    placements = 0
+    placements = len(stack)
     while stack:
-        path, objectid, matrix, label = stack.pop()
-        placements += 1
-        if placements > MAX_NODES:
+        if placements > 2 * MAX_NODES:
             raise MeshError("The file has more parts or placements than the viewer supports.")
+        path, objectid, matrix, label = stack.pop()
         found = model(path)[0].get(objectid)
         if found is None:
             missing = f"{path}: object {objectid} is placed but not defined, so it is not shown."
@@ -412,8 +415,10 @@ def _3mf(data: bytes, warnings: list[str]) -> tuple[list[SourcePart], list[Sourc
             key = (path.lower(), objectid)
             if key not in definitions:
                 definitions[key] = len(parts)
-                parts.append(SourcePart(name, *geometry))
-            nodes.append(SourceNode(unique(label or name), definitions[key], matrix))
+                # trimesh names a mesh it writes without a name geometry_0; the part is called after the file instead.
+                parts.append(SourcePart(_unique(stem if name == "geometry_0" else name, part_labels), *geometry))
+            nodes.append(SourceNode(_unique(label or parts[definitions[key]].label, node_labels), definitions[key], matrix))
+        placements += len(components)
         stack.extend((child_path, child, matrix @ transform, None) for child, child_path, transform in reversed(components))
     return parts, nodes, unit or "millimeter"
 
@@ -671,7 +676,7 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
         parts = _obj(data, stem)
         nodes = [SourceNode(part.label, index, np.eye(4)) for index, part in enumerate(parts)]
     elif fmt == "3mf":
-        parts, nodes, declared = _3mf(data, warnings)
+        parts, nodes, declared = _3mf(data, stem, warnings)
     else:
         parts, nodes, declared = _scene(data, fmt, stem, warnings)
     # trimesh keeps the file's bytes in reference cycles; collect them before the large arrays are made.

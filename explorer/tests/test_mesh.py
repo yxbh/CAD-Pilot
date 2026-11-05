@@ -47,6 +47,9 @@ def test_formats_keep_parts_names_and_placements(tmp_path, extension):
         assert lid.matrix[:3, 3] == pytest.approx([50 * document.frame["scale"], 0, 0])
     else:
         assert [node.label for node in document.nodes] == ["pair"]
+    single = tmp_path / f"single.{extension}"
+    BOX.export(single)
+    assert [part.label for part in mesh.load(single).parts] == ["single"], "An unnamed mesh is called after its file"
 
 
 def test_frames_come_from_the_file_its_format_or_its_size(tmp_path):
@@ -229,7 +232,7 @@ def test_counts_before_parsing_find_every_triangle_tag_and_ply_header(tmp_path, 
         mesh.load(path)
 
 
-def test_components_in_an_object_file_place_only_their_own_object(tmp_path):
+def test_components_in_an_object_file_place_only_their_own_object(tmp_path, monkeypatch):
     import zipfile
 
     # Bambu Studio's layout: the build places an assembly whose components point into an object file. That file's
@@ -237,7 +240,7 @@ def test_components_in_an_object_file_place_only_their_own_object(tmp_path):
     def obj(index, shape):
         vertices = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in shape.vertices)
         triangles = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in shape.faces)
-        return f'<object id="{index}" type="model"><mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object>'
+        return f'<object id="{index}" name="Body" type="model"><mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object>'
 
     cylinder = trimesh.creation.cylinder(5, 10)
     spaces = ('xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
@@ -245,20 +248,31 @@ def test_components_in_an_object_file_place_only_their_own_object(tmp_path):
     root = (f'<model unit="millimeter" {spaces}><resources><object id="1" type="model"><components>'
             '<component p:path="/3D/Objects/object_1.model" objectid="1"/>'
             '<component p:path="/3D/Objects/object_1.model" objectid="2" transform="1 0 0 0 1 0 0 0 1 40 0 0"/>'
-            '<component p:path="/3D/Objects/object_2.model" objectid="1"/>'
+            '<component p:path="/3D/Objects/object_2.xml" objectid="1"/>'
             '</components></object></resources><build>'
             '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 100 0"/><item objectid="1"/></build></model>')
     path = tmp_path / "plate.3mf"
     with zipfile.ZipFile(path, "w") as files:
         files.writestr("3D/3dmodel.model", root)
         files.writestr("3D/Objects/object_1.model", f"<model {spaces}><resources>{obj(1, BOX)}{obj(2, cylinder)}</resources></model>")
+        # Not a .model file, so it is neither counted before parsing nor read.
+        files.writestr("3D/Objects/object_2.xml", f"<model {spaces}><resources>{obj(1, BOX)}</resources></model>")
+    # Four parts placed through two assemblies, with eight placements in all, is exactly at the limits.
+    monkeypatch.setattr(mesh, "MAX_NODES", 4)
     document = mesh.load(path)
-    assert [(part.label, len(part.triangles)) for part in document.parts] == [("1", 12), ("2", len(cylinder.faces))]
+    assert [(part.label, len(part.triangles)) for part in document.parts] == [("Body", 12), ("Body_1", len(cylinder.faces))]
     assert all(part.closed for part in document.parts) and document.parts[0].volume == pytest.approx(6000)
     assert [(node.label, node.part, node.matrix[:3, 3].tolist()) for node in document.nodes] == [
-        ("1", 0, [0, 100, 0]), ("2", 1, [40, 100, 0]), ("1_1", 0, [0, 0, 0]), ("2_1", 1, [40, 0, 0])]
-    assert document.warnings == ["3D/Objects/object_2.model: object 1 is placed but not defined, so it is not shown."]
+        ("Body", 0, [0, 100, 0]), ("Body_1", 1, [40, 100, 0]), ("Body_2", 0, [0, 0, 0]), ("Body_1_1", 1, [40, 0, 0])]
+    assert document.warnings == ["3D/Objects/object_2.xml: object 1 is placed but not defined, so it is not shown."]
     assert mesh._reader("3mf", path.read_bytes())[1] == sum(len(part.triangles) for part in document.parts)
+    loop = tmp_path / "loop.3mf"
+    itself = '<component objectid="1"/>' * 1000
+    with zipfile.ZipFile(loop, "w") as files:
+        files.writestr("3D/3dmodel.model", f'<model {spaces}><resources><object id="1"><components>{itself}</components>'
+                                           '</object></resources><build><item objectid="1"/></build></model>')
+    with pytest.raises(mesh.MeshError, match="more parts or placements"):
+        mesh.load(loop)
 
 
 def test_a_part_of_only_repeated_corners_is_all_zero_area(tmp_path):
