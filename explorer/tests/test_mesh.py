@@ -191,6 +191,18 @@ def test_triangle_limit_is_checked_before_analysis(tmp_path, monkeypatch):
         mesh.load(binary_stl(tmp_path / "box.stl", BOX.vertices, BOX.faces))
 
 
+@pytest.mark.parametrize("extension, reader", [("3mf", "3mf"), ("obj", "obj"), ("ply", "ascii ply")])
+def test_heavy_readers_are_held_to_their_cap_before_they_parse(tmp_path, monkeypatch, extension, reader):
+    path = tmp_path / f"box.{extension}"
+    BOX.export(path, **({"encoding": "ascii"} if extension == "ply" else {}))
+    assert mesh._reader(extension, path.read_bytes()) == (reader, 12)
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 11)
+    for parser in ("_obj", "_scene"):
+        monkeypatch.setattr(mesh, parser, lambda *args: pytest.fail("parsed a file over its reader's cap"))
+    with pytest.raises(mesh.MeshError, match=f"11 triangles, the most the viewer reads from {reader.upper()}"):
+        mesh.load(path)
+
+
 def plate(tmp_path) -> Path:
     from build123d import Box, BuildPart, BuildSketch, Cylinder, Locations, Mode, Plane, SlotOverall, export_stl, extrude
 

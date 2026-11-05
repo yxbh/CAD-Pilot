@@ -8,14 +8,15 @@ triangles wind the same way and zero-area triangles are reported where they are.
 file's own order (polygons are split into fans), so a picked triangle can be found in the source again.
 
 The converter writes a JSON manifest and one little-endian binary file with every part's float32 positions,
-uint32 triangles, outline edges and fault lists. Limits bound the work done, not peak memory; only open
-trusted local files.
+uint32 triangles, outline edges and fault lists. Each reader's triangle cap is counted before the file is parsed
+where that is cheap, which keeps a read to a few gigabytes of memory; only open trusted local files.
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+import gc
 import hashlib
 import io
 import json
@@ -23,6 +24,7 @@ import math
 from pathlib import Path
 import re
 import sys
+import zipfile
 
 import numpy as np
 
@@ -35,9 +37,18 @@ DECLARED_UNITS = {
     "inch": "in", "inches": "in", "in": "in", "foot": "ft", "feet": "ft", "ft": "ft",
 }
 UP_AXES = ("z", "y")
-MAX_INPUT_BYTES = 300 * 1024 * 1024
-# Reading peaks at about 460 bytes per triangle for binary STL (about 1.9 GB at this cap) and 700 for OBJ.
-MAX_TRIANGLES = 4_000_000
+# Rows per chunk where per-row work is split to bound its temporary arrays; no result depends on it.
+CHUNK_ROWS = 1 << 20
+# Shared with the server, which refuses a larger file before it is read and sizes its geometry checks by the cap.
+LIMITS = json.loads((Path(__file__).resolve().parent.parent / "shared" / "mesh-limits.json").read_text("utf-8"))
+MAX_INPUT_BYTES = LIMITS["maxBytes"]
+# Reading peaks at about 125 bytes per triangle for binary STL, 100 for binary PLY and 190 for GLB: 1.6 to 3 GB at
+# this cap, and up to twice that where the allocator keeps freed blocks cached (macOS on a large-memory Mac).
+MAX_TRIANGLES = LIMITS["maxTriangles"]
+# The text and XML readers take far more: OBJ 350 to 740 bytes per triangle, ASCII PLY 650, 3MF 1,600 (trimesh
+# builds an XML tree) and ASCII STL 1,750. Their files are counted before they are parsed and held to 4 million
+# triangles (3MF peaks near 6.5 GB there), ASCII STL to 2 million (3.5 GB).
+READER_TRIANGLES = {"obj": 4_000_000, "ascii ply": 4_000_000, "3mf": 4_000_000, "ascii stl": 2_000_000}
 MAX_PARTS = 1_000
 MAX_NODES = 10_000
 MAX_OUTLINE_SEGMENTS = 250_000
@@ -111,13 +122,56 @@ def _read(path: Path) -> tuple[str, bytes]:
     if not path.is_file():
         raise MeshError(f"Mesh file does not exist or is not a file: {path}")
     if path.stat().st_size > MAX_INPUT_BYTES:
-        raise MeshError("Mesh file exceeds the 300 MB limit.")
+        raise MeshError(f"Mesh file exceeds the {MAX_INPUT_BYTES / 2**30:g} GB limit.")
     data = path.read_bytes()
     if len(data) > MAX_INPUT_BYTES:
-        raise MeshError("Mesh file exceeds the 300 MB limit.")
+        raise MeshError(f"Mesh file exceeds the {MAX_INPUT_BYTES / 2**30:g} GB limit.")
     if not data.strip():
         raise MeshError("Mesh file is empty.")
     return fmt, data
+
+
+def _reader(fmt: str, data: bytes) -> tuple[str, int]:
+    """The reader a file needs and its triangles, counted without parsing it: a lower bound where polygons become
+    several triangles, and 0 where it cannot be read cheaply (GLB, whose reader is light). The parsed count is
+    checked again."""
+    if fmt == "stl":
+        count = int.from_bytes(data[80:84], "little")
+        if len(data) >= 84 and len(data) == 84 + 50 * count:
+            return "stl", count
+        return "ascii stl", data.count(b"endfacet")
+    if fmt == "obj":
+        return "obj", data.count(b"\nf ") + data.count(b"\nf\t") + data.startswith((b"f ", b"f\t"))
+    if fmt == "ply":
+        end = data.find(b"end_header", 0, 1 << 16)
+        header = data[:max(end, 0)]
+        faces = re.search(rb"(?m)^element[ \t]+face[ \t]+(\d+)", header)
+        return "ascii ply" if re.search(rb"(?m)^format[ \t]+ascii", header) else "ply", int(faces[1]) if faces else 0
+    if fmt == "3mf":
+        count = 0
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                for name in archive.namelist():
+                    if not name.lower().endswith(".model"):
+                        continue
+                    with archive.open(name) as stream:
+                        # The tail is shorter than the tag, so no tag is counted twice across chunks.
+                        tail = b""
+                        while chunk := stream.read(1 << 24):
+                            block = tail + chunk
+                            count += block.count(b"<triangle ")
+                            tail = block[-9:]
+        except Exception:  # A damaged archive is left to the reader to report.
+            pass
+        return "3mf", count
+    return fmt, 0
+
+
+def _too_many(reader: str, limit: int) -> MeshError:
+    if limit == MAX_TRIANGLES:
+        return MeshError(f"The file has more than {limit:,} triangles.")
+    return MeshError(f"The file has more than {limit:,} triangles, the most the viewer reads from {reader.upper()}; "
+                     f"as binary STL or PLY it opens up to {MAX_TRIANGLES:,}.")
 
 
 def _stl(data: bytes, stem: str) -> list[SourcePart]:
@@ -292,83 +346,129 @@ def _frame(fmt: str, declared: str | None, extent: float, units: str, up: str) -
     }
 
 
+def _chunks(count: int):
+    """Row slices of CHUNK_ROWS, for per-row work whose temporaries would otherwise be the size of the mesh."""
+    return (slice(start, start + CHUNK_ROWS) for start in range(0, count, CHUNK_ROWS))
+
+
 def _weld(positions: np.ndarray, triangles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    # Merge exactly equal float32 vertices only; near misses stay apart and show up as open edges.
-    positions = np.ascontiguousarray(positions + np.float32(0))
+    # Merge exactly equal float32 vertices only; near misses stay apart and show up as open edges. The caller hands
+    # positions over, so -0 becomes 0 in place, and every array is freed once it has been used.
+    positions = np.ascontiguousarray(positions)
+    positions += np.float32(0)
     bits = positions.view(np.uint32).reshape(-1, 3)
     # Sorting one 64-bit hash is much faster than sorting 12-byte records; a stable sort keeps the first copy first.
     with np.errstate(over="ignore"):
-        hashed = bits[:, 0].astype(np.uint64) * np.uint64(0x9E3779B97F4A7C15)
-        hashed ^= bits[:, 1].astype(np.uint64) * np.uint64(0xC2B2AE3D27D4EB4F)
-        hashed ^= bits[:, 2].astype(np.uint64) * np.uint64(0x165667B19E3779F9)
-    order = np.argsort(hashed, kind="stable")
-    ordered = bits[order]
-    differs = np.any(ordered[1:] != ordered[:-1], axis=1)
-    if np.any(differs & (hashed[order][1:] == hashed[order][:-1])):
+        hashed = bits[:, 0].astype(np.uint64)
+        hashed *= np.uint64(0x9E3779B97F4A7C15)
+        for column, factor in ((1, 0xC2B2AE3D27D4EB4F), (2, 0x165667B19E3779F9)):
+            mixed = bits[:, column].astype(np.uint64)
+            mixed *= np.uint64(factor)
+            hashed ^= mixed
+    del mixed
+    # Indices fit in 32 bits; holding them that way keeps the sorted copy within the sort's own peak.
+    order = np.argsort(hashed, kind="stable").astype(np.int32)
+    hashed = hashed[order]
+    collides = hashed[1:] == hashed[:-1]
+    del hashed
+    # Column by column, the records need no sorted copy.
+    differs = np.zeros(len(order) - 1, dtype=bool)
+    for column in range(3):
+        values = bits[order, column]
+        differs |= values[1:] != values[:-1]
+    del values
+    if np.any(differs & collides):
         order = np.lexsort((bits[:, 2], bits[:, 1], bits[:, 0]))
         ordered = bits[order]
         differs = np.any(ordered[1:] != ordered[:-1], axis=1)
-    del hashed, ordered
+        del ordered
+    del collides
     starts = np.r_[True, differs]
     del differs
-    group = np.cumsum(starts, dtype=np.int32) - 1
+    group = np.cumsum(starts, dtype=np.int32)
+    group -= 1
     first = order[starts]
+    del starts
     rank = np.argsort(np.argsort(first)).astype(np.int32)
     inverse = np.empty(len(positions), dtype=np.int32)
     inverse[order] = rank[group]
     del order, group, rank
     welded = inverse[triangles]
+    del inverse
     used = np.zeros(len(first), dtype=bool)
     used[welded.ravel()] = True
-    remap = np.cumsum(used) - 1
+    remap = np.cumsum(used, dtype=np.int32) - 1
     return positions[np.sort(first)][used], remap[welded].astype(np.uint32)
 
 
 def _analyse(label: str, positions: np.ndarray, triangles: np.ndarray, warnings: list[str]) -> dict:
-    # Peak memory matters at millions of triangles: gather corners per column, keep edge work in 32 bits
-    # except the 64-bit edge key, and free each array once it has been used.
-    a, b, c = (positions[triangles[:, corner]].astype(np.float64) for corner in range(3))
-    cross = np.cross(b - a, c - a)
-    doubled = np.linalg.norm(cross, axis=1)
+    # Peak memory matters at millions of triangles: work per row in chunks, keep edge work in 32 bits except the
+    # 64-bit edge key, and free each array once it has been used. Chunking changes no result: each row is computed
+    # alone, and the area and volume sums still run over whole arrays.
+    def corner(faces, index: int) -> np.ndarray:
+        return positions[triangles[faces, index]].astype(np.float64)
+
+    a = corner(slice(None), 0)
+    cross = np.empty((len(triangles), 3))
+    for rows in _chunks(len(triangles)):
+        cross[rows] = np.cross(corner(rows, 1) - a[rows], corner(rows, 2) - a[rows])
     signed_volume = float(np.einsum("ij,ij->", a, cross) / 6)
-    del a, b, c
+    del a
+    doubled = np.linalg.norm(cross, axis=1)
+    del cross
     extent = float(np.linalg.norm(positions.max(axis=0) - positions.min(axis=0))) or 1.0
     repeated = (triangles[:, 0] == triangles[:, 1]) | (triangles[:, 1] == triangles[:, 2]) | (triangles[:, 2] == triangles[:, 0])
     degenerate = repeated | (doubled <= 1e-12 * extent * extent)
     # A triangle with a repeated corner is a line or a point: it bounds nothing, so it takes no part in the edge
     # pairing (it would otherwise pair its one real edge with itself); it is still reported as zero-area.
     valid = np.flatnonzero(~repeated).astype(np.int32)
+    del repeated
     kept = triangles[valid]
+    # Edge k runs from corner k % 3 of triangle valid[k // 3] to the next corner.
     start = kept.ravel()
     end = kept[:, [1, 2, 0]].ravel()
     del kept
-    owner = np.repeat(valid, 3)
     forward = start < end
-    low, high = np.minimum(start, end), np.maximum(start, end)
+    key = np.minimum(start, end).astype(np.int64)
+    key *= len(positions)
+    key += np.maximum(start, end)
     del start, end
-    key = low.astype(np.int64) * len(positions) + high
-    order = np.argsort(key, kind="stable")
+    order = np.argsort(key, kind="stable").astype(np.int32)
     key = key[order]
     starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    # Each edge's two vertices are its key's quotient and remainder.
+    edges = key[starts]
     del key
-    counts = np.diff(np.r_[starts, len(order)])
-    first = order[starts]
-    pairs = np.stack([low[first], high[first]], axis=1).astype(np.uint32)
-    del low, high, first
+    pairs = np.empty((len(starts), 2), dtype=np.uint32)
+    np.floor_divide(edges, len(positions), out=pairs[:, 0], casting="unsafe")
+    np.remainder(edges, len(positions), out=pairs[:, 1], casting="unsafe")
+    del edges
+    counts = np.diff(starts, append=len(order))
     open_edges = pairs[counts == 1]
     overshared = pairs[counts > 2]
     two = counts == 2
-    side_a, side_b = order[starts[two]], order[starts[two] + 1]
+    del counts
+    starts = starts[two]
+    side_a = order[starts]
+    starts += 1
+    side_b = order[starts]
     del order, starts
     same_way = forward[side_a] == forward[side_b]
     del forward
     flipped = pairs[two][same_way]
-    # Only edges with exactly two triangles need their normals compared.
-    face_a, face_b = owner[side_a], owner[side_b]
-    del owner, side_a, side_b
-    unit = lambda faces: cross[faces] / np.where(doubled[faces] > 0, doubled[faces], 1)[:, None]
-    cosine = np.einsum("ij,ij->i", unit(face_a), unit(face_b))
-    del cross, face_a, face_b
+    # Only edges with exactly two triangles need their normals compared. Each triangle's normal is computed again,
+    # exactly as above, so no normals the size of the mesh are kept.
+    face_a, face_b = valid[side_a // 3], valid[side_b // 3]
+    del valid, side_a, side_b
+
+    def unit(faces):
+        a = corner(faces, 0)
+        return np.cross(corner(faces, 1) - a, corner(faces, 2) - a) / np.where(doubled[faces] > 0, doubled[faces], 1)[:, None]
+
+    cosine = np.empty(len(face_a))
+    for rows in _chunks(len(face_a)):
+        cosine[rows] = np.einsum("ij,ij->i", unit(face_a[rows]), unit(face_b[rows]))
+    del face_a, face_b
     sharp = ~same_way & (cosine < math.cos(math.radians(FEATURE_ANGLE_DEGREES)))
     outlines = np.concatenate([pairs[two][sharp], open_edges])
     if len(outlines) > min(MAX_OUTLINE_SEGMENTS, max(2_000, MAX_OUTLINE_SHARE * len(pairs))):
@@ -407,6 +507,10 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
         raise MeshError("Up must be auto, z or y.")
     path = Path(path)
     fmt, data = _read(path)
+    reader, counted = _reader(fmt, data)
+    limit = min(MAX_TRIANGLES, READER_TRIANGLES.get(reader, MAX_TRIANGLES))
+    if counted > limit:
+        raise _too_many(reader, limit)
     sha256 = hashlib.sha256(data).hexdigest()
     name = name or path.name
     stem = Path(name).stem
@@ -420,14 +524,15 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
         nodes = [SourceNode(part.label, index, np.eye(4)) for index, part in enumerate(parts)]
     else:
         parts, nodes, declared = _scene(data, fmt, stem, warnings)
-    # Binary STL vertices are views of the file's bytes; those go once each part has been converted.
+    # trimesh keeps the file's bytes in reference cycles; collect them before the large arrays are made.
     del data
+    gc.collect()
     if not parts or not nodes:
         raise MeshError("The file contains no triangles.")
     if len(parts) > MAX_PARTS or len(nodes) > MAX_NODES:
         raise MeshError("The file has more parts or placements than the viewer supports.")
-    if sum(len(part.triangles) for part in parts) > MAX_TRIANGLES:
-        raise MeshError(f"The file has more than {MAX_TRIANGLES:,} triangles.")
+    if sum(len(part.triangles) for part in parts) > limit:
+        raise _too_many(reader, limit)
     for part in parts:
         if not len(part.triangles) or not np.isfinite(part.vertices).all():
             raise MeshError(f"{part.label}: no triangles, or a vertex that is not a finite number.")
@@ -441,13 +546,19 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
     inverse = np.linalg.inv(transform)
 
     mesh_parts = []
+    unchanged = scale == 1 and frame["up"] == "z"
     for index, part in enumerate(parts):
-        unchanged = scale == 1 and frame["up"] == "z"
-        positions = part.vertices.astype(np.float32) if unchanged else ((part.vertices * scale) @ rotation.T).astype(np.float32)
+        # The source vertices go as soon as they are converted, in chunks: the rotation is a signed permutation, so
+        # every row's result is exact whichever rows it is computed with.
+        vertices, part.vertices = part.vertices, None
+        positions = np.empty(vertices.shape, dtype=np.float32)
+        for rows in _chunks(len(positions)):
+            positions[rows] = vertices[rows] if unchanged else (vertices[rows] * scale) @ rotation.T
+        del vertices
         if not np.isfinite(positions).all():
             raise MeshError(f"{part.label}: coordinates overflow after unit conversion.")
         positions, triangles = _weld(positions, part.triangles)
-        part.vertices = part.triangles = None
+        part.triangles = None
         facts = _analyse(part.label, positions, triangles, warnings)
         mesh_parts.append(MeshPart(
             label=part.label, positions=positions, triangles=triangles,
@@ -471,38 +582,41 @@ BUFFERS = ("positions", "indices", "outlines", "openEdges", "oversharedEdges", "
 
 
 def write(document: MeshDocument, output_dir: Path) -> None:
-    """Write model.json and geometry.bin for the Explorer; both are complete before either is used."""
-    chunks: list[bytes] = []
+    """Write model.json and geometry.bin for the Explorer; both are complete before either is used.
+
+    Each array is written and hashed as it is, so the geometry is never held a second time as bytes.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
     offset = 0
     parts = []
-    for index, part in enumerate(document.parts):
-        arrays = dict(zip(BUFFERS, (
-            part.positions.astype("<f4"), part.triangles.astype("<u4"), part.outlines.astype("<u4"),
-            part.open_edges.astype("<u4"), part.overshared_edges.astype("<u4"), part.flipped_edges.astype("<u4"),
-            part.degenerate_triangles.astype("<u4"),
-        )))
-        buffers = {}
-        for name, array in arrays.items():
-            raw = np.ascontiguousarray(array).ravel().tobytes()
-            buffers[name] = {"offset": offset, "count": int(array.size)}
-            chunks.append(raw)
-            offset += len(raw)
-        parts.append({
-            "id": f"mesh:{index + 1}", "label": part.label, "color": [float(value) for value in part.color],
-            "bounds": part.bounds, "vertexCount": int(len(part.positions)), "triangleCount": int(len(part.triangles)),
-            "area": part.area, "volume": part.volume, "closed": part.closed, "sectionCaps": part.closed,
-            "faults": {
-                "openEdges": int(len(part.open_edges)), "oversharedEdges": int(len(part.overshared_edges)),
-                "flippedEdges": int(len(part.flipped_edges)), "degenerateTriangles": int(len(part.degenerate_triangles)),
-            },
-            "buffers": buffers, "faces": [],
-        })
-    geometry = b"".join(chunks)
+    with (output_dir / "geometry.bin").open("wb") as geometry:
+        for index, part in enumerate(document.parts):
+            buffers = {}
+            for name, array in zip(BUFFERS, (
+                part.positions, part.triangles, part.outlines, part.open_edges, part.overshared_edges,
+                part.flipped_edges, part.degenerate_triangles,
+            )):
+                raw = np.ascontiguousarray(array, dtype="<f4" if name == "positions" else "<u4").reshape(-1).view(np.uint8)
+                buffers[name] = {"offset": offset, "count": int(array.size)}
+                digest.update(raw)
+                geometry.write(raw)
+                offset += raw.size
+            parts.append({
+                "id": f"mesh:{index + 1}", "label": part.label, "color": [float(value) for value in part.color],
+                "bounds": part.bounds, "vertexCount": int(len(part.positions)), "triangleCount": int(len(part.triangles)),
+                "area": part.area, "volume": part.volume, "closed": part.closed, "sectionCaps": part.closed,
+                "faults": {
+                    "openEdges": int(len(part.open_edges)), "oversharedEdges": int(len(part.overshared_edges)),
+                    "flippedEdges": int(len(part.flipped_edges)), "degenerateTriangles": int(len(part.degenerate_triangles)),
+                },
+                "buffers": buffers, "faces": [],
+            })
     manifest = {
         "schemaVersion": 2, "kind": "mesh",
         "source": {"name": document.name, "sha256": document.sha256, "format": document.format},
         "units": "mm", "frame": document.frame,
-        "geometry": {"bytes": len(geometry), "sha256": hashlib.sha256(geometry).hexdigest()},
+        "geometry": {"bytes": offset, "sha256": digest.hexdigest()},
         "parts": parts,
         "nodes": [{
             "id": f"node:{index + 1}", "label": node.label, "parentId": None, "partId": f"mesh:{node.part + 1}",
@@ -511,8 +625,6 @@ def write(document: MeshDocument, output_dir: Path) -> None:
         "bounds": document.bounds, "warnings": document.warnings,
     }
     payload = json.dumps(manifest, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "geometry.bin").write_bytes(geometry)
     (output_dir / "model.json").write_bytes(payload)
 
 
