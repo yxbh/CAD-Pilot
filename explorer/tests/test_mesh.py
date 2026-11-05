@@ -218,11 +218,26 @@ def test_counts_before_parsing_find_every_triangle_tag_and_ply_header(tmp_path, 
     import io
     import zipfile
 
+    tags = ('<triangle v1="0" v2="1" v3="2"/><m:triangle\nv1="0" v2="1" v3="2"/><triangles></triangles>'
+            '<p:triangle\tv1="0" v2="1" v3="2"/><é:triangle v1="0" v2="1" v3="2"></é:triangle><triangle/>'
+            f'<{"q" * 300}:triangle v1="0" v2="1" v3="2"/>')
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as files:
-        files.writestr("3D/3dmodel.model", '<triangle v1="0" v2="1" v3="2"/><m:triangle\nv1="0" v2="1" v3="2"/><triangles></triangles>')
-        files.writestr("3D/Objects/object_1.model", '<p:triangle\tv1="0" v2="1" v3="2"/>')
-    assert mesh._reader("3mf", archive.getvalue()) == ("3mf", 3, 0)
+        files.writestr("3D/0.model", "x" * 64)
+        files.writestr("3D/3dmodel.model", tags)
+        files.writestr("3D/Objects/object_1.model", tags)
+    # The stored first member no longer matches its CRC; the others still count.
+    damaged = archive.getvalue().replace(b"x" * 64, b"y" * 64)
+    for size in range(1, 40):
+        monkeypatch.setattr(mesh, "COUNT_BYTES", size)
+        assert mesh._reader("3mf", damaged) == ("3mf", 12, 0), f"{size}-byte chunks split or repeat no tag"
+    monkeypatch.undo()
+    # 3MF is UTF-8, which is what is counted; other encodings are not read.
+    utf16 = tmp_path / "utf16.3mf"
+    with zipfile.ZipFile(utf16, "w") as files:
+        files.writestr("3D/3dmodel.model", '<?xml version="1.0" encoding="UTF-16"?><model/>'.encode("utf-16"))
+    with pytest.raises(mesh.MeshError, match="Could not read 3D/3dmodel.model"):
+        mesh.load(utf16)
     header = b"ply\nformat ascii 1.0\n" + b"comment padding\n" * 8000 + b"element vertex 48\nelement face 12\nend_header\n"
     assert mesh._reader("ply", header) == ("ascii ply", 12, 48), "A header longer than 64 KB is still read"
     path = tmp_path / "spare.ply"
