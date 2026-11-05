@@ -47,8 +47,12 @@ MAX_INPUT_BYTES = LIMITS["maxBytes"]
 MAX_TRIANGLES = LIMITS["maxTriangles"]
 # The text and XML readers take far more: OBJ 350 to 740 bytes per triangle, ASCII PLY 650, 3MF 1,600 (trimesh
 # builds an XML tree) and ASCII STL 1,750. Their files are counted before they are parsed and held to 4 million
-# triangles (3MF peaks near 6.5 GB there), ASCII STL to 2 million (3.5 GB).
+# triangles (3MF peaks near 6.5 GB there), ASCII STL to 2 million (3.5 GB). Their memory also grows with vertex
+# lines and text, about 10 bytes per file byte, so they keep a 300 MB file limit.
 READER_TRIANGLES = {"obj": 4_000_000, "ascii ply": 4_000_000, "3mf": 4_000_000, "ascii stl": 2_000_000}
+READER_BYTES = 300 * 1024 * 1024
+# A 3MF triangle, with or without a namespace prefix; the match is far shorter than the 256 bytes kept between chunks.
+TRIANGLE_TAG = re.compile(rb"<(?:[\w.-]{1,64}:)?triangle\s")
 MAX_PARTS = 1_000
 MAX_NODES = 10_000
 MAX_OUTLINE_SEGMENTS = 250_000
@@ -131,40 +135,51 @@ def _read(path: Path) -> tuple[str, bytes]:
     return fmt, data
 
 
-def _reader(fmt: str, data: bytes) -> tuple[str, int]:
-    """The reader a file needs and its triangles, counted without parsing it: a lower bound where polygons become
-    several triangles, and 0 where it cannot be read cheaply (GLB, whose reader is light). The parsed count is
-    checked again."""
+def _limit(reader: str) -> int:
+    return min(MAX_TRIANGLES, READER_TRIANGLES.get(reader, MAX_TRIANGLES))
+
+
+def _reader(fmt: str, data: bytes) -> tuple[str, int, int]:
+    """The reader a file needs, its triangles and its vertices, counted without parsing it. Triangles are a lower
+    bound where polygons become several triangles, except that a 3MF's unplaced objects count too, and 0 where they
+    cannot be read cheaply (GLB, whose reader is light); vertices are counted only in PLY, 0 elsewhere. The parsed
+    triangles are checked again."""
     if fmt == "stl":
         count = int.from_bytes(data[80:84], "little")
         if len(data) >= 84 and len(data) == 84 + 50 * count:
-            return "stl", count
-        return "ascii stl", data.count(b"endfacet")
+            return "stl", count, 0
+        return "ascii stl", data.count(b"endfacet"), 0
     if fmt == "obj":
-        return "obj", data.count(b"\nf ") + data.count(b"\nf\t") + data.startswith((b"f ", b"f\t"))
+        return "obj", data.count(b"\nf ") + data.count(b"\nf\t") + data.startswith((b"f ", b"f\t")), 0
     if fmt == "ply":
-        end = data.find(b"end_header", 0, 1 << 16)
+        end = data.find(b"end_header")
         header = data[:max(end, 0)]
-        faces = re.search(rb"(?m)^element[ \t]+face[ \t]+(\d+)", header)
-        return "ascii ply" if re.search(rb"(?m)^format[ \t]+ascii", header) else "ply", int(faces[1]) if faces else 0
+        reader = "ascii ply" if re.search(rb"(?m)^format[ \t]+ascii", header) else "ply"
+        counts = [re.search(rb"(?m)^element[ \t]+" + element + rb"[ \t]+(\d+)", header) for element in (b"face", b"vertex")]
+        return reader, *(int(found[1]) if found else 0 for found in counts)
     if fmt == "3mf":
-        count = 0
+        count, cap = 0, _limit("3mf")
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 for name in archive.namelist():
+                    if count > cap:
+                        break
                     if not name.lower().endswith(".model"):
                         continue
                     with archive.open(name) as stream:
-                        # The tail is shorter than the tag, so no tag is counted twice across chunks.
-                        tail = b""
-                        while chunk := stream.read(1 << 24):
-                            block = tail + chunk
-                            count += block.count(b"<triangle ")
-                            tail = block[-9:]
+                        # Each chunk is counted up to its last "<", the rest with the next, so no tag is split.
+                        rest = b""
+                        while count <= cap and (chunk := stream.read(1 << 24)):
+                            block = rest + chunk
+                            cut = block.rfind(b"<", max(len(block) - 256, 0))
+                            cut = len(block) if cut < 0 else cut
+                            count += len(TRIANGLE_TAG.findall(block, 0, cut))
+                            rest = block[cut:]
+                        count += len(TRIANGLE_TAG.findall(rest))
         except Exception:  # A damaged archive is left to the reader to report.
             pass
-        return "3mf", count
-    return fmt, 0
+        return "3mf", count, 0
+    return fmt, 0, 0
 
 
 def _too_many(reader: str, limit: int) -> MeshError:
@@ -435,7 +450,8 @@ def _analyse(label: str, positions: np.ndarray, triangles: np.ndarray, warnings:
     del start, end
     order = np.argsort(key, kind="stable").astype(np.int32)
     key = key[order]
-    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    # Cut to the keys so a part with no valid triangle has no edges.
+    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]][:len(key)])
     # Each edge's two vertices are its key's quotient and remainder.
     edges = key[starts]
     del key
@@ -507,10 +523,17 @@ def load(path: str | Path, units: str = "auto", up: str = "auto", name: str | No
         raise MeshError("Up must be auto, z or y.")
     path = Path(path)
     fmt, data = _read(path)
-    reader, counted = _reader(fmt, data)
-    limit = min(MAX_TRIANGLES, READER_TRIANGLES.get(reader, MAX_TRIANGLES))
+    reader, counted, vertices = _reader(fmt, data)
+    limit = _limit(reader)
+    if reader in READER_TRIANGLES and len(data) > READER_BYTES:
+        raise MeshError(f"Mesh file exceeds the {READER_BYTES / 2**20:g} MB limit for {reader.upper()}; as binary STL "
+                        f"or PLY it opens up to {MAX_INPUT_BYTES / 2**30:g} GB.")
     if counted > limit:
         raise _too_many(reader, limit)
+    # A PLY declares its vertices, which cost about as much as triangles; more than three per triangle go unused.
+    if vertices > 3 * limit:
+        raise MeshError(f"The file has more than {3 * limit:,} vertices, three for each of the {limit:,} triangles "
+                        f"the viewer reads from {reader.upper()}.")
     sha256 = hashlib.sha256(data).hexdigest()
     name = name or path.name
     stem = Path(name).stem
