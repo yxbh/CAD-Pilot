@@ -191,6 +191,49 @@ def test_triangle_limit_is_checked_before_analysis(tmp_path, monkeypatch):
         mesh.load(binary_stl(tmp_path / "box.stl", BOX.vertices, BOX.faces))
 
 
+@pytest.mark.parametrize("extension, options, reader", [
+    ("3mf", {}, "3mf"), ("obj", {}, "obj"), ("ply", {"encoding": "ascii"}, "ascii ply"), ("stl", {"file_type": "stl_ascii"}, "ascii stl"),
+])
+def test_heavy_readers_are_held_to_their_caps_before_they_parse(tmp_path, monkeypatch, extension, options, reader):
+    path = tmp_path / f"box.{extension}"
+    BOX.export(path, **options)
+    assert mesh._reader(extension, path.read_bytes())[:2] == (reader, 12)
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 12)
+    assert len(mesh.load(path).parts[0].triangles) == 12, "A file at its cap opens"
+    for parser in ("_stl", "_obj", "_scene"):
+        monkeypatch.setattr(mesh, parser, lambda *args: pytest.fail("parsed a file over its reader's cap"))
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 11)
+    with pytest.raises(mesh.MeshError, match=f"11 triangles, the most the viewer reads from {reader.upper()}"):
+        mesh.load(path)
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 12)
+    monkeypatch.setattr(mesh, "READER_BYTES", path.stat().st_size - 1)
+    with pytest.raises(mesh.MeshError, match=f"MB limit for {reader.upper()}"):
+        mesh.load(path)
+
+
+def test_counts_before_parsing_find_every_triangle_tag_and_ply_header(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as files:
+        files.writestr("3D/3dmodel.model", '<triangle v1="0" v2="1" v3="2"/><m:triangle\nv1="0" v2="1" v3="2"/><triangles></triangles>')
+        files.writestr("3D/Objects/object_1.model", '<p:triangle\tv1="0" v2="1" v3="2"/>')
+    assert mesh._reader("3mf", archive.getvalue()) == ("3mf", 3, 0)
+    header = b"ply\nformat ascii 1.0\n" + b"comment padding\n" * 8000 + b"element vertex 48\nelement face 12\nend_header\n"
+    assert mesh._reader("ply", header) == ("ascii ply", 12, 48), "A header longer than 64 KB is still read"
+    path = tmp_path / "spare.ply"
+    trimesh.Trimesh(np.vstack([BOX.vertices, np.zeros((40, 3))]), BOX.faces, process=False).export(path)
+    monkeypatch.setattr(mesh, "MAX_TRIANGLES", 12)
+    with pytest.raises(mesh.MeshError, match="more than 36 vertices"):
+        mesh.load(path)
+
+
+def test_a_part_of_only_repeated_corners_is_all_zero_area(tmp_path):
+    part = mesh.load(binary_stl(tmp_path / "line.stl", [[0, 0, 0], [1, 0, 0]], [[0, 0, 1]])).parts[0]
+    assert part.degenerate_triangles.tolist() == [0] and not part.closed
+
+
 def plate(tmp_path) -> Path:
     from build123d import Box, BuildPart, BuildSketch, Cylinder, Locations, Mode, Plane, SlotOverall, export_stl, extrude
 
