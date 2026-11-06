@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { link, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { importDiagnostics } from "../shared/diagnostics.mjs";
@@ -8,12 +9,19 @@ import { PrototypeError, topologyRevision, validateMeasuredCleanup, validateMesh
 import { markUsed } from "./runtime-store.mjs";
 
 export const maxStepBytes = 100 * 1024 * 1024;
-export const maxMeshBytes = 300 * 1024 * 1024;
-const maxJsonBytes = 160 * 1024 * 1024;
+// A converted STEP model's JSON; a mesh's manifest is small and its geometry file is bounded by its triangles.
+export const maxJsonBytes = 160 * 1024 * 1024;
+// The mesh reader (python/mesh.py) reads the same file, so the two can never disagree.
+const meshLimits = JSON.parse(readFileSync(new URL("../shared/mesh-limits.json", import.meta.url), "utf8"));
+export const maxMeshBytes = meshLimits.maxBytes;
+// The geometry file holds per triangle at most 3 vertices (36 bytes), 3 indices (12), 3 fault edges (24), a zero-area
+// flag (4) and, while outlines are drawn, 0.3 outline edges (2.4); each of up to 1,000 parts may add 2,000 outline edges.
+export const maxMeshGeometryBytes = meshLimits.maxTriangles * 80 + 16 * 1024 * 1024;
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 export const maxSourceBytes = (format) => format === "step" ? maxStepBytes : maxMeshBytes;
-const sizeLimit = (format) => format === "step" ? "a STEP file smaller than 100 MB" : "a mesh file smaller than 300 MB";
+const sizeText = (bytes) => bytes >= 2 ** 30 ? `${bytes / 2 ** 30} GB` : `${bytes / 2 ** 20} MB`;
+const sizeLimit = (format) => format === "step" ? `a STEP file smaller than ${sizeText(maxStepBytes)}` : `a mesh file smaller than ${sizeText(maxMeshBytes)}`;
 
 export function sourceFormat(file) {
   const format = modelFormat(file);

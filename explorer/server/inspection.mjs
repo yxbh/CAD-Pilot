@@ -5,7 +5,7 @@ import { createReference, describeSelection, parseReference, referenceEntity } f
 import { multiply } from "../shared/matrix.mjs";
 import { nativeFileReference, nativeReferenceTitle } from "../shared/native-reference.mjs";
 import { pointOnTriangle, pointTolerance } from "../shared/mesh.mjs";
-import { meshGeometryFile } from "./model-import.mjs";
+import { maxJsonBytes, maxMeshBytes, maxMeshGeometryBytes, maxStepBytes, meshGeometryFile } from "./model-import.mjs";
 import { PrototypeError, validateModel } from "./protocol.mjs";
 import { atomicJson } from "./storage.mjs";
 import { workbenchRoot as checkout } from "./paths.mjs";
@@ -15,9 +15,9 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 export const REFERENCE_FORMATS = Object.freeze(["copilot-ref", "text"]);
 const message = (error) => error instanceof Error ? error.message : String(error);
 
-const modelLimit = 160 * 1024 * 1024;
-const sourceLimits = { step: 100 * 1024 * 1024, mesh: 300 * 1024 * 1024 };
-const geometryLimit = 1024 * 1024 * 1024;
+const modelLimit = maxJsonBytes;
+const sourceLimits = { step: maxStepBytes, mesh: maxMeshBytes };
+const geometryLimit = maxMeshGeometryBytes;
 const shortLabel = (value) => {
   const text = String(value);
   // Copy a truncated label so a V8 substring cannot keep the original, potentially huge label alive.
@@ -27,7 +27,7 @@ const shortLabel = (value) => {
 /**
  * Private, fully validated inspection facts: 4 entries / 64 MiB accounted retention by default; source digests: 64 entries / 256 KiB.
  * Accounting charges eight times serialized fact bytes (minimum 4 KiB/entry); it excludes transient cold JSON parsing and hashing work, not subject to this retention bound.
- * Mesh arrays and STEP bytes are not retained. The 160 MiB JSON / 100 MiB STEP input limits still apply, and oversized fact entries inspect without being retained.
+ * Mesh arrays and STEP bytes are not retained. The model-import JSON and source limits still apply, and oversized fact entries inspect without being retained.
  * cacheLimits can lower/disable either LRU; cacheStats exposes deterministic local counters. These bounds and synthetic timings do not certify large assemblies or total process memory.
  */
 const meshFacts = (cached, part) => ({

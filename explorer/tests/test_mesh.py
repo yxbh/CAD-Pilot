@@ -47,6 +47,9 @@ def test_formats_keep_parts_names_and_placements(tmp_path, extension):
         assert lid.matrix[:3, 3] == pytest.approx([50 * document.frame["scale"], 0, 0])
     else:
         assert [node.label for node in document.nodes] == ["pair"]
+    single = tmp_path / f"single.{extension}"
+    BOX.export(single)
+    assert [part.label for part in mesh.load(single).parts] == ["single"], "An unnamed mesh is called after its file"
 
 
 def test_frames_come_from_the_file_its_format_or_its_size(tmp_path):
@@ -189,6 +192,107 @@ def test_triangle_limit_is_checked_before_analysis(tmp_path, monkeypatch):
     monkeypatch.setattr(mesh, "MAX_TRIANGLES", 11)
     with pytest.raises(mesh.MeshError, match="triangles"):
         mesh.load(binary_stl(tmp_path / "box.stl", BOX.vertices, BOX.faces))
+
+
+@pytest.mark.parametrize("extension, options, reader", [
+    ("3mf", {}, "3mf"), ("obj", {}, "obj"), ("ply", {"encoding": "ascii"}, "ascii ply"), ("stl", {"file_type": "stl_ascii"}, "ascii stl"),
+])
+def test_heavy_readers_are_held_to_their_caps_before_they_parse(tmp_path, monkeypatch, extension, options, reader):
+    path = tmp_path / f"box.{extension}"
+    BOX.export(path, **options)
+    assert mesh._reader(extension, path.read_bytes())[:2] == (reader, 12)
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 12)
+    assert len(mesh.load(path).parts[0].triangles) == 12, "A file at its cap opens"
+    for parser in ("_stl", "_obj", "_3mf", "_scene"):
+        monkeypatch.setattr(mesh, parser, lambda *args: pytest.fail("parsed a file over its reader's cap"))
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 11)
+    with pytest.raises(mesh.MeshError, match=f"11 triangles, the most the viewer reads from {reader.upper()}"):
+        mesh.load(path)
+    monkeypatch.setitem(mesh.READER_TRIANGLES, reader, 12)
+    monkeypatch.setattr(mesh, "READER_BYTES", path.stat().st_size - 1)
+    with pytest.raises(mesh.MeshError, match=f"MB limit for {reader.upper()}"):
+        mesh.load(path)
+
+
+def test_counts_before_parsing_find_every_triangle_tag_and_ply_header(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    tags = ('<triangle v1="0" v2="1" v3="2"/><m:triangle\nv1="0" v2="1" v3="2"/><triangles></triangles>'
+            '<p:triangle\tv1="0" v2="1" v3="2"/><é:triangle v1="0" v2="1" v3="2"></é:triangle><triangle/>'
+            f'<{"q" * 300}:triangle v1="0" v2="1" v3="2"/>')
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as files:
+        files.writestr("3D/0.model", "x" * 64)
+        files.writestr("3D/3dmodel.model", tags)
+        files.writestr("3D/Objects/object_1.model", tags)
+    # The stored first member no longer matches its CRC; the others still count.
+    damaged = archive.getvalue().replace(b"x" * 64, b"y" * 64)
+    for size in range(1, 40):
+        monkeypatch.setattr(mesh, "COUNT_BYTES", size)
+        assert mesh._reader("3mf", damaged) == ("3mf", 12, 0), f"{size}-byte chunks split or repeat no tag"
+    monkeypatch.undo()
+    # 3MF is UTF-8, which is what is counted; other encodings are not read.
+    utf16 = tmp_path / "utf16.3mf"
+    with zipfile.ZipFile(utf16, "w") as files:
+        files.writestr("3D/3dmodel.model", '<?xml version="1.0" encoding="UTF-16"?><model/>'.encode("utf-16"))
+    with pytest.raises(mesh.MeshError, match="Could not read 3D/3dmodel.model"):
+        mesh.load(utf16)
+    header = b"ply\nformat ascii 1.0\n" + b"comment padding\n" * 8000 + b"element vertex 48\nelement face 12\nend_header\n"
+    assert mesh._reader("ply", header) == ("ascii ply", 12, 48), "A header longer than 64 KB is still read"
+    path = tmp_path / "spare.ply"
+    trimesh.Trimesh(np.vstack([BOX.vertices, np.zeros((40, 3))]), BOX.faces, process=False).export(path)
+    monkeypatch.setattr(mesh, "MAX_TRIANGLES", 12)
+    with pytest.raises(mesh.MeshError, match="more than 36 vertices"):
+        mesh.load(path)
+
+
+def test_components_in_an_object_file_place_only_their_own_object(tmp_path, monkeypatch):
+    import zipfile
+
+    # Bambu Studio's layout: the build places an assembly whose components point into an object file. That file's
+    # ids are its own, so its object 1 is not the root's assembly 1.
+    def obj(index, shape):
+        vertices = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in shape.vertices)
+        triangles = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in shape.faces)
+        return f'<object id="{index}" name="Body" type="model"><mesh><vertices>{vertices}</vertices><triangles>{triangles}</triangles></mesh></object>'
+
+    cylinder = trimesh.creation.cylinder(5, 10)
+    spaces = ('xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+              'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"')
+    root = (f'<model unit="millimeter" {spaces}><resources><object id="1" type="model"><components>'
+            '<component p:path="/3D/Objects/object_1.model" objectid="1"/>'
+            '<component p:path="/3D/Objects/object_1.model" objectid="2" transform="1 0 0 0 1 0 0 0 1 40 0 0"/>'
+            '<component p:path="/3D/Objects/object_2.xml" objectid="1"/>'
+            '</components></object></resources><build>'
+            '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 100 0"/><item objectid="1"/></build></model>')
+    path = tmp_path / "plate.3mf"
+    with zipfile.ZipFile(path, "w") as files:
+        files.writestr("3D/3dmodel.model", root)
+        files.writestr("3D/Objects/object_1.model", f"<model {spaces}><resources>{obj(1, BOX)}{obj(2, cylinder)}</resources></model>")
+        # Not a .model file, so it is neither counted before parsing nor read.
+        files.writestr("3D/Objects/object_2.xml", f"<model {spaces}><resources>{obj(1, BOX)}</resources></model>")
+    # Four parts placed through two assemblies, with eight placements in all, is exactly at the limits.
+    monkeypatch.setattr(mesh, "MAX_NODES", 4)
+    document = mesh.load(path)
+    assert [(part.label, len(part.triangles)) for part in document.parts] == [("Body", 12), ("Body_1", len(cylinder.faces))]
+    assert all(part.closed for part in document.parts) and document.parts[0].volume == pytest.approx(6000)
+    assert [(node.label, node.part, node.matrix[:3, 3].tolist()) for node in document.nodes] == [
+        ("Body", 0, [0, 100, 0]), ("Body_1", 1, [40, 100, 0]), ("Body_2", 0, [0, 0, 0]), ("Body_1_1", 1, [40, 0, 0])]
+    assert document.warnings == ["3D/Objects/object_2.xml: object 1 is placed but not defined, so it is not shown."]
+    assert mesh._reader("3mf", path.read_bytes())[1] == sum(len(part.triangles) for part in document.parts)
+    loop = tmp_path / "loop.3mf"
+    itself = '<component objectid="1"/>' * 1000
+    with zipfile.ZipFile(loop, "w") as files:
+        files.writestr("3D/3dmodel.model", f'<model {spaces}><resources><object id="1"><components>{itself}</components>'
+                                           '</object></resources><build><item objectid="1"/></build></model>')
+    with pytest.raises(mesh.MeshError, match="more parts or placements"):
+        mesh.load(loop)
+
+
+def test_a_part_of_only_repeated_corners_is_all_zero_area(tmp_path):
+    part = mesh.load(binary_stl(tmp_path / "line.stl", [[0, 0, 0], [1, 0, 0]], [[0, 0, 1]])).parts[0]
+    assert part.degenerate_triangles.tolist() == [0] and not part.closed
 
 
 def plate(tmp_path) -> Path:
