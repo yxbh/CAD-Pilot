@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Model, generate, inspect and validate CAD parts and assemblies as build123d Python and STEP files with CAD-Pilot's tools, in any design project. Use for designing or changing a physical part, enclosure, bracket, fixture, mold or assembly from a description, photo or drawing; writing build123d source; generating STEP/STP, STL, 3MF or DXF; measuring, mating, clearance and hygiene checks on a STEP, including one from elsewhere; @cad references; and 3D-print handoff to Bambu Studio (project 3MFs, slicing checks, print orientation, fit coupons, hole and contour compensation).
+description: Model, generate, inspect and validate CAD parts and assemblies as build123d Python and STEP files with CAD-Pilot's tools, in any design project. Use for designing or changing a physical part, enclosure, bracket, fixture, mold or assembly from a description, photo, drawing or 3D scan; writing build123d source; generating STEP/STP, STL, 3MF or DXF; measuring, mating, clearance and hygiene checks on a STEP, including one from elsewhere; @cad references; and 3D-print handoff to Bambu Studio (project 3MFs, slicing checks, print orientation, fit coupons, hole and contour compensation).
 ---
 
 # CAD generation, inspection, and validation
@@ -63,6 +63,7 @@ Do not ask the user for JSON or a template. Convert their prose, photos or drawi
 ## Progressive references
 
 - `references/natural-language-specs.md`: turning prose, reference images and technical drawings into a CAD brief; when to ask.
+- `references/scan-to-cad.md`: rebuilding a part from a 3D scan: measuring it in ScanRuler to an agreed tolerance, fillet fits, missing datums and curved profiles, rounding to design values, comparing the model with the scan, and fired-clay shrinkage.
 - `references/step-generation.md`: generators, project imports, part names, direct STEP targets and the solid check.
 - `references/inspection-and-validation.md`: choosing checks; `@cad[...]` refs, facts and planes, parts, hygiene, clearance across poses, measure, mate, frame, diff, Python checks on the saved STEP and reporting.
 - `references/positioning.md`: part-local datums, transforms, build123d joints, and what `mate` and `measure` do and do not show.
