@@ -1,4 +1,4 @@
-import { OrthographicCamera, PerspectiveCamera, Vector3 } from "three";
+import { MathUtils, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { center, diagonal, type Bounds, type Vec3 } from "./model.ts";
 import type { CameraState } from "./host.ts";
 import { angleView } from "../shared/view-settings.mjs";
@@ -16,8 +16,8 @@ export const axisViews: { id: ViewPreset; axis: string; label: string; color: st
   { id: "top", axis: "+Z", label: "Top view (+Z)", color: "#82b5ff", direction: [0, 0, 1], up: [0, 1, 0] },
   { id: "bottom", axis: "-Z", label: "Bottom view (-Z)", color: "#82b5ff", direction: [0, 0, -1], up: [0, 1, 0] },
 ];
-// OrbitControls keeps the camera at least 1e-6 rad from its poles; stay clear of that clamp.
-const poleTilt = 1e-5;
+const worldZ = new Vector3(0, 0, 1);
+const localX = new Vector3(1, 0, 0);
 
 export function viewHeight(camera: ViewCamera, target: Vector3): number {
   return camera instanceof OrthographicCamera
@@ -83,7 +83,8 @@ export class CameraController {
     this.target.set(...center(bounds));
     const distance = radius / Math.sin(Math.atan(Math.tan(this.perspective.fov * Math.PI / 360) * Math.min(this.aspect, 1))) * 1.18;
     this.camera.position.copy(this.target).addScaledVector(direction, distance);
-    this.level(new Vector3(...(axis?.up ?? [0, 0, 1] as Vec3)));
+    if (axis && Math.hypot(direction.x, direction.y) < 1e-12) this.camera.up.set(...axis.up);
+    else this.camera.up.copy(worldZ);
     this.camera.near = Math.max(radius / 2000, 0.0001);
     this.camera.far = Math.max(radius * 100, distance * 4);
     this.camera.zoom = 1;
@@ -95,7 +96,12 @@ export class CameraController {
     this.camera = snapshot.projection === "orthographic" ? this.orthographic : this.perspective;
     this.camera.position.set(...snapshot.position);
     this.target.set(...snapshot.target);
-    this.level(new Vector3(...snapshot.up));
+    this.camera.up.set(...snapshot.up);
+    // Old snapshots usually specify world Z, not screen-up. At an exact pole they may give no heading at all.
+    const back = this.camera.position.clone().sub(this.target).normalize();
+    if (back.clone().cross(this.camera.up).lengthSq() < 1e-24) {
+      this.camera.up.copy(Math.abs(back.z) > 0.9 ? new Vector3(0, 1, 0) : worldZ);
+    }
     this.camera.zoom = 1;
     if (snapshot.projection === "orthographic" && snapshot.viewHeight) this.setOrthoHeight(snapshot.viewHeight);
     const distance = this.camera.position.distanceTo(this.target);
@@ -103,18 +109,42 @@ export class CameraController {
     this.camera.far = Math.max(distance * 100, 2000);
     this.update();
   }
-  // OrbitControls turns around camera.up, so world Z stays up and drags spin the model like a turntable.
-  // A view straight along Z tilts imperceptibly toward its screen bottom to keep the requested screen orientation.
-  private level(screenUp: Vector3) {
-    const offset = this.camera.position.clone().sub(this.target);
-    const distance = offset.length();
-    const horizontal = new Vector3(screenUp.x, screenUp.y, 0);
-    if (Math.hypot(offset.x, offset.y) < distance * poleTilt && horizontal.lengthSq() > 0) {
-      const side = Math.sign(offset.z);
-      offset.copy(horizontal.setLength(-side * Math.sin(poleTilt))).setZ(side * Math.cos(poleTilt));
-      this.camera.position.copy(this.target).addScaledVector(offset, distance);
+  orbit(yaw: number, pitch: number) {
+    const c = this.camera;
+    const radius = c.position.distanceTo(this.target);
+    // World yaw, local pitch: screen-right remains defined at either pole, even when looking straight down.
+    c.quaternion.premultiply(new Quaternion().setFromAxisAngle(worldZ, yaw));
+    c.rotateOnAxis(localX, pitch);
+    c.quaternion.normalize();
+    c.position.set(0, 0, radius).applyQuaternion(c.quaternion).add(this.target);
+    c.up.set(0, 1, 0).applyQuaternion(c.quaternion);
+    c.updateMatrixWorld();
+  }
+  // Distances in fractions of the viewport height, positive right/up in the image.
+  pan(right: number, up: number) {
+    const offset = new Vector3(right, up, 0).multiplyScalar(viewHeight(this.camera, this.target)).applyQuaternion(this.camera.quaternion);
+    this.target.add(offset);
+    this.camera.position.add(offset);
+    this.camera.updateMatrixWorld();
+  }
+  zoomAt(factor: number, right: number, up: number) {
+    const c = this.camera;
+    const before = viewHeight(c, this.target);
+    if (c instanceof OrthographicCamera) {
+      const zoom = MathUtils.clamp(c.zoom / factor, 0.02, 500);
+      if (zoom === c.zoom) return false;
+      c.zoom = zoom;
+      c.updateProjectionMatrix();
+    } else {
+      const distance = c.position.distanceTo(this.target);
+      const radius = MathUtils.clamp(distance * factor, c.near * 10, c.far * 0.4);
+      if (radius === distance) return false;
+      c.position.set(0, 0, radius).applyQuaternion(c.quaternion).add(this.target);
     }
-    this.camera.up.set(0, 0, 1);
+    // Keep the point in the target plane under the cursor/pinch centre.
+    const shift = before / viewHeight(c, this.target) - 1;
+    this.pan(right * shift, up * shift);
+    return true;
   }
   update() {
     this.camera.lookAt(this.target);

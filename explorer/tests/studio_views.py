@@ -63,9 +63,8 @@ def run(url, output):
                 camera = current["rendered"]["camera"]
                 delta = [p - t for p, t in zip(camera["position"], camera["target"])]
                 length = math.sqrt(sum(value * value for value in delta))
-                # Top and bottom sit 1e-5 rad off the pole so the orbit keeps world Z up.
-                assert max(abs(value / length - expected) for value, expected in zip(delta, direction)) < 1e-4, (label, camera)
-                assert camera["up"] == [0, 0, 1], (label, camera)
+                assert max(abs(value / length - expected) for value, expected in zip(delta, direction)) < 1e-8, (label, camera)
+                assert camera["up"] == ([0, 1, 0] if direction[2] else [0, 0, 1]), (label, camera)
                 assert current["rendered"]["inFrame"], label
                 page.get_by_role("button", name=label, exact=True).hover()
                 expect(page.get_by_role("tooltip").filter(has_text=label)).to_be_visible()
