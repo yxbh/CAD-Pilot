@@ -45,6 +45,15 @@ test("commands preserve unrelated state and reject invalid IDs", () => {
   assert.throws(() => changeView(exploded, model, "set_explode", { amount: NaN }), /between/);
   assert.throws(() => changeView(exploded, model, "fit_view", { expectedRevision: 0 }), /changed/);
 });
+test("a group's id is refused as a group, naming where the ids of its parts are listed", () => {
+  const grouped = { ...model, nodes: [{ id: "g", partId: null, parentId: null, matrix: identity }, ...model.nodes.map((node) => ({ ...node, parentId: "g" }))] };
+  const group = /^Unknown part: g is a group of parts, not a part\. Give the ids of the parts in it; the full state \(state --full, or get_state detail=full\) lists every part's id and label under parts\.$/;
+  for (const [command, input] of [["set_visibility", { ids: ["a", "g"], visible: false }], ["select_parts", { ids: ["g"] }], ["isolate", { id: "g" }]]) {
+    assert.throws(() => changeView(initialState(), grouped, command, input), (error) => error.code === "unknown_part" && group.test(error.message));
+  }
+  assert.throws(() => changeView(initialState(), grouped, "isolate", { id: "missing" }), /^Error: Unknown part: missing$/);
+  assert.deepEqual(changeView(initialState(), grouped, "set_visibility", { ids: ["a"], visible: false }).hiddenIds, ["a"]);
+});
 test("visibility and reset are independent", () => {
   const hidden = changeView(initialState(), model, "set_visibility", { ids: ["b"], visible: false });
   const exploded = changeView(hidden, model, "set_explode", { amount: 1 });

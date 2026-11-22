@@ -91,8 +91,12 @@ export function changeView(state, model, name, input = {}) {
   if (!model || state.loading) throw new PrototypeError("not_ready", "Wait for STEP conversion to finish", 409);
   const valid = new Set(model.nodes.filter((node) => node.partId).map((node) => node.id));
   const requireId = (id) => {
-    if (typeof id !== "string" || !valid.has(id)) throw new PrototypeError("unknown_part", `Unknown part: ${String(id)}`);
-    return id;
+    if (typeof id === "string" && valid.has(id)) return id;
+    // A group's id names no part: the parts in it are shown, hidden and selected by their own ids.
+    if (model.nodes.some((node) => node.id === id && !node.partId)) {
+      throw new PrototypeError("unknown_part", `Unknown part: ${id} is a group of parts, not a part. Give the ids of the parts in it; the full state (state --full, or get_state detail=full) lists every part's id and label under parts.`);
+    }
+    throw new PrototypeError("unknown_part", `Unknown part: ${String(id)}`);
   };
   const ids = () => {
     if (!Array.isArray(input.ids) || input.ids.length > MAX_PART_IDS) throw new PrototypeError("bad_selection", `Expected at most ${MAX_PART_IDS} part IDs`);

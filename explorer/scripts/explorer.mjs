@@ -10,6 +10,7 @@ import { projectOutput, renderOnce, saveCopy } from "../server/render-once.mjs";
 import { pruneRuntime } from "../server/runtime-store.mjs";
 import { cameraSummary, revisionLabel } from "../server/summary.mjs";
 import { ANALYSIS_MAPS, parseDirection } from "../shared/analysis.mjs";
+import { VIEW_PRESETS } from "../shared/view-settings.mjs";
 
 export { actionInput };
 
@@ -59,6 +60,11 @@ const COMMAND_FLAGS = {
   open: ["units", "up"], state: ["full"], do: ["full"], capture: ["size", "background", "full", ...ANALYSIS_FLAGS, ...TRACE_FLAGS], stop: [], inspect: [], actions: [],
   prune: ["dry-run", "all", "copilot"],
   render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide", ...ANALYSIS_FLAGS, ...TRACE_FLAGS],
+};
+// The view action that does what a render option does, for a capture, which draws the view as it is.
+const VIEW_ACTIONS = {
+  hide: "set_visibility", section: "set_section", explode: "set_explode", step: "set_step", projection: "set_projection",
+  appearance: "set_appearance", finish: "set_appearance", outlines: "set_appearance",
 };
 // The most arguments each command reads; open and render say what theirs are, and do and inspect take any number.
 const MOST_ARGUMENTS = { state: 0, stop: 0, actions: 0, prune: 0, capture: 1 };
@@ -201,9 +207,37 @@ export async function referenceFrom(text) {
   return parsed.reference;
 }
 
+// A camera as render's --view spells it, as the set_view input that turns the view to it; undefined for any other text.
+function cameraInput(text) {
+  if (VIEW_PRESETS.includes(text)) return `preset=${text}`;
+  const angle = /^(-?[\d.]+):(-?[\d.]+)$/.exec(text);
+  return angle ? `azimuth=${angle[1]} elevation=${angle[2]}` : undefined;
+}
+
+// An action's input, refused when it has a key the action does not read or lacks one it needs: the viewer reads
+// only the keys it knows, so a misspelt one would otherwise be dropped without a word.
+export function checkedInput(name, input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PrototypeError("bad_arguments", "Action input must be key=value pairs or one JSON object");
+  const { properties, required } = COMMANDS[name].inputSchema;
+  const unknown = Object.keys(input).filter((key) => !Object.hasOwn(properties, key));
+  const missing = required.filter((key) => input[key] === undefined);
+  if (!unknown.length && !missing.length) return input;
+  const problems = [unknown.length ? `does not take ${unknown.join(", ")}` : "", missing.length ? `needs ${missing.join(", ")}` : ""].filter(Boolean).join(" and ");
+  const inputs = Object.keys(properties).filter((key) => key !== "expectedRevision").map((key) => required.includes(key) ? `${key} (required)` : key);
+  throw new PrototypeError("bad_arguments", `${name} ${problems}. ${inputs.length ? `Its inputs: ${inputs.join(", ")}` : "It takes no input"}.`);
+}
+
 async function viewer(location) {
   const running = await runningViewer(location);
-  if (!running) throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file>", 409);
+  if (!running) {
+    // Only render reads --view as a camera; every other command reads it as the name of a saved setup.
+    const camera = location.viewId !== defaultViewId && cameraInput(location.viewId);
+    if (camera) {
+      throw new PrototypeError("not_running", `No Explorer viewer is running for a setup named "${location.viewId}". Here --view names a saved setup, not a camera: `
+        + `turn the view with do set_view ${camera} and leave --view out, or use render, whose --view is the camera.`, 409);
+    }
+    throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file>", 409);
+  }
   if (foreignCheckout(running.record)) {
     throw new PrototypeError("other_checkout", `This project's viewer was started from another workbench (${running.record.explorerRoot ?? "an earlier version"}). Run open from this workbench to restart it here.`, 409);
   }
@@ -216,7 +250,11 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   const { command, args, viewId, flags } = parseArguments(argv);
   if (command === "help") return USAGE;
   const unread = Object.keys(flags).filter((flag) => flags[flag] !== undefined && COMMAND_FLAGS[command] && !COMMAND_FLAGS[command].includes(flag));
-  if (unread.length) throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.`);
+  if (unread.length) {
+    const actions = command === "capture" ? [...new Set(unread.map((flag) => VIEW_ACTIONS[flag]).filter(Boolean))] : [];
+    const hint = actions.length ? ` capture draws the view as it is: change it first with ${actions.map((name) => `do ${name}`).join(", ")}, or use render, which takes these options.` : "";
+    throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.${hint}`);
+  }
   if (args.length > MOST_ARGUMENTS[command]) {
     throw new PrototypeError("bad_arguments", `${command} takes ${MOST_ARGUMENTS[command] ? "one path" : "no arguments"}, got ${args.join(" ")}`);
   }
@@ -248,14 +286,18 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
     return open(location, args[0], options);
   }
   if (command === "stop") return stopViewer(location);
+  // A view action's name and input are checked before the viewer is asked, so a mistake is named whether or not one runs.
+  const action = command === "do" ? args[0] : undefined;
+  if (command === "do" && !actionNames().includes(action)) throw new PrototypeError("unknown_action", `Unknown view action "${action ?? ""}". Run "actions" to list them.`);
+  const actionArguments = command === "do" ? checkedInput(action, actionInput(args.slice(1))) : undefined;
   const { record } = await viewer(location);
   const detail = flags.full ? "full" : "summary";
   if (command === "state") return call(record, `api/state?detail=${detail}`);
-  if (command === "capture" || (command === "do" && args[0] === "capture_image")) {
+  if (command === "capture" || action === "capture_image") {
     const out = command === "capture" ? args[0] : undefined;
     const target = out && await projectOutput(location.project, out);
     const input = command === "capture"
-      ? { ...imageSize(flags.size), background: flags.background, analysis: analysisOptions(flags), ...traceOptions(flags) } : actionInput(args.slice(1));
+      ? { ...imageSize(flags.size), background: flags.background, analysis: analysisOptions(flags), ...traceOptions(flags) } : actionArguments;
     const result = await call(record, "api/capture", input);
     const saved = target ? { saved: await saveCopy(location.project, result.path, target) } : {};
     if (flags.full) return { ...result, ...saved };
@@ -267,11 +309,8 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
     };
   }
   if (command === "do") {
-    const [name, ...inputArgs] = args;
-    if (!actionNames().includes(name)) throw new PrototypeError("unknown_action", `Unknown view action "${name ?? ""}". Run "actions" to list them.`);
-    const input = actionInput(inputArgs);
-    if (name === "get_state") return call(record, `api/state?detail=${input.detail ?? detail}`);
-    return sendCommand(record, name, input, { detail });
+    if (action === "get_state") return call(record, `api/state?detail=${actionArguments.detail ?? detail}`);
+    return sendCommand(record, action, actionArguments, { detail });
   }
   throw new PrototypeError("bad_arguments", `Unknown command "${command}"\n\n${USAGE}`);
 }
