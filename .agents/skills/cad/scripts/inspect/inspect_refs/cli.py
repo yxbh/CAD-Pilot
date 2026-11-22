@@ -502,7 +502,8 @@ def _format_diff_text(result: dict[str, object], *, quiet: bool, verbose: bool) 
     fields = ("topologyChanged", "geometryChanged", "bboxChanged", "kindChanged")
     lines = [", ".join(f"{field}={diff.get(field)}" for field in fields)]
     if not quiet:
-        lines.append(f"faceDelta={diff.get('faceCountDelta')} edgeDelta={diff.get('edgeCountDelta')}")
+        counts = diff.get("countDelta") if isinstance(diff.get("countDelta"), dict) else {}
+        lines.append(f"faceDelta={counts.get('faceCount')} edgeDelta={counts.get('edgeCount')}")
     if verbose:
         lines.append(f"sizeDelta={diff.get('sizeDelta')} centerDelta={diff.get('centerDelta')}")
     return "\n".join(lines)

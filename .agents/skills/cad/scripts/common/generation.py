@@ -40,7 +40,7 @@ from common.cli_logging import CliLogger
 from common.generator_module import GeneratorImportError, call_generator, load_generator
 from common.issued_refs import forget, issued_step_hash, mark
 from common.paths import command_line_path, relative_path
-from common.solid_check import KernelCheck, cheap_findings
+from common.solid_check import TIME_SCALE_VARIABLE, KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
 from common.glb_topology import read_step_topology_manifest_from_glb
 from common.metadata import (
@@ -223,7 +223,9 @@ def _resolve_step_option_output_path(
         raise StepInputError(f"{field_name} must be a non-empty path")
     pure = relative_path(value)
     if pure is None:
-        raise StepInputError(f"{field_name} must be relative")
+        raise StepInputError(
+            f"{field_name} takes a path relative to the STEP's folder, not an absolute one: {value}"
+        )
     resolved = (base_step_path.resolve().parent / Path(*pure.parts)).resolve()
     if resolved.suffix.lower() not in expected_suffixes:
         joined = " or ".join(expected_suffixes)
@@ -241,14 +243,14 @@ def _apply_step_options_to_spec(spec: EntrySpec, step_options: StepImportOptions
             step_options.stl,
             base_step_path=spec.step_path,
             expected_suffixes=(".stl",),
-            field_name="stl",
+            field_name="--stl",
         )
     if step_options.three_mf is not None:
         three_mf_path = _resolve_step_option_output_path(
             step_options.three_mf,
             base_step_path=spec.step_path,
             expected_suffixes=(".3mf",),
-            field_name="3mf",
+            field_name="--3mf",
         )
     return replace(
         spec,
@@ -494,6 +496,22 @@ def _normalize_step_payload(
     )
 
 
+# Envelope fields that are accepted, so an older generator still runs, and not used.
+_IGNORED_STEP_ENVELOPE_FIELDS = ("step_output", "stl", "3mf", "mesh_tolerance", "mesh_angular_tolerance")
+
+
+def _warn_ignored_envelope_fields(result: object, *, script_path: Path, logger: CliLogger) -> None:
+    if not isinstance(result, dict):
+        return
+    ignored = [field for field in _IGNORED_STEP_ENVELOPE_FIELDS if field in result]
+    if ignored:
+        logger.warning(
+            f"{_display_path(script_path)} gen_step() returned {', '.join(ignored)}, which scripts/step ignores: "
+            "choose outputs and mesh settings on the command line (-o, --stl, --3mf, --mesh-tolerance, "
+            "--mesh-angular-tolerance)."
+        )
+
+
 def _normalize_dxf_payload(result: object, *, script_path: Path) -> dict[str, object]:
     if isinstance(result, dict):
         allowed_fields = {"document", "dxf_output"}
@@ -596,6 +614,7 @@ def run_script_generator(
 
     if generator_name == "gen_step":
         envelope = _normalize_step_payload(raw_payload, script_path=spec.script_path)
+        _warn_ignored_envelope_fields(raw_payload, script_path=spec.script_path, logger=logger)
         if spec.step_path is None:
             raise RuntimeError(f"{spec.source_ref} has no configured STEP output")
         if spec.kind == "part":
@@ -1079,7 +1098,9 @@ def _generate_step_outputs(
 
 
 _UNSOUND_CONSEQUENCE = "Slicers and later booleans may fail on it; the outputs were still written."
-_SKIP_HINT = "Pass --no-solid-check to skip the check."
+_SKIP_HINT = (
+    f"Set {TIME_SCALE_VARIABLE} above 1 to give the check more time, or pass --no-solid-check to skip it."
+)
 
 
 def _unsound_reason(faults: Sequence[str]) -> str:
@@ -1278,9 +1299,14 @@ def _validate_dxf_target(spec: EntrySpec) -> None:
 
 
 def _generated_output_summary(spec: EntrySpec) -> str:
-    if spec.step_path is not None:
-        return f"generated {spec.kind} STEP: {_display_path(spec.step_path)}"
-    return f"processed: {spec.source_ref}"
+    """One line for the STEP and one for each sidecar, saying where it was written."""
+    if spec.step_path is None:
+        return f"processed: {spec.source_ref}"
+    lines = [f"generated {spec.kind} STEP: {_display_path(spec.step_path)}"]
+    for name, path in (("STL", spec.stl_path), ("3MF", spec.three_mf_path)):
+        if path is not None:
+            lines.append(f"generated {name}: {_display_path(path)}")
+    return "\n".join(lines)
 
 
 def _generated_dxf_summary(spec: EntrySpec) -> str:
@@ -1324,7 +1350,8 @@ def _run_selected_specs(
                         result = action(spec)
             results.append(result)
             if success_message is not None:
-                logger.info(success_message(spec))
+                for line in success_message(spec).splitlines():
+                    logger.info(line)
         return results
     status_board = InlineStatusBoard(
         [spec.source_ref for spec in selected_specs],

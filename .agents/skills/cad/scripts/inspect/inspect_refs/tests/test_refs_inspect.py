@@ -712,6 +712,20 @@ class InspectRefsTests(unittest.TestCase):
         self.assertEqual(1, len(result["diff"]["leftMajorPlanes"]))
         self.assertEqual(1, len(result["diff"]["rightMajorPlanes"]))
 
+    def test_diff_text_reports_the_count_deltas(self) -> None:
+        with self._mock_glb_topology(_refs_manifest(self.cad_ref)):
+            result = refs_inspect.diff_entry_targets(f"@cad[{self.cad_ref}]", f"@cad[{self.cad_ref}]")
+
+        self.assertEqual(
+            [
+                "topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False",
+                "faceDelta=0 edgeDelta=0",
+            ],
+            inspect_cli._format_diff_text(result, quiet=False, verbose=False).splitlines(),
+        )
+        result["diff"]["countDelta"].update(faceCount=2, edgeCount=-3)
+        self.assertIn("faceDelta=2 edgeDelta=-3", inspect_cli._format_diff_text(result, quiet=False, verbose=False))
+
     def test_cli_parses_current_agentic_commands(self) -> None:
         parser = inspect_cli.build_parser()
 

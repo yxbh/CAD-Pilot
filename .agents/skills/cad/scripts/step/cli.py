@@ -42,13 +42,13 @@ def _add_step_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--stl",
         metavar="OUTPUT",
-        help="Export an STL sidecar to this relative .stl path.",
+        help="Export an STL sidecar to this .stl path, relative to the STEP's folder, not the current folder.",
     )
     parser.add_argument(
         "--3mf",
         dest="three_mf",
         metavar="OUTPUT",
-        help="Export a 3MF sidecar to this relative .3mf path.",
+        help="Export a 3MF sidecar to this .3mf path, relative to the STEP's folder, not the current folder.",
     )
     parser.add_argument(
         "--mesh-tolerance",

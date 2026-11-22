@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -16,6 +17,7 @@ from common import issued_refs
 from common import render as cad_render
 from common import catalog as cad_catalog
 from common.catalog import StepImportOptions
+from common.cli_logging import CliLogger
 from common.step_scene import SelectorBundle
 from common.tests.cad_test_roots import IsolatedCadRoots
 
@@ -470,6 +472,29 @@ class CadGenerationTests(unittest.TestCase):
             self.assertEqual(["Bộ ấm trà"], [root.name for root in loaded.roots])
             self.assertEqual(labels, [node.name for node in loaded.roots[0].children])
 
+    def test_step_generator_warns_about_envelope_fields_it_ignores(self) -> None:
+        script_path = self._generator_script("flat", stl="flat.stl", mesh_tolerance=0.2)
+        spec = next(spec for spec in cad_generation.list_entry_specs() if spec.cad_ref == self._cad_ref("flat"))
+        stream = io.StringIO()
+
+        cad_generation.run_script_generator(spec, "gen_step", logger=CliLogger("scripts/step", stream=stream))
+
+        self.assertEqual(
+            [
+                f"[scripts/step] warning: {cad_generation._display_path(script_path)} gen_step() returned "
+                "step_output, stl, mesh_tolerance, which scripts/step ignores: choose outputs and mesh settings "
+                "on the command line (-o, --stl, --3mf, --mesh-tolerance, --mesh-angular-tolerance)."
+            ],
+            stream.getvalue().splitlines(),
+        )
+        self.assertFalse(script_path.with_suffix(".stl").exists())
+
+        for payload in ({"shape": object()}, {"children": []}, object()):
+            cad_generation._warn_ignored_envelope_fields(
+                payload, script_path=script_path, logger=CliLogger("scripts/step", stream=stream)
+            )
+        self.assertEqual(1, len(stream.getvalue().splitlines()))
+
     def test_bare_assembly_children_return_is_supported(self) -> None:
         self._write_step("leaf")
         script_path = self.temp_root / "bare_assembly.py"
@@ -923,6 +948,46 @@ class CadGenerationTests(unittest.TestCase):
                 direct_step_kind="part",
                 step_options=self._step_options(three_mf="source.txt"),
             )
+
+    def test_direct_step_refuses_an_absolute_sidecar_path_naming_the_flag_and_its_base(self) -> None:
+        step_path = self._write_step("source")
+        script_path = self._generator_script("generated")
+        stl, three_mf = str(self.temp_root / "source.stl"), str(self.temp_root / "source.3mf")
+
+        for options, flag, path in (
+            (self._step_options(stl=stl), "--stl", stl),
+            (self._step_options(three_mf=three_mf), "--3mf", three_mf),
+        ):
+            refusal = f"{flag} takes a path relative to (the STEP's|that file's) folder, not an absolute one: {re.escape(path)}$"
+            with self.assertRaisesRegex(ValueError, refusal):
+                cad_generation.generate_step_targets([str(step_path)], direct_step_kind="part", step_options=options)
+            with self.assertRaisesRegex(ValueError, refusal):
+                cad_generation.generate_step_targets([str(script_path)], step_options=options)
+
+    def test_step_run_reports_where_each_sidecar_was_written(self) -> None:
+        (self.temp_root / "out").mkdir()
+        step_path = self._write_step_at(self.temp_root / "out", "source")
+        stderr = io.StringIO()
+
+        with (
+            mock.patch.object(cad_generation, "_generate_step_outputs"),
+            contextlib.redirect_stderr(stderr),
+        ):
+            cad_generation.generate_step_targets(
+                [str(step_path)],
+                direct_step_kind="part",
+                step_options=self._step_options(stl="out/source.stl", three_mf="../source.3mf"),
+            )
+
+        shown = cad_generation._display_path
+        self.assertEqual(
+            [
+                f"[scripts/step] generated part STEP: {shown(step_path)}",
+                f"[scripts/step] generated STL: {shown(self.temp_root / 'out/out/source.stl')}",
+                f"[scripts/step] generated 3MF: {shown(self.temp_root / 'source.3mf')}",
+            ],
+            stderr.getvalue().splitlines(),
+        )
 
     def test_direct_step_allows_file_relative_parent_stl(self) -> None:
         step_path = self._write_step("source")
