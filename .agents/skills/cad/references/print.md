@@ -61,7 +61,7 @@ When the file is missing, ask the user, one plain question at a time, which prin
 
 ## Print jobs
 
-A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file, with either separator, so a job written on Windows also works on macOS; a root or drive is refused. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`. For a handoff, put the parts the user is to print together in one job, so they get one 3MF, and name each plate for what it holds and when to print it, as `Fit test - print first` does below; slice it and read every plate's result before handing the file over. A calibration coupon keeps the project of its own that `coupon --calibrate` writes.
+A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file, with either separator, so a job written on Windows also works on macOS; a root or drive is refused. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`. For a handoff, put all its parts in one job, so the user gets one 3MF, and name each plate for what it holds and when to print it, as `Fit test - print first` does below; slice it and read every plate's result before handing the file over. A calibration coupon keeps the project of its own that `coupon --calibrate` writes.
 
 ```json
 {

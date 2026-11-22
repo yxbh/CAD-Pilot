@@ -57,7 +57,7 @@ Usually proceed with a provisional assumption when:
 
 A material's typical shrinkage, like a standard table value, is a proposal for the user's process, not measured calibration. For printed fits, use the fdm-design skill.
 
-A dimension of the user's own object found on the web, such as a shop listing or a forum post, is a proposal too: put it in a named parameter and ask the user to measure the object before anything is made to fit it. A manufacturer's dimensioned drawing is read as a technical drawing, below.
+A dimension of the user's own object found on the web, whether in a shop listing, a forum post or a manufacturer's drawing, is a proposal too, since it may be for another variant or revision: put it in a named parameter and ask the user to measure the object, or to confirm the drawing is of theirs, before a part that must fit it is printed.
 
 ## Reference images
 
