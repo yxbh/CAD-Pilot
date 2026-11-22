@@ -970,10 +970,12 @@ class CadGenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, f"^--stl takes a file path relative to the STEP's folder, .*; got {re.escape(folder)}$"):
                 cad_generation.generate_step_targets([str(script_path)], step_options=self._step_options(stl=folder))
 
-    def test_step_run_refuses_one_sidecar_path_for_two_targets_in_a_folder(self) -> None:
+    def test_step_run_refuses_one_sidecar_file_for_two_targets(self) -> None:
         first, second = self._generator_script("first"), self._generator_script("second")
         (self.temp_root / "apart").mkdir()
+        (self.temp_root / "aside").mkdir()
         apart = self._write_step_at(self.temp_root / "apart", "third")
+        aside = self._write_step_at(self.temp_root / "aside", "fourth")
         generated: list[str] = []
 
         with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=lambda spec, **_: generated.append(spec.source_ref)):
@@ -982,8 +984,13 @@ class CadGenerationTests(unittest.TestCase):
                 (self._step_options(three_mf="shared.3mf"), "--3mf", "shared.3mf"),
             ):
                 shown = re.escape(cad_generation._display_path(self.temp_root / name))
-                with self.assertRaisesRegex(ValueError, f"^{flag} would write {shown} for both .*first\\.py and .*second\\.py, whose STEP files share a folder"):
+                with self.assertRaisesRegex(ValueError, f"^{flag} would write {shown} for both .*first\\.py and .*second\\.py: the path is taken beside each target's STEP"):
                     cad_generation.generate_step_targets([str(first), str(second)], step_options=options)
+            # Targets in different folders meet at one file when the path climbs out of both.
+            with self.assertRaisesRegex(ValueError, "^--stl would write .*up\\.stl for both .*third\\.step and .*fourth\\.step: "):
+                cad_generation.generate_step_targets(
+                    [str(apart), str(aside)], direct_step_kind="part", step_options=self._step_options(stl="../up.stl")
+                )
             self.assertEqual([], generated, "nothing is generated once two targets would share a file")
             # The same relative path beside STEP files in different folders names different files.
             cad_generation.generate_step_targets(

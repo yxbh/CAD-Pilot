@@ -46,16 +46,17 @@ test("commands preserve unrelated state and reject invalid IDs", () => {
   assert.throws(() => changeView(exploded, model, "fit_view", { expectedRevision: 0 }), /changed/);
 });
 test("a group's id is refused as a group, naming where the ids of its parts are listed", () => {
-  const grouped = { ...model, nodes: [{ id: "g", partId: null, parentId: null, matrix: identity }, ...model.nodes.map((node) => ({ ...node, parentId: "g" }))] };
-  const group = /^Unknown part: g is a group of parts, not a part\. Give the ids of the parts in it; the full state \(state --full, or get_state detail=full\) lists every part's id and label under parts\.$/;
+  const labels = { a: "base", b: "lid" };
+  const grouped = { ...model, nodes: [{ id: "g", label: "kit", partId: null, parentId: null, matrix: identity }, ...model.nodes.map((node) => ({ ...node, label: labels[node.id], parentId: "g" }))] };
+  const group = /^Unknown part: g is a group of parts, not a part\. Give the ids of the parts in it; the full state \(state --full, or get_state detail=full\) lists every part under parts, with its id beside its label\.$/;
   for (const [command, input] of [["set_visibility", { ids: ["a", "g"], visible: false }], ["select_parts", { ids: ["g"] }], ["isolate", { id: "g" }]]) {
     assert.throws(() => changeView(initialState(), grouped, command, input), (error) => error.code === "unknown_part" && group.test(error.message));
   }
-  // Anything else that names no part, a label included, is told that ids are needed and where they are listed.
-  const listed = "the full state (state --full, or get_state detail=full) lists every part's id and label under parts";
-  for (const id of ["missing", "lid", 7]) {
+  // Anything else that names no part (a typo, a part's label, a group's label, its shape's id) is asked for a part's id.
+  const listed = "the full state (state --full, or get_state detail=full) lists every part under parts, with its id beside its label";
+  for (const id of ["missing", "lid", "kit", "shape", 7]) {
     assert.throws(() => changeView(initialState(), grouped, "isolate", { id }),
-      { code: "unknown_part", message: `Unknown part: ${id}. Parts are named by their ids, not their labels; ${listed}.` });
+      { code: "unknown_part", message: `Unknown part: ${id}. Give a part's id; ${listed}.` });
   }
   assert.deepEqual(changeView(initialState(), grouped, "set_visibility", { ids: ["a"], visible: false }).hiddenIds, ["a"]);
 });

@@ -269,8 +269,8 @@ def _apply_step_options_to_spec(spec: EntrySpec, step_options: StepImportOptions
 def _refuse_shared_sidecar_paths(specs: Sequence[EntrySpec]) -> None:
     """Refuse a run whose targets would write one sidecar file.
 
-    A sidecar path is taken beside each target's STEP, so targets in one folder given one path share a file, and
-    only the last one's mesh would be left in it.
+    A sidecar path is taken beside each target's STEP, so targets in one folder given one path, or a ``..`` path
+    that climbs to one place, share a file, and only the last one's mesh would be left in it.
     """
     writers: dict[Path, str] = {}
     for spec in specs:
@@ -280,8 +280,9 @@ def _refuse_shared_sidecar_paths(specs: Sequence[EntrySpec]) -> None:
             first = writers.setdefault(path.resolve(), spec.source_ref)
             if first != spec.source_ref:
                 raise StepInputError(
-                    f"{flag} would write {_display_path(path)} for both {first} and {spec.source_ref}, "
-                    f"whose STEP files share a folder. Generate them one at a time, each with its own {flag} path."
+                    f"{flag} would write {_display_path(path)} for both {first} and {spec.source_ref}: the path is "
+                    f"taken beside each target's STEP, and for these two that is one file. Generate them one at a "
+                    f"time, each with its own {flag} path."
                 )
 
 

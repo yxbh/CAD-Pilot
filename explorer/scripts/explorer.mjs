@@ -220,8 +220,7 @@ function cameraInput(text) {
 export function checkedInput(name, input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PrototypeError("bad_arguments", "Action input must be key=value pairs or one JSON object");
   const { properties, required } = COMMANDS[name].inputSchema;
-  // topologyRevision guards any action against a model that has since been replaced, whether or not its schema lists it.
-  const unknown = Object.keys(input).filter((key) => !Object.hasOwn(properties, key) && key !== "topologyRevision");
+  const unknown = Object.keys(input).filter((key) => !Object.hasOwn(properties, key));
   const missing = required.filter((key) => input[key] === undefined);
   if (!unknown.length && !missing.length) return input;
   const problems = [unknown.length ? `does not take ${unknown.join(", ")}` : "", missing.length ? `needs ${missing.join(", ")}` : ""].filter(Boolean).join(" and ");

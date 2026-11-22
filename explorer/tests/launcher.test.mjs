@@ -142,8 +142,9 @@ test("do refuses input an action does not read or lacks, before asking the viewe
   await refused(["show_all", "fit=true"], "show_all does not take fit. It takes no input.");
   await refused(["capture_image", "size=800x600"], "capture_image does not take size. Its inputs: width, height, background, analysis, samples, seconds.");
   await refused(["set_view", "[1]"], "Expected key=value, got \"[1]\"");
-  // The viewer checks topologyRevision on any action, against a model that has since been replaced.
-  assert.deepEqual(checkedInput("show_all", { topologyRevision: "abc" }), { topologyRevision: "abc" });
+  // topologyRevision is read only where an action's inputs list it; elsewhere the viewer would not always check it.
+  await refused(["show_all", "topologyRevision=abc"], "show_all does not take topologyRevision. It takes no input.");
+  assert.deepEqual(checkedInput("select_face", { id: "a", faceId: "f1", topologyRevision: "abc" }), { id: "a", faceId: "f1", topologyRevision: "abc" });
   assert.deepEqual(checkedInput("set_step", { step: null, expectedRevision: 3 }), { step: null, expectedRevision: 3 });
   assert.deepEqual(checkedInput("show_all", {}), {});
   assert.throws(() => checkedInput("show_all", []), /key=value pairs or one JSON object/);
