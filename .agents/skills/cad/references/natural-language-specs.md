@@ -43,6 +43,8 @@ Usually ask when:
 
 - A physical object has no overall size, or its only size source is an unscaled image.
 - A part must fit, mate with or hold something whose dimensions are not given.
+- A dimension of the user's object comes from a web page, such as a listing, a manual or a forum post: use it as provisional until the user measures the object itself.
+- It is not clear what a dimension is measured between: inside or outside, centre to centre or edge to edge, with or without a lip or flange.
 - A fit or clearance matters and the process, material or printer is unknown.
 - Dimensioned sources disagree.
 - The part is safety-critical, load-bearing, pressure-bearing, food-contact, medical, or compliance-bound.

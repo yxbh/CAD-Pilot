@@ -98,7 +98,7 @@ python <cad>/scripts/inspect frame '@cad[path/to/model.step#selector]'
 python <cad>/scripts/inspect diff path/to/before.step path/to/after.step --planes
 ```
 
-`measure` gives signed offsets along one axis (spacing, plate thickness, hole-centre-to-face distances); give `--axis` for deterministic checks. It is not a clearance check. `mate` returns a read-only translation delta and the selections' direction relationship; apply any correction in source and regenerate. `frame` validates occurrence transforms and part-local-to-world conversion. Use `diff` when a repair or edit could affect unrelated geometry, and rerun the measurements that should not have changed.
+`measure` gives signed offsets along one axis (spacing, plate thickness, hole-centre-to-face distances); give `--axis` for deterministic checks. It is not a clearance check. `mate` returns a read-only translation delta and the selections' direction relationship; apply any correction in source and regenerate. `frame` validates occurrence transforms and part-local-to-world conversion. Use `diff` when a repair or edit could affect unrelated geometry, and rerun the measurements that should not have changed. `diff` proves only that nothing changed: `geometryChanged` is false for the same geometry written again, but the same shape built another way, such as an extrusion in place of a box, also reports it true, and the result does not say where a change is.
 
 ## Python checks on the saved STEP
 
