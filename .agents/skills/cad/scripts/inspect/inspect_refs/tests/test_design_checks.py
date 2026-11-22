@@ -156,6 +156,12 @@ class DesignChecksTests(unittest.TestCase):
         text = self.run_tool("inspect", "clearance", "out/cabinet.step", "--poses", "cabinet.py", "--format", "text")
         self.assertIn("overlap  cabinet/box / cabinet/drawer", text.stdout)
 
+        same = self.run_tool("inspect", "diff", "out/cabinet.step", "out/cabinet.step", "--format", "text")
+        self.assertEqual(
+            ["topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False", "faceDelta=0 edgeDelta=0"],
+            same.stdout.splitlines(),
+        )
+
     def test_unlabelled_parts_get_group_names_and_one_warning(self) -> None:
         result = self.generate("kit", UNLABELLED)
         warnings = [line for line in result.stderr.splitlines() if "warning" in line]

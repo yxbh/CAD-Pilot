@@ -467,8 +467,8 @@ def _resolve_configured_artifact_path(
         pure = relative_path(value)
         if pure is None:
             raise CadSourceError(
-                f"{_relative_to_repo(base_path)} {field_name} takes a path relative to that file's folder, "
-                f"not an absolute one: {value}"
+                f"{_relative_to_repo(base_path)} {field_name} takes a file path relative to that file's folder; "
+                f"got {value}"
             )
         resolved = (base_path.parent.resolve() / Path(*pure.parts)).resolve()
     suffix = resolved.suffix.lower()

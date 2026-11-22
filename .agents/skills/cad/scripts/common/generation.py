@@ -224,7 +224,8 @@ def _resolve_step_option_output_path(
     pure = relative_path(value)
     if pure is None:
         raise StepInputError(
-            f"{field_name} takes a path relative to the STEP's folder, not an absolute one: {value}"
+            f"{field_name} takes a file path relative to the STEP's folder, such as meshes/part{expected_suffixes[0]}; "
+            f"got {value}"
         )
     resolved = (base_step_path.resolve().parent / Path(*pure.parts)).resolve()
     if resolved.suffix.lower() not in expected_suffixes:
@@ -263,6 +264,25 @@ def _apply_step_options_to_spec(spec: EntrySpec, step_options: StepImportOptions
             else spec.mesh_angular_tolerance
         ),
     )
+
+
+def _refuse_shared_sidecar_paths(specs: Sequence[EntrySpec]) -> None:
+    """Refuse a run whose targets would write one sidecar file.
+
+    A sidecar path is taken beside each target's STEP, so targets in one folder given one path share a file, and
+    only the last one's mesh would be left in it.
+    """
+    writers: dict[Path, str] = {}
+    for spec in specs:
+        for flag, path in (("--stl", spec.stl_path), ("--3mf", spec.three_mf_path)):
+            if path is None:
+                continue
+            first = writers.setdefault(path.resolve(), spec.source_ref)
+            if first != spec.source_ref:
+                raise StepInputError(
+                    f"{flag} would write {_display_path(path)} for both {first} and {spec.source_ref}, "
+                    f"whose STEP files share a folder. Generate them one at a time, each with its own {flag} path."
+                )
 
 
 def _spec_output_paths(spec: EntrySpec) -> tuple[Path, ...]:
@@ -1099,7 +1119,7 @@ def _generate_step_outputs(
 
 _UNSOUND_CONSEQUENCE = "Slicers and later booleans may fail on it; the outputs were still written."
 _SKIP_HINT = (
-    f"Set {TIME_SCALE_VARIABLE} above 1 to give the check more time, or pass --no-solid-check to skip it."
+    f"Raise {TIME_SCALE_VARIABLE} (1 by default) to give the check more time, or pass --no-solid-check to skip it."
 )
 
 
@@ -1403,6 +1423,7 @@ def generate_step_targets(
     )
     if step_options is not None and step_options.has_metadata:
         selected_specs = [_apply_step_options_to_spec(spec, step_options) for spec in selected_specs]
+        _refuse_shared_sidecar_paths(selected_specs)
     entries_by_step_path = _entries_by_step_path([*all_specs, *selected_specs])
     _run_selected_specs(
         selected_specs,

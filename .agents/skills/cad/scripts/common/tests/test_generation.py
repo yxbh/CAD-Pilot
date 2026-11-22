@@ -958,11 +958,38 @@ class CadGenerationTests(unittest.TestCase):
             (self._step_options(stl=stl), "--stl", stl),
             (self._step_options(three_mf=three_mf), "--3mf", three_mf),
         ):
-            refusal = f"{flag} takes a path relative to (the STEP's|that file's) folder, not an absolute one: {re.escape(path)}$"
-            with self.assertRaisesRegex(ValueError, refusal):
+            # A direct STEP target is refused when it is read into the catalog, a generated one when the flag is applied.
+            direct = f" {flag} takes a file path relative to that file's folder; got {re.escape(path)}$"
+            with self.assertRaisesRegex(ValueError, direct):
                 cad_generation.generate_step_targets([str(step_path)], direct_step_kind="part", step_options=options)
-            with self.assertRaisesRegex(ValueError, refusal):
+            generated = f"^{flag} takes a file path relative to the STEP's folder, such as meshes/part{flag[1:].replace('-', '.')}; got {re.escape(path)}$"
+            with self.assertRaisesRegex(ValueError, generated):
                 cad_generation.generate_step_targets([str(script_path)], step_options=options)
+        # A folder, or nothing at all once tidied, is no file path either, and is not called absolute.
+        for folder in (".", "..", "meshes/.."):
+            with self.assertRaisesRegex(ValueError, f"^--stl takes a file path relative to the STEP's folder, .*; got {re.escape(folder)}$"):
+                cad_generation.generate_step_targets([str(script_path)], step_options=self._step_options(stl=folder))
+
+    def test_step_run_refuses_one_sidecar_path_for_two_targets_in_a_folder(self) -> None:
+        first, second = self._generator_script("first"), self._generator_script("second")
+        (self.temp_root / "apart").mkdir()
+        apart = self._write_step_at(self.temp_root / "apart", "third")
+        generated: list[str] = []
+
+        with mock.patch.object(cad_generation, "_generate_step_outputs", side_effect=lambda spec, **_: generated.append(spec.source_ref)):
+            for options, flag, name in (
+                (self._step_options(stl="shared.stl"), "--stl", "shared.stl"),
+                (self._step_options(three_mf="shared.3mf"), "--3mf", "shared.3mf"),
+            ):
+                shown = re.escape(cad_generation._display_path(self.temp_root / name))
+                with self.assertRaisesRegex(ValueError, f"^{flag} would write {shown} for both .*first\\.py and .*second\\.py, whose STEP files share a folder"):
+                    cad_generation.generate_step_targets([str(first), str(second)], step_options=options)
+            self.assertEqual([], generated, "nothing is generated once two targets would share a file")
+            # The same relative path beside STEP files in different folders names different files.
+            cad_generation.generate_step_targets(
+                [str(first), str(apart)], direct_step_kind="part", step_options=self._step_options(stl="shared.stl", three_mf="shared.3mf")
+            )
+        self.assertEqual(2, len(generated))
 
     def test_step_run_reports_where_each_sidecar_was_written(self) -> None:
         (self.temp_root / "out").mkdir()

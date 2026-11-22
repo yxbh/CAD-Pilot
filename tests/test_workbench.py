@@ -285,6 +285,9 @@ def test_cli_exports_reopen(tmp_path, output_directory):
     env = {**os.environ, "CAD_PILOT_CACHE": str(tmp_path / "cache")}
     built = cli_host.run(scripts / "step", "models/plate.py", "-o", step_path, "--stl", "plate.stl", "--3mf", "plate.3mf", cwd=project, env=env, timeout=120)
     assert built.returncode == 0, built.stderr
+    # The run says where it wrote the STEP and each sidecar, which is taken beside the STEP, not the current folder.
+    written = [(Path(output_directory) / name).as_posix() for name in ("plate.step", "plate.stl", "plate.3mf")]
+    assert [line.split(": ", 1)[1] for line in built.stderr.splitlines() if "] generated " in line] == written
     inspected = cli_host.run(scripts / "inspect", "refs", step_path, "--facts", "--planes", "--positioning", cwd=project, env=env, timeout=120)
     assert inspected.returncode == 0, inspected.stderr
     report = json.loads(inspected.stdout)
