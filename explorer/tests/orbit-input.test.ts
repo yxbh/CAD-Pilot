@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Vector3 } from "three";
-import { CameraController, type ViewDirection } from "../src/camera.ts";
+import { CameraController, type Projection, type ViewDirection } from "../src/camera.ts";
 import { bindOrbitInput } from "../src/orbitInput.ts";
 import type { Bounds } from "../src/model.ts";
 
@@ -30,10 +30,10 @@ function pointer(canvas: HTMLCanvasElement) {
     up() { send("pointerup"); },
   };
 }
-function setup(view: ViewDirection) {
+function setup(view: ViewDirection, projection: Projection = "perspective") {
   const rig = new CameraController();
   rig.resize(900, height);
-  rig.fit(bounds, view, "perspective");
+  rig.fit(bounds, view, projection);
   const canvas = fakeCanvas();
   bindOrbitInput(canvas, rig, () => {}, () => {});
   return { rig, mouse: pointer(canvas) };
@@ -48,13 +48,13 @@ const screenX = (rig: CameraController, point: Vector3) => point.clone().project
 test("a sideways drag moves the model's near side with the pointer, upright, upside down and from below", () => {
   // Elevation 75 or -75 dragged a twelfth of the height over its pole is upside down.
   for (const [view, crossing] of [["30:20", 0], ["30:-40", 0], ["0:75", 50], ["0:-75", -50]] as const) {
-    for (const dx of [-40, 40]) {
-      const { rig, mouse } = setup(view);
+    for (const [projection, dx] of [["perspective", -40], ["perspective", 40], ["orthographic", -40], ["orthographic", 40]] as const) {
+      const { rig, mouse } = setup(view, projection);
       if (crossing) { mouse.down(); mouse.move(0, crossing); mouse.up(); }
       assert.equal(rig.upsideDown(), crossing !== 0, view);
       const point = nearSide(rig), before = screenX(rig, point);
       mouse.down(); mouse.move(dx, 0); mouse.up();
-      assert.ok(Math.sign(screenX(rig, point) - before) === Math.sign(dx), `${view} dx ${dx}`);
+      assert.ok(Math.sign(screenX(rig, point) - before) === Math.sign(dx), `${projection} ${view} dx ${dx}`);
     }
   }
 });
