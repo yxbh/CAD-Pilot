@@ -170,7 +170,38 @@ def run(url, output):
                     page.mouse.move(x + dx, y + dy, steps=2)
                     page.mouse.up(button=button)
 
-                changed(lambda: drag("left", 76, 43))
+                if projection == "orthographic":
+                    # An incidental finger must not turn an active mouse orbit into a pinch.
+                    page.mouse.move(x, y)
+                    page.mouse.down()
+                    page.mouse.move(x + 20, y)
+                    before_touch = live()
+                    cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": True})
+                    for event, offset in [("touchStart", 50), ("touchMove", 70), ("touchEnd", None)]:
+                        points = [] if offset is None else [{"x": x + offset, "y": y, "id": 1}]
+                        cdp.send("Input.dispatchTouchEvent", {"type": event, "touchPoints": points})
+                    cdp.send("Emulation.setTouchEmulationEnabled", {"enabled": False})
+                    assert live()["position"] == before_touch["position"] and live()["zoom"] == before_touch["zoom"]
+                    # A release in another window must neither lose the drag nor leave orbit active on return.
+                    saved = changed(lambda: page.evaluate("window.dispatchEvent(new Event('blur'))"))["camera"]
+                    assert saved["position"] == before_touch["position"]
+                    page.mouse.move(x + 50, y + 10)
+                    assert live()["position"] == before_touch["position"]
+                    page.mouse.up()
+
+                # Cross each pole from the near side; latitude alone can't tell the two sides apart.
+                for sign in (-1, 1):
+                    near = command("set_view", {"azimuth": 0, "elevation": sign * 75})["rendered"]["camera"]
+                    travel = sign * round(frame["height"] / 12)
+                    crossed = changed(lambda: drag("left", 0, travel))["rendered"]["camera"]
+                    assert near["position"][1] < near["target"][1] and crossed["position"][1] > crossed["target"][1]
+                    assert crossed["up"][2] < -0.2
+                    spun = changed(lambda: drag("left", 76, 0))["rendered"]["camera"]
+                    close(spun["position"][2], crossed["position"][2], "inverted spin height")
+                    close(spun["up"][2], crossed["up"][2], "inverted spin tilt")
+                    # Upside down on the +Y side, a rightward drag still carries the near side right: the eye swings to -X.
+                    assert spun["position"][0] < crossed["position"][0] - 1
+                # Keep the inverted camera through pan, zoom, projection, capture and reload below.
                 changed(lambda: drag("right", 29, -18))
                 changed(lambda: (page.mouse.move(x, y), page.mouse.wheel(0, -100)))
                 remember()
@@ -220,6 +251,9 @@ def run(url, output):
                 fit_nonce = state()["fitNonce"]
                 resize(lambda: page.set_viewport_size({"width": 1080, "height": 760}))
                 preserved(returned, returned_live, "pre-capture resize")
+                capture = page.request.post(url + "api/capture")
+                assert capture.ok, capture.text()
+                same_camera(returned, capture.json()["camera"])
                 page.get_by_role("button", name="Draw", exact=True).click()
                 review_id = wait(lambda current: current["activeReviewId"])["activeReviewId"]
                 expect(page.get_by_label("Drawing canvas")).to_be_visible()

@@ -5,7 +5,6 @@ import {
   EdgesGeometry, FrontSide, IncrementWrapStencilOp, KeepStencilOp, Matrix4, Mesh, NotEqualStencilFunc,
   Plane, PlaneGeometry, ReplaceStencilOp,
 } from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -16,6 +15,7 @@ import { prioritizeEdges, visibleEdgeHits } from "./edgePicking.ts";
 import { useRenderReports } from "./useRenderReports.ts";
 import { observeGraphicsContext } from "./graphicsLifecycle.ts";
 import { CameraController, type ViewPreset } from "./camera.ts";
+import { bindOrbitInput } from "./orbitInput.ts";
 import { AxisIndicator, createAxisStore, type AxisStore } from "./AxisIndicator.tsx";
 import StudioStage from "./Studio.tsx";
 import { appearanceFor, type MaterialFinish } from "./appearance.ts";
@@ -420,7 +420,7 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
 }) {
   const { gl, invalidate, scene, size, viewport: { dpr }, set } = useThree();
   const controller = useMemo(() => new CameraController(), []);
-  const controls = useRef<OrbitControls | null>(null);
+  const controls = useRef<ReturnType<typeof bindOrbitInput> | null>(null);
   const fitted = useRef("");
   const contextLost = useRef(false);
   const activeView = useRef(active);
@@ -473,40 +473,16 @@ function Rig({ model, state, amount, stepPosition, sectionPosition, active, head
     controller.setProjection(state.projection);
     const camera = controller.camera;
     set({ camera });
-    const orbit = new OrbitControls(camera, gl.domElement);
-    orbit.target.copy(controller.target);
-    orbit.enableDamping = false;
-    orbit.zoomToCursor = true;
-    orbit.enabled = activeView.current && !contextLost.current;
-    orbit.minDistance = camera.near * 10;
-    orbit.maxDistance = camera.far * 0.4;
-    orbit.minZoom = 0.02;
-    orbit.maxZoom = 500;
-    const changed = () => {
-      controller.target.copy(orbit.target);
+    const orbit = bindOrbitInput(gl.domElement, controller, () => {
       axes.update(camera.quaternion);
       invalidate();
-    };
-    let orbitStarted: string | null = null;
-    const started = () => { orbitStarted = JSON.stringify(controller.snapshot()); };
-    const ended = () => {
-      controller.target.copy(orbit.target);
-      const current = controller.snapshot();
-      if (activeView.current && orbitStarted !== JSON.stringify(current)) cameraChanged.current(current);
-      orbitStarted = null;
-    };
-    orbit.addEventListener("change", changed);
-    orbit.addEventListener("start", started);
-    orbit.addEventListener("end", ended);
+    }, () => { if (activeView.current) cameraChanged.current(controller.snapshot()); });
+    orbit.enabled = activeView.current && !contextLost.current;
     controls.current = orbit;
-    orbit.update();
     axes.update(camera.quaternion);
     fitted.current = fitKey;
     invalidate();
     return () => {
-      orbit.removeEventListener("change", changed);
-      orbit.removeEventListener("start", started);
-      orbit.removeEventListener("end", ended);
       orbit.dispose();
       controls.current = null;
     };

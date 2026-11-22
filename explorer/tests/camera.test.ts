@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Vector3 } from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CameraController, axisViews, viewHeight } from "../src/camera.ts";
 import { validateCamera } from "../shared/view-settings.mjs";
 import type { Bounds } from "../src/model.ts";
@@ -43,16 +42,15 @@ test("resizing only changes horizontal coverage for both projections, including 
   }
 });
 const screenUp = (rig: CameraController) => new Vector3().setFromMatrixColumn(rig.camera.matrixWorld, 1);
-test("all six axis views look along the correct signed world axis with world Z up and their screen orientation", () => {
+test("all six axis views look along the correct signed world axis with their requested screen orientation", () => {
   const rig = new CameraController();
   rig.resize(1000, 700);
   for (const axis of axisViews) {
     rig.fit(bounds, axis.id, "perspective");
     const facing = rig.camera.position.clone().sub(rig.target).normalize();
-    close(facing.distanceTo(new Vector3(...axis.direction)), 0, 1e-4);
+    close(facing.distanceTo(new Vector3(...axis.direction)), 0);
     close(rig.camera.getWorldDirection(new Vector3()).dot(facing), -1);
-    assert.deepEqual(rig.camera.up.toArray(), [0, 0, 1]);
-    close(screenUp(rig).distanceTo(new Vector3(...axis.up)), 0, 1e-4);
+    close(screenUp(rig).distanceTo(new Vector3(...axis.up)), 0);
     assert.ok(rig.camera.matrixWorld.elements.every(Number.isFinite));
   }
 });
@@ -63,25 +61,49 @@ test("dragging sideways from any view spins the model about world Z", () => {
     rig.fit(bounds, preset, "perspective");
     const offset = rig.camera.position.clone().sub(rig.target);
     const up = screenUp(rig);
-    const orbit = new OrbitControls(rig.camera);
-    orbit.target.copy(rig.target);
-    orbit.update();
-    close(rig.camera.position.clone().sub(rig.target).distanceTo(offset), 0, 1e-9 * offset.length());
-    orbit.rotateLeft(0.5);
-    orbit.update();
+    rig.orbit(-0.5, 0);
     const spin = (v: Vector3) => v.clone().applyAxisAngle(new Vector3(0, 0, 1), -0.5);
     close(rig.camera.position.clone().sub(rig.target).distanceTo(spin(offset)), 0, 1e-9 * offset.length());
     close(screenUp(rig).distanceTo(spin(up)), 0, 1e-4);
   }
 });
-test("restoring a camera saved with a non-Z up keeps its view and screen orientation but orbits about Z", () => {
+test("restoring an older camera at a pole uses its saved heading", () => {
   const rig = new CameraController();
   rig.resize(1000, 700);
   for (const [z, up] of [[180, [0, 1, 0]], [-180, [0, 1, 0]], [180, [1, 0, 0]]] as const) {
     rig.restore({ position: [3, 4, z], target: [3, 4, 0], up: [...up], fov: 42 });
-    assert.deepEqual(rig.camera.up.toArray(), [0, 0, 1]);
     close(rig.camera.getWorldDirection(new Vector3()).distanceTo(new Vector3(0, 0, -Math.sign(z))), 0, 1e-4);
     close(screenUp(rig).distanceTo(new Vector3(...up)), 0, 1e-4);
+  }
+});
+test("orbit crosses both poles, spins inverted about Z, and retraces its path", () => {
+  const rig = new CameraController();
+  for (const sign of [-1, 1]) {
+    rig.fit(bounds, `0:${sign * 75}`, "orthographic");
+    const back = () => rig.camera.getWorldDirection(new Vector3()).negate();
+    const before = back(), upright = screenUp(rig);
+    const radius = rig.camera.position.distanceTo(rig.target);
+    rig.orbit(0, -sign * Math.PI / 6);
+    close(back().z, before.z);
+    close(back().y, -before.y);
+    assert.ok(screenUp(rig).z < 0 && screenUp(rig).dot(upright) > 0.8);
+    const inverted = back(), up = screenUp(rig);
+    rig.orbit(Math.PI / 3, 0);
+    const spin = (v: Vector3) => v.clone().applyAxisAngle(new Vector3(0, 0, 1), Math.PI / 3);
+    close(back().distanceTo(spin(inverted)), 0);
+    close(screenUp(rig).distanceTo(spin(up)), 0);
+    rig.restore(rig.snapshot());
+    rig.setProjection("perspective");
+    rig.setProjection("orthographic");
+    close(screenUp(rig).distanceTo(spin(up)), 0);
+    // Projection conversion preserves view height rather than eye distance.
+    rig.orbit(-Math.PI / 3, sign * Math.PI / 6);
+    close(back().distanceTo(before), 0);
+    close(screenUp(rig).distanceTo(upright), 0);
+    rig.fit(bounds, `0:${sign * 75}`, "orthographic");
+    rig.orbit(0, 2 * Math.PI);
+    close(rig.camera.position.distanceTo(rig.target), radius);
+    close(back().distanceTo(before), 0);
   }
 });
 test("projection round trips preserve target, orientation and target-plane image size, including ortho zoom", () => {
@@ -108,6 +130,23 @@ test("projection round trips preserve target, orientation and target-plane image
   const zoomed = viewHeight(rig.camera, rig.target);
   rig.setProjection("perspective");
   close(viewHeight(rig.camera, rig.target), zoomed);
+});
+test("zooming an inverted, panned view keeps the point under an off-centre cursor", () => {
+  const rig = new CameraController();
+  rig.resize(1000, 700);
+  for (const projection of ["perspective", "orthographic"] as const) {
+    rig.fit(bounds, "top", projection);
+    rig.orbit(0.6, -0.5);
+    rig.pan(0.2, -0.1);
+    const height = viewHeight(rig.camera, rig.target);
+    const anchor = new Vector3(0.35, -0.27, 0).multiplyScalar(height).applyQuaternion(rig.camera.quaternion).add(rig.target);
+    const before = anchor.clone().project(rig.camera);
+    rig.zoomAt(0.65, 0.35, -0.27);
+    const after = anchor.clone().project(rig.camera);
+    close(after.x, before.x);
+    close(after.y, before.y);
+    close(viewHeight(rig.camera, rig.target), height * 0.65);
+  }
 });
 test("orthographic projection has equal scale at different depths; perspective does not", () => {
   const rig = new CameraController();
