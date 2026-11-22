@@ -199,7 +199,8 @@ def run(url, output):
                     spun = changed(lambda: drag("left", 76, 0))["rendered"]["camera"]
                     close(spun["position"][2], crossed["position"][2], "inverted spin height")
                     close(spun["up"][2], crossed["up"][2], "inverted spin tilt")
-                    assert abs(spun["position"][0] - crossed["position"][0]) > 1
+                    # Upside down on the +Y side, a rightward drag still carries the near side right: the eye swings to -X.
+                    assert spun["position"][0] < crossed["position"][0] - 1
                 # Keep the inverted camera through pan, zoom, projection, capture and reload below.
                 changed(lambda: drag("right", 29, -18))
                 changed(lambda: (page.mouse.move(x, y), page.mouse.wheel(0, -100)))

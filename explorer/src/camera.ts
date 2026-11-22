@@ -120,6 +120,10 @@ export class CameraController {
     c.up.set(0, 1, 0).applyQuaternion(c.quaternion);
     c.updateMatrixWorld();
   }
+  // Screen-up points below the horizon. An exact Top or Bottom view, with screen-up level, counts as upright.
+  upsideDown() {
+    return new Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion).z < -1e-9;
+  }
   // Distances in fractions of the viewport height, positive right/up in the image.
   pan(right: number, up: number) {
     const offset = new Vector3(right, up, 0).multiplyScalar(viewHeight(this.camera, this.target)).applyQuaternion(this.camera.quaternion);

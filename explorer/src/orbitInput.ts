@@ -9,6 +9,9 @@ export function bindOrbitInput(canvas: HTMLCanvasElement, rig: CameraController,
   let enabled = true, moved = false;
   let pointerType = "";
   let mode: "orbit" | "pan" | "zoom" = "orbit";
+  // Upside down, a yaw about world Z moves the model's near side against the pointer, so the drag reverses it.
+  // The way is chosen when the drag starts, so carrying the camera over a pole doesn't flip it partway.
+  let turn = 1;
   const oldTouchAction = canvas.style.touchAction;
   canvas.style.touchAction = "none";
 
@@ -20,6 +23,7 @@ export function bindOrbitInput(canvas: HTMLCanvasElement, rig: CameraController,
     if (!enabled || e.button > 2) return;
     // Only fingers from the same touch gesture may share its pan/zoom state (e.g. a palm during pen input).
     if (pointers.size && (pointerType !== "touch" || e.pointerType !== "touch")) return;
+    if (!pointers.size) turn = rig.upsideDown() ? -1 : 1;
     pointerType = e.pointerType;
     pointers.set(e.pointerId, new Vector2(e.clientX, e.clientY));
     canvas.setPointerCapture(e.pointerId);
@@ -44,7 +48,7 @@ export function bindOrbitInput(canvas: HTMLCanvasElement, rig: CameraController,
       previous.set(e.clientX, e.clientY);
       if (pointers.size !== 1) return;
       if (mode === "pan") rig.pan(-dx / h, dy / h);
-      else if (mode === "orbit") rig.orbit(-2 * Math.PI * dx / h, -2 * Math.PI * dy / h);
+      else if (mode === "orbit") rig.orbit(-2 * Math.PI * turn * dx / h, -2 * Math.PI * dy / h);
       else if (!zoom(0.95 ** (-dy * 0.01), e.clientX, e.clientY)) return;
     }
     moved = true;
