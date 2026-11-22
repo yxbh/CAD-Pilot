@@ -112,9 +112,12 @@ test("open reads --units and --up, and each command refuses options it does not 
   await assert.rejects(run(["capture", "--hide", "lid", "--step", "2"], { cwd: directory }), /capture does not take --hide or --step/);
   // A capture draws the view as it is, so the refusal names the view actions that change it first.
   await assert.rejects(run(["capture", "--hide", "lid", "--step", "2"], { cwd: directory }),
-    /Run help to list each command's options\. capture draws the view as it is: change it first with do set_visibility, do set_step, or use render, which takes these options\.$/);
+    /Run help to list each command's options\. capture draws the view as it is: change it first with do set_visibility \(with the parts' ids, which state --full lists, not their labels\), do set_step, or use render, which takes --hide, --step\.$/);
   await assert.rejects(run(["capture", "--section", "x", "--explode", "0.4", "--finish", "matte", "--outlines", "off"], { cwd: directory }),
-    /change it first with do set_section, do set_explode, do set_appearance, or use render/);
+    /change it first with do set_section, do set_explode, do set_appearance, or use render, which takes --section, --explode, --finish, --outlines\.$/);
+  // render is named only for the options it takes.
+  await assert.rejects(run(["capture", "--step", "2", "--dry-run"], { cwd: directory }),
+    /^Error: capture does not take --step or --dry-run\. .* change it first with do set_step, or use render, which takes --step\.$/);
   await assert.rejects(run(["capture", "--units", "mm"], { cwd: directory }), /^Error: capture does not take --units\. Run help to list each command's options\.$/);
   await assert.rejects(run(["state", "--hide", "lid"], { cwd: directory }), /^Error: state does not take --hide\. Run help to list each command's options\.$/);
   // A misspelt option is refused, not read as an argument: prune --dryrun must not prune.
@@ -139,6 +142,8 @@ test("do refuses input an action does not read or lacks, before asking the viewe
   await refused(["show_all", "fit=true"], "show_all does not take fit. It takes no input.");
   await refused(["capture_image", "size=800x600"], "capture_image does not take size. Its inputs: width, height, background, analysis, samples, seconds.");
   await refused(["set_view", "[1]"], "Expected key=value, got \"[1]\"");
+  // The viewer checks topologyRevision on any action, against a model that has since been replaced.
+  assert.deepEqual(checkedInput("show_all", { topologyRevision: "abc" }), { topologyRevision: "abc" });
   assert.deepEqual(checkedInput("set_step", { step: null, expectedRevision: 3 }), { step: null, expectedRevision: 3 });
   assert.deepEqual(checkedInput("show_all", {}), {});
   assert.throws(() => checkedInput("show_all", []), /key=value pairs or one JSON object/);
@@ -147,23 +152,28 @@ test("do refuses input an action does not read or lacks, before asking the viewe
 
 test("--view read as a setup's name says so when it is a camera and no such setup runs", async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "cad-explorer-view-flag-")));
-  const runtimeRoot = process.env.CAD_EXPLORER_RUNTIME_ROOT;
+  const saved = Object.fromEntries(["CAD_EXPLORER_RUNTIME_ROOT", "CAD_EXPLORER_VIEW"].map((name) => [name, process.env[name]]));
   process.env.CAD_EXPLORER_RUNTIME_ROOT = path.join(directory, "runtime");
+  delete process.env.CAD_EXPLORER_VIEW;
   t.after(() => {
-    if (runtimeRoot === undefined) delete process.env.CAD_EXPLORER_RUNTIME_ROOT;
-    else process.env.CAD_EXPLORER_RUNTIME_ROOT = runtimeRoot;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     return rm(directory, { recursive: true, force: true });
   });
   await assert.rejects(run(["capture", "reviews/a.png", "--view", "iso"], { cwd: directory }), (error) => {
     assert.equal(error.code, "not_running");
-    assert.equal(error.message, "No Explorer viewer is running for a setup named \"iso\". Here --view names a saved setup, not a camera: "
-      + "turn the view with do set_view preset=iso and leave --view out, or use render, whose --view is the camera.");
+    assert.equal(error.message, "No Explorer viewer is running for the setup named \"iso\". Here --view names a saved setup, not a camera. "
+      + "For the setup, run: explorer.mjs open <file> --view iso. For the camera, leave --view out and run do set_view preset=iso, or use render, whose --view is the camera.");
     return true;
   });
-  await assert.rejects(run(["state", "--view", "45:32"], { cwd: directory }), /do set_view azimuth=45 elevation=32 and leave --view out/);
-  for (const argv of [["capture", "reviews/a.png", "--view", "exploded"], ["capture", "reviews/a.png"]]) {
-    await assert.rejects(run(argv, { cwd: directory }), /^Error: No Explorer viewer is running for this project\. Run: explorer\.mjs open <file>$/);
-  }
+  await assert.rejects(run(["state", "--view", "45:32"], { cwd: directory }), /leave --view out and run do set_view azimuth=45 elevation=32, or use render/);
+  const plain = /^Error: No Explorer viewer is running for this project\. Run: explorer\.mjs open <file>$/;
+  for (const argv of [["capture", "reviews/a.png", "--view", "exploded"], ["capture", "reviews/a.png"]]) await assert.rejects(run(argv, { cwd: directory }), plain);
+  // A setup named by the environment was not typed as a camera, so it gets the plain answer.
+  process.env.CAD_EXPLORER_VIEW = "top";
+  await assert.rejects(run(["state"], { cwd: directory }), plain);
 });
 
 // A stand-in viewer: just enough of the HTTP protocol for the launcher to find, stop and confirm it.

@@ -51,7 +51,12 @@ test("a group's id is refused as a group, naming where the ids of its parts are 
   for (const [command, input] of [["set_visibility", { ids: ["a", "g"], visible: false }], ["select_parts", { ids: ["g"] }], ["isolate", { id: "g" }]]) {
     assert.throws(() => changeView(initialState(), grouped, command, input), (error) => error.code === "unknown_part" && group.test(error.message));
   }
-  assert.throws(() => changeView(initialState(), grouped, "isolate", { id: "missing" }), /^Error: Unknown part: missing$/);
+  // Anything else that names no part, a label included, is told that ids are needed and where they are listed.
+  const listed = "the full state (state --full, or get_state detail=full) lists every part's id and label under parts";
+  for (const id of ["missing", "lid", 7]) {
+    assert.throws(() => changeView(initialState(), grouped, "isolate", { id }),
+      { code: "unknown_part", message: `Unknown part: ${id}. Parts are named by their ids, not their labels; ${listed}.` });
+  }
   assert.deepEqual(changeView(initialState(), grouped, "set_visibility", { ids: ["a"], visible: false }).hiddenIds, ["a"]);
 });
 test("visibility and reset are independent", () => {

@@ -61,10 +61,11 @@ const COMMAND_FLAGS = {
   prune: ["dry-run", "all", "copilot"],
   render: ["size", "view", "units", "up", "background", "projection", "appearance", "finish", "outlines", "section", "explode", "step", "hide", ...ANALYSIS_FLAGS, ...TRACE_FLAGS],
 };
-// The view action that does what a render option does, for a capture, which draws the view as it is.
+// The view action that does what a render option does, for a capture, which draws the view as it is. render --hide
+// takes labels; set_visibility takes part ids.
 const VIEW_ACTIONS = {
-  hide: "set_visibility", section: "set_section", explode: "set_explode", step: "set_step", projection: "set_projection",
-  appearance: "set_appearance", finish: "set_appearance", outlines: "set_appearance",
+  hide: "set_visibility (with the parts' ids, which state --full lists, not their labels)", section: "set_section", explode: "set_explode", step: "set_step",
+  projection: "set_projection", appearance: "set_appearance", finish: "set_appearance", outlines: "set_appearance",
 };
 // The most arguments each command reads; open and render say what theirs are, and do and inspect take any number.
 const MOST_ARGUMENTS = { state: 0, stop: 0, actions: 0, prune: 0, capture: 1 };
@@ -90,7 +91,7 @@ function parseArguments(argv) {
   // --view names a remembered setup everywhere except render, which saves no setup and uses it for the camera.
   if (command === "render") flags.view = view;
   const viewId = command !== "render" && view !== undefined ? view : process.env.CAD_EXPLORER_VIEW || defaultViewId;
-  return { command, args: positional.slice(1), viewId, flags };
+  return { command, args: positional.slice(1), viewId, flags, viewTyped: view !== undefined };
 }
 
 const number = (text, flag) => {
@@ -219,7 +220,8 @@ function cameraInput(text) {
 export function checkedInput(name, input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PrototypeError("bad_arguments", "Action input must be key=value pairs or one JSON object");
   const { properties, required } = COMMANDS[name].inputSchema;
-  const unknown = Object.keys(input).filter((key) => !Object.hasOwn(properties, key));
+  // topologyRevision guards any action against a model that has since been replaced, whether or not its schema lists it.
+  const unknown = Object.keys(input).filter((key) => !Object.hasOwn(properties, key) && key !== "topologyRevision");
   const missing = required.filter((key) => input[key] === undefined);
   if (!unknown.length && !missing.length) return input;
   const problems = [unknown.length ? `does not take ${unknown.join(", ")}` : "", missing.length ? `needs ${missing.join(", ")}` : ""].filter(Boolean).join(" and ");
@@ -227,14 +229,16 @@ export function checkedInput(name, input) {
   throw new PrototypeError("bad_arguments", `${name} ${problems}. ${inputs.length ? `Its inputs: ${inputs.join(", ")}` : "It takes no input"}.`);
 }
 
-async function viewer(location) {
+// viewTyped: --view was given on this command line, where it may have been meant as render's camera.
+async function viewer(location, { viewTyped = false } = {}) {
   const running = await runningViewer(location);
   if (!running) {
-    // Only render reads --view as a camera; every other command reads it as the name of a saved setup.
-    const camera = location.viewId !== defaultViewId && cameraInput(location.viewId);
+    // Only render reads --view as a camera; every other command reads it as the name of a saved setup, which may
+    // itself be called top or iso, so the answer covers both.
+    const camera = viewTyped && cameraInput(location.viewId);
     if (camera) {
-      throw new PrototypeError("not_running", `No Explorer viewer is running for a setup named "${location.viewId}". Here --view names a saved setup, not a camera: `
-        + `turn the view with do set_view ${camera} and leave --view out, or use render, whose --view is the camera.`, 409);
+      throw new PrototypeError("not_running", `No Explorer viewer is running for the setup named "${location.viewId}". Here --view names a saved setup, not a camera. `
+        + `For the setup, run: explorer.mjs open <file> --view ${location.viewId}. For the camera, leave --view out and run do set_view ${camera}, or use render, whose --view is the camera.`, 409);
     }
     throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file>", 409);
   }
@@ -247,12 +251,13 @@ async function viewer(location) {
 const megabytes = (bytes) => Math.round(bytes / 1048576 * 10) / 10;
 
 export async function run(argv, { cwd = process.cwd(), inspect, open = openViewer } = {}) {
-  const { command, args, viewId, flags } = parseArguments(argv);
+  const { command, args, viewId, flags, viewTyped } = parseArguments(argv);
   if (command === "help") return USAGE;
   const unread = Object.keys(flags).filter((flag) => flags[flag] !== undefined && COMMAND_FLAGS[command] && !COMMAND_FLAGS[command].includes(flag));
   if (unread.length) {
-    const actions = command === "capture" ? [...new Set(unread.map((flag) => VIEW_ACTIONS[flag]).filter(Boolean))] : [];
-    const hint = actions.length ? ` capture draws the view as it is: change it first with ${actions.map((name) => `do ${name}`).join(", ")}, or use render, which takes these options.` : "";
+    const viewFlags = command === "capture" ? unread.filter((flag) => VIEW_ACTIONS[flag]) : [];
+    const actions = [...new Set(viewFlags.map((flag) => `do ${VIEW_ACTIONS[flag]}`))];
+    const hint = actions.length ? ` capture draws the view as it is: change it first with ${actions.join(", ")}, or use render, which takes ${viewFlags.map((flag) => `--${flag}`).join(", ")}.` : "";
     throw new PrototypeError("bad_arguments", `${command} does not take ${unread.map((flag) => `--${flag}`).join(" or ")}. Run help to list each command's options.${hint}`);
   }
   if (args.length > MOST_ARGUMENTS[command]) {
@@ -290,7 +295,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   const action = command === "do" ? args[0] : undefined;
   if (command === "do" && !actionNames().includes(action)) throw new PrototypeError("unknown_action", `Unknown view action "${action ?? ""}". Run "actions" to list them.`);
   const actionArguments = command === "do" ? checkedInput(action, actionInput(args.slice(1))) : undefined;
-  const { record } = await viewer(location);
+  const { record } = await viewer(location, { viewTyped });
   const detail = flags.full ? "full" : "summary";
   if (command === "state") return call(record, `api/state?detail=${detail}`);
   if (command === "capture" || action === "capture_image") {
