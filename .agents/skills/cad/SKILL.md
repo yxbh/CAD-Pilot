@@ -44,7 +44,7 @@ Do not ask the user for JSON or a template. Convert their prose, photos or drawi
 4. **Plan before coding**: parameters, labels, paths, expected bounding boxes and mating datums.
 5. **Edit source, not generated artifacts**: build123d Python with `gen_step()`.
 6. **Generate explicit targets** with `scripts/step`; never directory-wide. Use `--kind part|assembly` only for a STEP/STP target.
-7. **Check the saved geometry** with the checks the requirements call for ([Choosing checks](references/inspection-and-validation.md#choosing-checks)). The tools already cover parts moving past each other (`inspect clearance --poses`), what an edit left unchanged (`inspect diff`) and a part in a print orientation (`print check --rotate`, [Orientation checks](references/print.md#orientation-checks)): use them before writing a helper of your own.
+7. **Check the saved geometry** with the checks the requirements call for ([Choosing checks](references/inspection-and-validation.md#choosing-checks)). The tools already cover parts moving past each other (`inspect clearance --poses`), whether an edit changed a STEP at all (`inspect diff`) and a part in a print orientation (`print check --rotate`, [Orientation checks](references/print.md#orientation-checks)): use them before writing a helper of your own.
 8. **Show the model** with the visual-review skill, also after each regeneration.
 9. **Review it yourself** after creating or visibly changing geometry (`references/self-review.md`).
 10. **Repair and rerun**: change the smallest responsible source section, regenerate, and rerun the failed and affected checks (`references/repair-loop.md`).
@@ -56,7 +56,7 @@ Do not ask the user for JSON or a template. Convert their prose, photos or drawi
 - When a generator exists, run `scripts/step` on it; target a STEP/STP directly only when there is no generator or the user names that file.
 - Author placement in source (datums, `Location` transforms or build123d joints); `inspect mate` only validates.
 - Compare CAD revisions through source, `scripts/inspect` results or Explorer captures, never `git diff` or file-size churn of exported artifacts.
-- Once the user has printed a part, its mating interfaces are frozen unless they agree to change them. Keep a copy of the STEP that was printed, which regenerating overwrites, and after editing code the part shares, check the regenerated part against that copy with `inspect diff`.
+- Once the user has printed a part, its mating interfaces are frozen unless they agree to change them. When a part is handed off to print, keep a copy of that STEP under a name of its own, because regenerating overwrites the original; after a later source change that could reach the part, measure its mating features on the new STEP and on the copy, and tell the user about any that differ.
 - Report each check that actually ran with the geometry measured, the value and units, and the threshold and where it came from. A failed or skipped computation is not a pass, and a requirement nobody checked has no verdict.
 - Keep kinds of evidence apart: kernel validity, measured requirements, your visual review, the user's approval, slicer checks and physical tests each support only their own claims. Do not claim structural safety, process certification, tolerance compliance or manufacturability beyond geometric plausibility.
 - Never send G-code to a printer, start a print or publish a model without the user's explicit approval.

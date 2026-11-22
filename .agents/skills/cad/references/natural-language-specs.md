@@ -43,8 +43,7 @@ Usually ask when:
 
 - A physical object has no overall size, or its only size source is an unscaled image.
 - A part must fit, mate with or hold something whose dimensions are not given.
-- A dimension of the user's object comes from a web page, such as a listing, a manual or a forum post: use it as provisional until the user measures the object itself.
-- It is not clear what a dimension is measured between: inside or outside, centre to centre or edge to edge, with or without a lip or flange.
+- A dimension that sets a fit could be measured between different things: inside or outside, centre to centre or edge to edge, with or without a lip or flange. Where one reading is clearly meant, record it in the brief instead.
 - A fit or clearance matters and the process, material or printer is unknown.
 - Dimensioned sources disagree.
 - The part is safety-critical, load-bearing, pressure-bearing, food-contact, medical, or compliance-bound.
@@ -57,6 +56,8 @@ Usually proceed with a provisional assumption when:
 - The user wants a conceptual first pass, where rough alternatives help them decide.
 
 A material's typical shrinkage, like a standard table value, is a proposal for the user's process, not measured calibration. For printed fits, use the fdm-design skill.
+
+A dimension of the user's own object found on the web, such as a shop listing or a forum post, is a proposal too: put it in a named parameter and ask the user to measure the object before anything is made to fit it. A manufacturer's dimensioned drawing is read as a technical drawing, below.
 
 ## Reference images
 

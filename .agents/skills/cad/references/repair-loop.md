@@ -18,11 +18,11 @@ An open sketch, a subtractive profile outside the target, zero thickness, a fail
 
 ## Self-intersecting solid
 
-`scripts/step` warns that a part `is not a sound solid`, often with a count of self-intersections, although `is_valid` can still be true. `common.geometry.is_sound(part)` returns `False` and `self_intersections(part)` returns the faces that cross.
-
-`self_intersections` returns `GeometryIssue` objects, not tuples: each has a `code` and its `entities`, the build123d faces, edges or vertices that cross. Locate one with build123d's `.center()` and `.bounding_box()`; OCP's own `Bnd_Box.Get()` cannot be called from Python.
+`scripts/step` warns that a part `is not a sound solid`, often with a count of self-intersections, although `is_valid` can still be true. `common.geometry.is_sound(part)` returns `False`, and `self_intersections(part)` returns a tuple of `GeometryIssue`, each with a `code` and its `entities`: the build123d faces, edges or vertices that cross, not coordinates. Locate one with build123d's `.center()` and `.bounding_box()`; with OCP 8, calling OCP's own `Bnd_Box.Get()` raises a `TypeError`. Inside a generator the import below works as written and `scripts/step --verbose` shows what it prints; a script run on its own first needs `<cad>/scripts` on `sys.path`.
 
 ```python
+from common.geometry import self_intersections
+
 for issue in self_intersections(part):
     for entity in issue.entities:
         print(issue.code, type(entity).__name__, entity.center(), entity.bounding_box())
