@@ -556,6 +556,21 @@ def _geometry_hash(manifest: dict[str, Any], tables: dict[str, list[dict[str, An
     return _stable_hash(_without_negative_zero(described))
 
 
+def refs_moved(old_manifest: dict[str, Any], new_manifest: dict[str, Any]) -> bool:
+    """Whether some face, edge or vertex number names other geometry in ``new_manifest`` than in ``old_manifest``.
+
+    Manifests that list no faces or edges, as an index's summary does not, have nothing to compare and say False.
+    """
+    for name, columns in (("faces", "faceColumns"), ("edges", "edgeColumns"), ("vertices", "vertexColumns")):
+        described = [
+            {row.get("id"): [row.get(field) for field in _GEOMETRY_FIELDS[name]] for row in _table_rows(manifest, name, columns)}
+            for manifest in (old_manifest, new_manifest)
+        ]
+        if any(described[0][ref] != described[1][ref] for ref in described[0].keys() & described[1].keys()):
+            return True
+    return False
+
+
 def selector_manifest_diff(
     old_manifest: dict[str, Any] | None,
     new_manifest: dict[str, Any],

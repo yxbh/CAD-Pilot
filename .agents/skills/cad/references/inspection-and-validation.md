@@ -36,7 +36,7 @@ python <cad>/scripts/inspect refs path/to/model.step --topology
 
 Enumerate `--topology` only for selector discovery or debugging; it is expensive on large models. `--plane-limit`, `--plane-min-area-ratio` and `--plane-coordinate-tolerance` tune plane grouping.
 
-`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2` and face and edge numbers can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse or translate a saved `@cad` path, which can silently resolve to a different part. Occurrence paths and edge numbers also depend on the hidden `.glb` index `scripts/step` wrote beside the STEP: when it is missing, as for a STEP copied alone, the file is indexed from its own contents, where a part can sit one level deeper and its edges are numbered in another order, so take refs again there too.
+`@cad[...]` selectors belong to one generated revision. Occurrence paths such as `o1.2` and face and edge numbers can change whenever the model is regenerated, including when the exporter changes how it writes the assembly tree. After regenerating, run `refs` again and take selectors from the new output; never reuse or translate a saved `@cad` path, which can silently resolve to a different part.
 
 ## Parts
 

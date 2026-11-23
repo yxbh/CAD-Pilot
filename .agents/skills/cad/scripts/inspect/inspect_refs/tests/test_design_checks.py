@@ -72,6 +72,19 @@ VASE = textwrap.dedent(
     """
 )
 
+# A filleted, drilled plate, whose edges the STEP lists in another order than the shape that wrote it, and a part
+# placed away from the origin, which the STEP holds one level down.
+PLATE = textwrap.dedent(
+    """\
+    from build123d import Axis, Box, Cylinder, Pos, fillet
+
+    def gen_step():
+        plate = Box(30, 20, 5) - Pos(8, 0, 0) * Cylinder(3, 5)
+        return fillet(plate.edges().filter_by(Axis.Z), 2)
+    """
+)
+PLACED = "from build123d import Box, Pos\n\ndef gen_step():\n    return Pos(10, 0, 5) * Box(10, 8, 6)\n"
+
 BLOCK = "from build123d import Box, Circle, Cylinder, Pos, Rectangle, extrude\n\ndef gen_step():\n    return {build}\n"
 
 UNLABELLED = textwrap.dedent(
@@ -174,6 +187,24 @@ class DesignChecksTests(unittest.TestCase):
             ["topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False", "faceDelta=0 edgeDelta=0"],
             same.stdout.splitlines(),
         )
+
+    def test_a_ref_names_the_same_geometry_with_or_without_the_sidecar(self) -> None:
+        def refs(path: str) -> dict[str, dict]:
+            listed = self.inspect_json("refs", path, "--topology")["tokens"][0]["topology"]
+            selectors = [*listed["occurrences"], *listed["shapes"], *listed["faces"], *listed["edges"]]
+            detailed = self.inspect_json("refs", f"@cad[{path.removesuffix('.step')}#{','.join(selectors)}]", "--detail")
+            return {selection["normalizedSelector"]: selection["detail"] for selection in detailed["tokens"][0]["selections"]}
+
+        (self.root / "kept").mkdir()
+        for name, source, fewest in (("plate", PLATE, 30), ("placed", PLACED, 15)):
+            with self.subTest(name):
+                self.generate(name, source)
+                shutil.copy2(self.root / f"out/{name}.step", self.root / f"kept/{name}.step")
+                self.assertTrue((self.root / f"out/.{name}.step.glb").is_file())
+                self.assertFalse((self.root / f"kept/.{name}.step.glb").exists())
+                beside, alone = refs(f"out/{name}.step"), refs(f"kept/{name}.step")
+                self.assertGreater(len(beside), fewest)
+                self.assertEqual(beside, alone)
 
     def test_diff_compares_the_step_files_whatever_sidecars_lie_beside_them(self) -> None:
         def flags(left: str, right: str) -> dict[str, bool]:
@@ -311,6 +342,14 @@ class DesignChecksTests(unittest.TestCase):
         self.assertIn("new face and edge numbering", self.run_tool("step", "plate.py").stderr)
         source.write_text(holed)
         self.assertNotIn("numbering", self.run_tool("step", "plate.py").stderr)
+
+        # A hole moved inside the plate keeps every number and the overall box; refs taken before it are told.
+        moved = holed.replace("- Cylinder(3, 10)", "- Pos(4, 0, 0) * Cylinder(3, 10)").replace("Cylinder\n", "Cylinder, Pos\n")
+        self.inspect_json("refs", "@cad[plate#f1]")
+        source.write_text(moved)
+        self.assertIn("kept its face and edge numbering but its geometry moved", self.run_tool("step", "plate.py").stderr)
+        self.inspect_json("refs", "@cad[plate#f1]")
+        self.assertNotIn("numbering", self.run_tool("step", "plate.py").stderr, "the same source again")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from common.inspect_imports import ensure_inspect_import_path
 
 ensure_inspect_import_path()
 
-from inspect_refs.analysis import selector_manifest_diff
+from inspect_refs.analysis import refs_moved, selector_manifest_diff
 from common.assembly_composition import (
     AssemblyCompositionError,
     build_linked_assembly_composition,
@@ -42,7 +42,7 @@ from common.issued_refs import forget, issued_step_hash, mark
 from common.paths import command_line_path, relative_path
 from common.solid_check import TIME_SCALE_VARIABLE, KernelCheck, cheap_findings
 from common.glb import build_step_topology_index_manifest, export_assembly_glb_from_scene, export_part_glb_from_scene
-from common.glb_topology import read_step_topology_manifest_from_glb
+from common.glb_topology import read_step_topology_bundle_from_glb, read_step_topology_manifest_from_glb
 from common.metadata import (
     DEFAULT_MESH_ANGULAR_TOLERANCE,
     DEFAULT_MESH_TOLERANCE,
@@ -691,7 +691,14 @@ def _report_selector_manifest_change(
     next_manifest: dict[str, object],
     *,
     logger: CliLogger,
+    previous_refs: dict[str, object] | None = None,
+    next_refs: dict[str, object] | None = None,
 ) -> None:
+    """Tell someone who took refs from the previous build what a rebuild did to them.
+
+    ``previous_refs`` and ``next_refs`` are the two builds' full topology, with every face and edge. Without them
+    only the index summaries are compared, which see a change of counts or of the overall box and nothing inside it.
+    """
     # Only a build someone took face or edge refs from is worth a word.
     issued = issued_step_hash(spec.step_path) if spec.step_path is not None else None
     if issued is None:
@@ -709,8 +716,11 @@ def _report_selector_manifest_change(
         return
     if issued != previous_manifest.get("stepHash"):
         return
-    change = selector_manifest_diff(previous_manifest, next_manifest)
-    if bool(change.get("topologyChanged")):
+    old, new = (previous_refs, next_refs) if previous_refs is not None and next_refs is not None else (previous_manifest, next_manifest)
+    change = selector_manifest_diff(old, new)
+    moved = refs_moved(old, new)
+    # The same faces and edges under other numbers are a new numbering too, though nothing was added or taken away.
+    if bool(change.get("topologyChanged")) or (moved and not change.get("geometryChanged")):
         forget(spec.step_path)
         logger.warning(
             f"{spec.cad_ref} has new face and edge numbering; @cad refs taken from the previous build no longer name "
@@ -718,7 +728,7 @@ def _report_selector_manifest_change(
         )
         return
     mark(spec.step_path, str(next_manifest.get("stepHash") or ""))
-    if bool(change.get("geometryChanged")):
+    if moved or bool(change.get("geometryChanged")):
         logger.info(
             f"notice: {spec.cad_ref} kept its face and edge numbering but its geometry moved; re-check facts from older refs."
         )
@@ -961,24 +971,27 @@ def _generate_part_outputs(
     spec: EntrySpec,
     *,
     entries_by_step_path: dict[Path, EntrySpec],
-    preloaded_scene: LoadedStepScene | None = None,
     logger: CliLogger | None = None,
 ) -> GeneratedStepResult:
+    """Write the STEP's meshes and topology index, all from the STEP as it is saved.
+
+    A generated STEP is read back for this rather than indexed from the shape that wrote it: the file lists a part's
+    edges in another order than that shape, can sit a placed part one level deeper and stores splines differently, so
+    only an index of the file gives a ref the same meaning as the index inspect builds when it finds none beside it.
+    """
     logger = logger or CliLogger("cad")
     if spec.kind not in {"part", "assembly"} or spec.step_path is None:
         return GeneratedStepResult(spec=spec, scene=None)
     _ensure_step_ready(spec.step_path)
     glb_path = part_glb_path(spec.step_path)
     previous_manifest = read_step_topology_manifest_from_glb(glb_path) if glb_path.exists() else None
-    if preloaded_scene is not None:
-        if preloaded_scene.step_path != spec.step_path.expanduser().resolve():
-            raise RuntimeError(
-                f"Preloaded STEP scene path {preloaded_scene.step_path} does not match {_display_path(spec.step_path)}"
-            )
-        scene = preloaded_scene
-    else:
-        with logger.timed(f"load STEP {spec.cad_ref}"):
-            scene = load_step_scene(spec.step_path)
+    # The previous build's faces and edges are read only when someone took refs from it, to say what became of them.
+    previous_refs: dict[str, object] | None = None
+    if previous_manifest is not None and issued_step_hash(spec.step_path) == previous_manifest.get("stepHash"):
+        previous_bundle = read_step_topology_bundle_from_glb(glb_path)
+        previous_refs = previous_bundle.manifest if previous_bundle is not None else None
+    with logger.timed(f"load STEP {spec.cad_ref}"):
+        scene = load_step_scene(spec.step_path)
     selector_options = _selector_options_for_part(spec)
     with logger.timed(f"mesh STEP {spec.cad_ref}"):
         mesh_step_scene(
@@ -1068,7 +1081,9 @@ def _generate_part_outputs(
                 bundle.manifest["assembly"] = assembly_composition
         next_manifest = build_step_topology_index_manifest(bundle.manifest, entry_kind=spec.kind)
         export_glb(bundle)
-        _report_selector_manifest_change(spec, previous_manifest, next_manifest, logger=logger)
+        _report_selector_manifest_change(
+            spec, previous_manifest, next_manifest, logger=logger, previous_refs=previous_refs, next_refs=bundle.manifest
+        )
         return bundle
 
     jobs.append(_ArtifactJob("GLB/topology", export_glb_with_topology))
@@ -1088,23 +1103,21 @@ def _generate_step_outputs(
     logger: CliLogger | None = None,
     check_solids: bool = True,
 ) -> GeneratedStepResult:
-    preloaded_scene: LoadedStepScene | None = None
+    # The modelled shape is kept for the solid check alone; the outputs are made from the STEP it wrote.
+    modelled_scene: LoadedStepScene | None = None
     if spec.source == "generated":
-        preloaded_scene = run_script_generator(spec, "gen_step", logger=logger)
-    output_kwargs: dict[str, object] = {
-        "entries_by_step_path": entries_by_step_path,
-        "preloaded_scene": preloaded_scene,
-    }
+        modelled_scene = run_script_generator(spec, "gen_step", logger=logger)
+    output_kwargs: dict[str, object] = {"entries_by_step_path": entries_by_step_path}
     if logger is not None:
         output_kwargs["logger"] = logger
     # Assemblies only place other STEP files: generated parts are checked when
     # their own source is generated, and imported STEP files are not checked.
     findings: list[str] = []
     kernel_check: KernelCheck | None = None
-    if check_solids and preloaded_scene is not None and spec.kind == "part":
+    if check_solids and modelled_scene is not None and spec.kind == "part":
         try:
-            findings = cheap_findings(preloaded_scene, spec.source_ref)
-            kernel_check = KernelCheck(spec.step_path, preloaded_scene, spec.source_ref)
+            findings = cheap_findings(modelled_scene, spec.source_ref)
+            kernel_check = KernelCheck(spec.step_path, modelled_scene, spec.source_ref)
         except Exception as exc:  # a check that cannot start must not stop generation
             (logger or CliLogger("cad")).info(f"notice: could not check the solids in {spec.source_ref}: {exc}.")
     try:

@@ -650,10 +650,9 @@ class CadGenerationTests(unittest.TestCase):
         output_path = self.temp_root / "custom" / "flat-output.step"
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None, **_):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             self.assertIn(output_path.resolve(), entries_by_step_path)
-            self.assertIsNotNone(preloaded_scene)
-            self.assertEqual(output_path.resolve(), preloaded_scene.step_path)
+            self.assertTrue(output_path.is_file(), "the STEP is saved before its outputs are made from it")
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_part_outputs", side_effect=fake_generate):
@@ -803,25 +802,21 @@ class CadGenerationTests(unittest.TestCase):
         self.assertTrue(script_path.with_suffix(".step").exists())
         self.assertFalse(script_path.with_suffix(".urdf").exists())
 
-    def test_generated_step_outputs_reuses_generated_scene(self) -> None:
+    def test_generated_step_outputs_are_made_from_the_saved_step(self) -> None:
         script_path = self._generator_script("flat")
         spec = next(spec for spec in cad_generation.list_entry_specs() if spec.cad_ref == self._cad_ref("flat"))
         step_path = script_path.with_suffix(".step")
-        observed_scene = None
+        saved: list[bool] = []
 
-        def fake_outputs(spec_arg, *, entries_by_step_path, preloaded_scene=None):
-            nonlocal observed_scene
-            observed_scene = preloaded_scene
+        # The outputs are handed the spec alone, not the modelled shape: they read the STEP that shape wrote.
+        def fake_outputs(spec_arg, *, entries_by_step_path):
             self.assertIs(spec, spec_arg)
+            saved.append(step_path.is_file())
 
         with mock.patch.object(cad_generation, "_generate_part_outputs", side_effect=fake_outputs):
-            cad_generation._generate_step_outputs(spec, entries_by_step_path={spec.step_path.resolve(): spec})
+            cad_generation._generate_step_outputs(spec, entries_by_step_path={spec.step_path.resolve(): spec}, check_solids=False)
 
-        self.assertIsNotNone(observed_scene)
-        self.assertEqual(step_path.resolve(), observed_scene.step_path)
-        self.assertIsNotNone(observed_scene.doc)
-        digest = hashlib.sha256(step_path.read_bytes()).hexdigest()
-        self.assertEqual(digest, observed_scene.step_hash)
+        self.assertEqual([True], saved)
 
     def test_sidecars_are_not_separate_generation_specs(self) -> None:
         self._generator_script("flat", with_dxf=True)
@@ -1335,8 +1330,8 @@ class CadGenerationTests(unittest.TestCase):
         self.assertFalse(stale_binary_path.exists())
         self.assertFalse(stale_extra_path.exists())
 
-    def test_generate_part_outputs_uses_preloaded_scene_without_reloading(self) -> None:
-        step_path = self._write_step("preloaded")
+    def test_generate_part_outputs_reads_the_saved_step_once_for_every_output(self) -> None:
+        step_path = self._write_step("saved")
         _, selected_specs = cad_generation._selected_specs_for_targets(
             [str(step_path)],
             step_options=self._step_options(mesh_tolerance=0.3, mesh_angular_tolerance=0.2),
@@ -1367,7 +1362,7 @@ class CadGenerationTests(unittest.TestCase):
             self.assertIs(scene, scene_arg)
             return SelectorBundle(manifest={"schemaVersion": 2, "cadPath": spec.cad_ref}, buffers={})
 
-        with mock.patch.object(cad_generation, "load_step_scene") as load_scene, mock.patch.object(
+        with mock.patch.object(cad_generation, "load_step_scene", return_value=scene) as load_scene, mock.patch.object(
             cad_generation,
             "export_part_glb_from_scene",
             side_effect=fake_export_glb,
@@ -1382,13 +1377,9 @@ class CadGenerationTests(unittest.TestCase):
             "extract_selectors_from_scene",
             side_effect=fake_extract,
         ):
-            cad_generation._generate_part_outputs(
-                spec,
-                entries_by_step_path={spec.step_path.resolve(): spec},
-                preloaded_scene=scene,
-            )
+            cad_generation._generate_part_outputs(spec, entries_by_step_path={spec.step_path.resolve(): spec})
 
-        load_scene.assert_not_called()
+        load_scene.assert_called_once_with(spec.step_path)
         self.assertTrue(cad_render.part_glb_path(step_path).exists())
         self.assertFalse(cad_render.native_component_glb_dir(step_path).parent.exists())
 
@@ -1820,6 +1811,44 @@ class IssuedRefsWarningTests(unittest.TestCase):
         self.assertIn("may no longer name the same geometry", self.report(None, "new-hash").warning.call_args.args[0])
         self.assertIsNone(issued_refs.issued_step_hash(self.spec.step_path))
         self.report(None, "newer-hash").warning.assert_not_called()
+
+    def test_refs_are_followed_through_a_rebuild_by_every_face_and_edge(self) -> None:
+        def topology(step_hash: str, *centers: list[float]) -> dict[str, object]:
+            return {
+                "stepHash": step_hash,
+                "bbox": {"min": [0.0, 0.0, 0.0], "max": [9.0, 9.0, 9.0]},
+                "stats": {"edgeCount": len(centers)},
+                "tables": {"edgeColumns": ["id", "curveType", "center", "length"]},
+                "edges": [[f"o1.e{number}", "line", center, 1.0] for number, center in enumerate(centers, start=1)],
+            }
+
+        def rebuild(previous: dict[str, object], new: dict[str, object]) -> mock.Mock:
+            # The summaries scripts/step keeps of each build list no edges, so by themselves they show no change here.
+            summary = lambda full: {key: full[key] for key in ("stepHash", "bbox", "stats")}
+            logger = mock.Mock()
+            cad_generation._report_selector_manifest_change(
+                self.spec, summary(previous), summary(new), logger=logger, previous_refs=previous, next_refs=new
+            )
+            return logger
+
+        here, there, elsewhere = [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 5.0, 0.0]
+        issued_refs.mark(self.spec.step_path, "a")
+        same = rebuild(topology("a", here, there), topology("b", here, [2.0, -0.0, 0.0]))
+        same.warning.assert_not_called()
+        same.info.assert_not_called()
+        self.assertEqual("b", issued_refs.issued_step_hash(self.spec.step_path))
+
+        # An edge moved inside the same overall box: the refs carry over, with a word that their facts may not.
+        moved = rebuild(topology("b", here, there), topology("c", here, elsewhere))
+        moved.warning.assert_not_called()
+        self.assertIn("kept its face and edge numbering but its geometry moved", moved.info.call_args.args[0])
+        self.assertEqual("c", issued_refs.issued_step_hash(self.spec.step_path))
+
+        # The same edges under exchanged numbers: e1 is now the other edge, so the refs are dropped.
+        renumbered = rebuild(topology("c", here, elsewhere), topology("d", elsewhere, here))
+        self.assertIn("new face and edge numbering", renumbered.warning.call_args.args[0])
+        self.assertIsNone(issued_refs.issued_step_hash(self.spec.step_path))
+        rebuild(topology("d", elsewhere, here), topology("e", here, elsewhere)).warning.assert_not_called()
 
     def test_the_same_bytes_or_no_refs_say_nothing(self) -> None:
         self.report(None, "new-hash").warning.assert_not_called()
