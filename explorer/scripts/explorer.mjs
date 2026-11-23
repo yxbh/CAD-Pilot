@@ -229,15 +229,18 @@ export function checkedInput(name, input) {
 }
 
 // viewTyped: --view was given on this command line, where it may have been meant as render's camera.
-async function viewer(location, { viewTyped = false } = {}) {
+// cameraHint: also say how to turn the camera, which a view action already does by itself.
+async function viewer(location, { viewTyped = false, cameraHint = true } = {}) {
   const running = await runningViewer(location);
   if (!running) {
     // Only render reads --view as a camera; every other command reads it as the name of a saved setup, which may
     // itself be called top or iso, so the answer covers both.
     const camera = viewTyped && cameraInput(location.viewId);
     if (camera) {
-      throw new PrototypeError("not_running", `No Explorer viewer is running for the setup named "${location.viewId}". Here --view names a saved setup, not a camera. `
-        + `For the setup, run: explorer.mjs open <file> --view ${location.viewId}. For the camera, leave --view out and run do set_view ${camera}, or use render, whose --view is the camera.`, 409);
+      const setup = `No Explorer viewer is running for the setup named "${location.viewId}". Here --view names a saved setup, not a camera. `
+        + `For the setup, run: explorer.mjs open <file> --view ${location.viewId}.`;
+      const turn = ` For the camera, leave --view out and run do set_view ${camera}, or use render, whose --view is the camera.`;
+      throw new PrototypeError("not_running", cameraHint ? setup + turn : setup, 409);
     }
     throw new PrototypeError("not_running", "No Explorer viewer is running for this project. Run: explorer.mjs open <file>", 409);
   }
@@ -294,8 +297,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   const action = command === "do" ? args[0] : undefined;
   if (command === "do" && !actionNames().includes(action)) throw new PrototypeError("unknown_action", `Unknown view action "${action ?? ""}". Run "actions" to list them.`);
   const actionArguments = command === "do" ? checkedInput(action, actionInput(args.slice(1))) : undefined;
-  // A view action already says how to turn the camera, so --view beside do can only name a saved setup.
-  const { record } = await viewer(location, { viewTyped: viewTyped && command !== "do" });
+  const { record } = await viewer(location, { viewTyped, cameraHint: command !== "do" });
   const detail = flags.full ? "full" : "summary";
   if (command === "state") return call(record, `api/state?detail=${detail}`);
   if (command === "capture" || action === "capture_image") {

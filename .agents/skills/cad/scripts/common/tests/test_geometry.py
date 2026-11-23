@@ -278,6 +278,19 @@ class GeometryDiagnosticsTests(unittest.TestCase):
         self.assertFalse(any(entity.wrapped.IsPartner(face.wrapped)
                              for i in issues for entity in i.entities for face in source.faces()))
 
+    def test_self_intersections_locate_a_folded_sweep_that_has_other_faults_too(self):
+        # A 6 mm profile swept round a 2 mm bend folds through itself; the kernel reports the crossings and NotValid.
+        from build123d import BuildPart, BuildSketch, JernArc, Rectangle, sweep
+
+        path = JernArc((0, 0), (1, 0), 2, 180)
+        with BuildPart() as folded:
+            with BuildSketch(path ^ 0):
+                Rectangle(6, 3)
+            sweep(path=path)
+        issues = self_intersections(folded.part)
+        self.assertTrue(issues)
+        self.assertTrue(all(i.code == "BOPAlgo_SelfIntersect" and i.entities for i in issues))
+
     def test_checker_failure_and_inconclusive_result_raise(self):
         checker = mock.Mock()
         checker.HasErrors.return_value = True

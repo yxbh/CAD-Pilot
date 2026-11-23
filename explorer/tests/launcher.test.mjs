@@ -171,9 +171,13 @@ test("--view read as a setup's name says so when it is a camera and no such setu
   });
   await assert.rejects(run(["state", "--view", "45:32"], { cwd: directory }), /leave --view out and run do set_view azimuth=45 elevation=32, or use render/);
   const plain = /^Error: No Explorer viewer is running for this project\. Run: explorer\.mjs open <file>$/;
-  for (const argv of [["capture", "reviews/a.png", "--view", "exploded"], ["capture", "reviews/a.png"], ["do", "set_view", "preset=top", "--view", "iso"]]) {
-    await assert.rejects(run(argv, { cwd: directory }), plain);
-  }
+  for (const argv of [["capture", "reviews/a.png", "--view", "exploded"], ["capture", "reviews/a.png"]]) await assert.rejects(run(argv, { cwd: directory }), plain);
+  // Beside do, --view still names a setup, and the action itself is how to turn the camera.
+  await assert.rejects(run(["do", "set_view", "preset=top", "--view", "iso"], { cwd: directory }), (error) => {
+    assert.equal(error.message, "No Explorer viewer is running for the setup named \"iso\". Here --view names a saved setup, not a camera. "
+      + "For the setup, run: explorer.mjs open <file> --view iso.");
+    return true;
+  });
   // A setup named by the environment was not typed as a camera, so it gets the plain answer.
   process.env.CAD_EXPLORER_VIEW = "top";
   await assert.rejects(run(["state"], { cwd: directory }), plain);
