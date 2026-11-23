@@ -692,7 +692,7 @@ class CadGenerationTests(unittest.TestCase):
         output_path = self.temp_root / "custom" / "flat-output.step"
         calls: list[cad_generation.EntrySpec] = []
 
-        def fake_generate(spec, *, entries_by_step_path, preloaded_scene=None, **_):
+        def fake_generate(spec, *, entries_by_step_path, **_):
             calls.append(spec)
 
         with mock.patch.object(cad_generation, "_generate_part_outputs", side_effect=fake_generate):
@@ -1813,9 +1813,10 @@ class IssuedRefsWarningTests(unittest.TestCase):
         self.report(None, "newer-hash").warning.assert_not_called()
 
     def test_refs_are_followed_through_a_rebuild_by_every_face_and_edge(self) -> None:
-        def topology(step_hash: str, *centers: list[float]) -> dict[str, object]:
+        def topology(step_hash: str, *centers: list[float], mesh: float = 0.006) -> dict[str, object]:
             return {
                 "stepHash": step_hash,
+                "mesh": {"linearDeflection": mesh},
                 "bbox": {"min": [0.0, 0.0, 0.0], "max": [9.0, 9.0, 9.0]},
                 "stats": {"edgeCount": len(centers)},
                 "tables": {"edgeColumns": ["id", "curveType", "center", "length"]},
@@ -1849,6 +1850,18 @@ class IssuedRefsWarningTests(unittest.TestCase):
         self.assertIn("new face and edge numbering", renumbered.warning.call_args.args[0])
         self.assertIsNone(issued_refs.issued_step_hash(self.spec.step_path))
         rebuild(topology("d", elsewhere, here), topology("e", here, elsewhere)).warning.assert_not_called()
+
+        # One edge moved and the edge that stayed put under another number: renumbered, not merely moved.
+        issued_refs.mark(self.spec.step_path, "e")
+        both = rebuild(topology("e", here, elsewhere), topology("f", [3.0, 3.0, 0.0], here))
+        self.assertIn("new face and edge numbering", both.warning.call_args.args[0])
+        both.info.assert_not_called()
+
+        # The same edges measured on a finer mesh: the numbers hold, and the notice says why the facts can differ.
+        issued_refs.mark(self.spec.step_path, "f")
+        finer = rebuild(topology("f", here, there), topology("g", here, [2.0, 0.001, 0.0], mesh=0.0005))
+        finer.warning.assert_not_called()
+        self.assertIn("was meshed with other settings", finer.info.call_args.args[0])
 
     def test_the_same_bytes_or_no_refs_say_nothing(self) -> None:
         self.report(None, "new-hash").warning.assert_not_called()

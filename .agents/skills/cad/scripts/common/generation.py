@@ -14,7 +14,7 @@ from common.inspect_imports import ensure_inspect_import_path
 
 ensure_inspect_import_path()
 
-from inspect_refs.analysis import refs_moved, selector_manifest_diff
+from inspect_refs.analysis import refs_moved, refs_renumbered, selector_manifest_diff
 from common.assembly_composition import (
     AssemblyCompositionError,
     build_linked_assembly_composition,
@@ -718,9 +718,8 @@ def _report_selector_manifest_change(
         return
     old, new = (previous_refs, next_refs) if previous_refs is not None and next_refs is not None else (previous_manifest, next_manifest)
     change = selector_manifest_diff(old, new)
-    moved = refs_moved(old, new)
     # The same faces and edges under other numbers are a new numbering too, though nothing was added or taken away.
-    if bool(change.get("topologyChanged")) or (moved and not change.get("geometryChanged")):
+    if bool(change.get("topologyChanged")) or refs_renumbered(old, new):
         forget(spec.step_path)
         logger.warning(
             f"{spec.cad_ref} has new face and edge numbering; @cad refs taken from the previous build no longer name "
@@ -728,7 +727,14 @@ def _report_selector_manifest_change(
         )
         return
     mark(spec.step_path, str(next_manifest.get("stepHash") or ""))
-    if moved or bool(change.get("geometryChanged")):
+    if not refs_moved(old, new) and not change.get("geometryChanged"):
+        return
+    if old.get("mesh") != new.get("mesh"):
+        logger.info(
+            f"notice: {spec.cad_ref} kept its face and edge numbering but was meshed with other settings, so areas and "
+            "centres read through older refs can differ even where nothing moved; re-check facts from older refs."
+        )
+    else:
         logger.info(
             f"notice: {spec.cad_ref} kept its face and edge numbering but its geometry moved; re-check facts from older refs."
         )

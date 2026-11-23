@@ -556,6 +556,26 @@ def _geometry_hash(manifest: dict[str, Any], tables: dict[str, list[dict[str, An
     return _stable_hash(_without_negative_zero(described))
 
 
+def refs_renumbered(old_manifest: dict[str, Any], new_manifest: dict[str, Any]) -> bool:
+    """Whether some face, edge or vertex that did not change is found under another number in ``new_manifest``.
+
+    A face or edge with exactly the same geometry in both builds is the same one, so a different number for it is a
+    renumbering, whatever else moved. When nothing stayed where it was, there is nothing to tell by and this says False.
+    """
+    for name, columns in (("faces", "faceColumns"), ("edges", "edgeColumns"), ("vertices", "vertexColumns")):
+        numbers: list[dict[str, list[object]]] = []
+        for manifest in (old_manifest, new_manifest):
+            by_geometry: dict[str, list[object]] = {}
+            for row in _table_rows(manifest, name, columns):
+                key = json.dumps(_without_negative_zero([row.get(field) for field in _GEOMETRY_FIELDS[name]]))
+                by_geometry.setdefault(key, []).append(row.get("id"))
+            numbers.append(by_geometry)
+        old_numbers, new_numbers = numbers
+        if any(sorted(map(str, old_numbers[key])) != sorted(map(str, new_numbers[key])) for key in old_numbers.keys() & new_numbers.keys()):
+            return True
+    return False
+
+
 def refs_moved(old_manifest: dict[str, Any], new_manifest: dict[str, Any]) -> bool:
     """Whether some face, edge or vertex number names other geometry in ``new_manifest`` than in ``old_manifest``.
 

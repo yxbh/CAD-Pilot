@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import zipfile
 from pathlib import Path
 
 from common.tests import cli_host
@@ -205,6 +206,15 @@ class DesignChecksTests(unittest.TestCase):
                 beside, alone = refs(f"out/{name}.step"), refs(f"kept/{name}.step")
                 self.assertGreater(len(beside), fewest)
                 self.assertEqual(beside, alone)
+
+    def test_a_placed_part_keeps_its_name_in_the_3mf(self) -> None:
+        # The STEP holds a part placed away from the origin in an unnamed group; Bambu Studio shows the group's name.
+        (self.root / "placed.py").write_text(PLACED.replace("return Pos", "part = Pos").rstrip() + '\n    part.label = "foot"\n    return part\n')
+        result = self.run_tool("step", "placed.py", "-o", "out/placed.step", "--3mf", "placed.3mf")
+        self.assertEqual(0, result.returncode, result.stderr)
+        with zipfile.ZipFile(self.root / "out/placed.3mf") as package:
+            model = package.read("3D/3dmodel.model").decode("utf-8")
+        self.assertEqual(["foot", "foot"], re.findall(r'<object [^>]*name="([^"]*)"', model))
 
     def test_diff_compares_the_step_files_whatever_sidecars_lie_beside_them(self) -> None:
         def flags(left: str, right: str) -> dict[str, bool]:

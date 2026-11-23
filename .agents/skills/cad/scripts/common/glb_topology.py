@@ -16,7 +16,9 @@ STEP_TOPOLOGY_EXTENSION = "STEP_topology"
 # once it is out of date. Bump it when the selector extraction in step_scene or the GLB topology changes how a STEP is
 # numbered or described, always to a number no earlier tools used in either place: tools of different versions share
 # one cache, and two writing the same file name would keep replacing each other's index.
-STEP_TOPOLOGY_SCHEMA_VERSION = 3
+# 4: sidecars index the STEP as saved, not the shape that wrote it, so refs taken from a version 3 sidecar number
+# edges differently from the STEP's own index.
+STEP_TOPOLOGY_SCHEMA_VERSION = 4
 GLB_MAGIC = 0x46546C67
 GLB_VERSION = 2
 REPO_ROOT = Path.cwd().resolve()

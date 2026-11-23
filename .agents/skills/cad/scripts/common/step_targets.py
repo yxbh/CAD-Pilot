@@ -165,9 +165,9 @@ def step_topology(
     Nothing is written beside the STEP.
 
     ``from_step`` leaves the sidecar out, so the answer depends on the STEP's
-    contents alone. A sidecar indexes the shape that wrote the STEP, and the
-    file read back is not that shape to the last detail: its edges come in
-    another order, and a spline's curve type and meshed area can differ.
+    contents alone: a sidecar's faces and edges are measured on the mesh the
+    STEP was generated with, which ``--mesh-tolerance`` can make finer than
+    the cache index's.
     """
     stamp = _file_stamp(target.step_path)
     step_hash = sha256_file(target.step_path)
