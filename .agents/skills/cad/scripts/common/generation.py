@@ -730,9 +730,11 @@ def _report_selector_manifest_change(
     if not refs_moved(old, new) and not change.get("geometryChanged"):
         return
     if old.get("mesh") != new.get("mesh"):
+        # Measured values come from the mesh, so with other mesh settings a move cannot be told from the mesh alone.
         logger.info(
-            f"notice: {spec.cad_ref} kept its face and edge numbering but was meshed with other settings, so areas and "
-            "centres read through older refs can differ even where nothing moved; re-check facts from older refs."
+            f"notice: {spec.cad_ref} kept its face and edge numbering, but values read through older refs changed and it "
+            "was meshed with other settings, so they may differ because geometry moved or because of the mesh alone; "
+            "re-check facts from older refs."
         )
     else:
         logger.info(

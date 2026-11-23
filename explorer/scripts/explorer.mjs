@@ -294,7 +294,8 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   const action = command === "do" ? args[0] : undefined;
   if (command === "do" && !actionNames().includes(action)) throw new PrototypeError("unknown_action", `Unknown view action "${action ?? ""}". Run "actions" to list them.`);
   const actionArguments = command === "do" ? checkedInput(action, actionInput(args.slice(1))) : undefined;
-  const { record } = await viewer(location, { viewTyped });
+  // A view action already says how to turn the camera, so --view beside do can only name a saved setup.
+  const { record } = await viewer(location, { viewTyped: viewTyped && command !== "do" });
   const detail = flags.full ? "full" : "summary";
   if (command === "state") return call(record, `api/state?detail=${detail}`);
   if (command === "capture" || action === "capture_image") {

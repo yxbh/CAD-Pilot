@@ -361,6 +361,13 @@ class DesignChecksTests(unittest.TestCase):
         self.inspect_json("refs", "@cad[plate#f1]")
         self.assertNotIn("numbering", self.run_tool("step", "plate.py").stderr, "the same source again")
 
+    def test_a_rebuild_with_other_mesh_settings_says_so(self) -> None:
+        # A sphere's measured area follows the mesh, so the same shape meshed finer reads differently through its refs.
+        (self.root / "ball.py").write_text("from build123d import Sphere\n\ndef gen_step():\n    return Sphere(5)\n")
+        self.run_tool("step", "ball.py")
+        self.inspect_json("refs", "@cad[ball#f1]")
+        self.assertIn("meshed with other settings", self.run_tool("step", "ball.py", "--mesh-tolerance", "0.001").stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

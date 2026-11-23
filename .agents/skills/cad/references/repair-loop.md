@@ -18,14 +18,17 @@ An open sketch, a subtractive profile outside the target, zero thickness, a fail
 
 ## Self-intersecting solid
 
-`scripts/step` warns that a part `is not a sound solid`, often with a count of self-intersections, although `is_valid` can still be true. `common.geometry.is_sound(part)` returns `False`, and `self_intersections(part)` returns a tuple of `GeometryIssue`, each with a `code` and its `entities`: the build123d faces, edges or vertices that cross, not coordinates. Locate one with build123d's `.center()` and `.bounding_box()`; with OCP 8, calling OCP's own `Bnd_Box.Get()` raises a `TypeError`. Inside a generator the import below works as written and `scripts/step --verbose` shows what it prints; a script run on its own first needs `<cad>/scripts` on `sys.path`.
+`scripts/step` warns that a part `is not a sound solid`, often with a count of self-intersections, although `is_valid` can still be true. `common.geometry.is_sound(part)` returns `False`, and `self_intersections(part)` returns a tuple of `GeometryIssue`, each with a `code` and its `entities`: the build123d faces, edges or vertices that cross, not coordinates. When the kernel also finds faults other than crossings, as it often does for a badly folded sweep, the check is inconclusive and raises `GeometryError` instead; then find the first unsound intermediate, as below. Locate an entity with build123d's `.center()` and `.bounding_box()`; with OCP 8, calling OCP's own `Bnd_Box.Get()` raises a `TypeError`. Inside a generator the import below works as written and `scripts/step --verbose` shows what it prints; a script run on its own first needs `<cad>/scripts` on `sys.path`.
 
 ```python
-from common.geometry import self_intersections
+from common.geometry import GeometryError, self_intersections
 
-for issue in self_intersections(part):
-    for entity in issue.entities:
-        print(issue.code, type(entity).__name__, entity.center(), entity.bounding_box())
+try:
+    for issue in self_intersections(part):
+        for entity in issue.entities:
+            print(issue.code, type(entity).__name__, entity.center(), entity.bounding_box())
+except GeometryError as error:
+    print(error)
 ```
 
 - Usual causes: a sweep whose profile reaches farther toward the inside of a bend than the bend's radius, so the inner side folds through itself (a thick handle around a tight curve), or other crossing surfaces, such as a loft through a self-crossing section.
