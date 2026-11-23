@@ -431,10 +431,17 @@ class _SceneObjectWriter:
         append_component_object(
             self.resources,
             object_id=object_id,
-            name=_object_name(node.name or node.source_name, f"component-{object_id}"),
+            name=_object_name(node.name or node.source_name or self._only_child_name(node), f"component-{object_id}"),
             components=components,
         )
         return object_id
+
+    def _only_child_name(self, node: OccurrenceNode) -> str | None:
+        """The name of a group's only child: a STEP holds a part placed away from the origin in an unnamed group."""
+        if len(node.children) != 1:
+            return None
+        child = node.children[0]
+        return child.name or child.source_name or self.scene.prototype_names.get(child.prototype_key)
 
 
 def build_model_root(metadata: Mapping[str, str] | None = None) -> tuple[ET.Element, ET.Element, ET.Element]:

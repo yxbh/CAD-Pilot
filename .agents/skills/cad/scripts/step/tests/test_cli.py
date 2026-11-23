@@ -112,6 +112,7 @@ class StepCliTests(unittest.TestCase):
         self.assertIn("--mesh-tolerance", help_text)
         self.assertIn("--verbose", help_text)
         self.assertIn("--no-solid-check", help_text)
+        self.assertEqual(2, " ".join(help_text.split()).count("relative to the STEP's folder, not the current folder"))
 
 
 if __name__ == "__main__":

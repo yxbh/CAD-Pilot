@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import zipfile
 from pathlib import Path
 
 from common.tests import cli_host
@@ -60,6 +61,32 @@ CABINET = textwrap.dedent(
         }
     """
 )
+
+VASE = textwrap.dedent(
+    """\
+    from build123d import Circle, Pos, Rectangle, loft
+
+    NECK = 5.0
+
+    def gen_step():
+        return loft([Rectangle(20, 12), Pos(0, 0, 15) * Circle(NECK)])
+    """
+)
+
+# A filleted, drilled plate, whose edges the STEP lists in another order than the shape that wrote it, and a part
+# placed away from the origin, which the STEP holds one level down.
+PLATE = textwrap.dedent(
+    """\
+    from build123d import Axis, Box, Cylinder, Pos, fillet
+
+    def gen_step():
+        plate = Box(30, 20, 5) - Pos(8, 0, 0) * Cylinder(3, 5)
+        return fillet(plate.edges().filter_by(Axis.Z), 2)
+    """
+)
+PLACED = "from build123d import Box, Pos\n\ndef gen_step():\n    return Pos(10, 0, 5) * Box(10, 8, 6)\n"
+
+BLOCK = "from build123d import Box, Circle, Cylinder, Pos, Rectangle, extrude\n\ndef gen_step():\n    return {build}\n"
 
 UNLABELLED = textwrap.dedent(
     """\
@@ -155,6 +182,64 @@ class DesignChecksTests(unittest.TestCase):
 
         text = self.run_tool("inspect", "clearance", "out/cabinet.step", "--poses", "cabinet.py", "--format", "text")
         self.assertIn("overlap  cabinet/box / cabinet/drawer", text.stdout)
+
+        same = self.run_tool("inspect", "diff", "out/cabinet.step", "out/cabinet.step", "--format", "text")
+        self.assertEqual(
+            ["topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False", "faceDelta=0 edgeDelta=0"],
+            same.stdout.splitlines(),
+        )
+
+    def test_a_ref_names_the_same_geometry_with_or_without_the_sidecar(self) -> None:
+        def refs(path: str) -> dict[str, dict]:
+            listed = self.inspect_json("refs", path, "--topology")["tokens"][0]["topology"]
+            selectors = [*listed["occurrences"], *listed["shapes"], *listed["faces"], *listed["edges"]]
+            detailed = self.inspect_json("refs", f"@cad[{path.removesuffix('.step')}#{','.join(selectors)}]", "--detail")
+            return {selection["normalizedSelector"]: selection["detail"] for selection in detailed["tokens"][0]["selections"]}
+
+        (self.root / "kept").mkdir()
+        for name, source, fewest in (("plate", PLATE, 30), ("placed", PLACED, 15)):
+            with self.subTest(name):
+                self.generate(name, source)
+                shutil.copy2(self.root / f"out/{name}.step", self.root / f"kept/{name}.step")
+                self.assertTrue((self.root / f"out/.{name}.step.glb").is_file())
+                self.assertFalse((self.root / f"kept/.{name}.step.glb").exists())
+                beside, alone = refs(f"out/{name}.step"), refs(f"kept/{name}.step")
+                self.assertGreater(len(beside), fewest)
+                self.assertEqual(beside, alone)
+
+    def test_a_placed_part_keeps_its_name_in_the_3mf(self) -> None:
+        # The STEP holds a part placed away from the origin in an unnamed group; Bambu Studio shows the group's name.
+        (self.root / "placed.py").write_text(PLACED.replace("return Pos", "part = Pos").rstrip() + '\n    part.label = "foot"\n    return part\n')
+        result = self.run_tool("step", "placed.py", "-o", "out/placed.step", "--3mf", "placed.3mf")
+        self.assertEqual(0, result.returncode, result.stderr)
+        with zipfile.ZipFile(self.root / "out/placed.3mf") as package:
+            model = package.read("3D/3dmodel.model").decode("utf-8")
+        self.assertEqual(["foot", "foot"], re.findall(r'<object [^>]*name="([^"]*)"', model))
+
+    def test_diff_compares_the_step_files_whatever_sidecars_lie_beside_them(self) -> None:
+        def flags(left: str, right: str) -> dict[str, bool]:
+            diff = self.inspect_json("diff", left, right)["diff"]
+            return {name[: -len("Changed")]: changed for name, changed in diff.items() if name.endswith("Changed") and changed}
+
+        # A spline surface: its STEP, read back, is not the modelled shape to the last digit, as the sidecar is.
+        self.generate("vase", VASE)
+        (self.root / "kept").mkdir()
+        shutil.copy2(self.root / "out/vase.step", self.root / "kept/vase.step")
+        self.assertFalse((self.root / "kept/.vase.step.glb").exists())
+        self.assertEqual({}, flags("kept/vase.step", "out/vase.step"), "a copy without its sidecar")
+        self.generate("vase", VASE)
+        self.assertEqual({}, flags("kept/vase.step", "out/vase.step"), "the same source generated again")
+
+        self.generate("vase", VASE.replace("NECK = 5.0", "NECK = 5.2"))
+        self.assertEqual({"geometry": True}, flags("kept/vase.step", "out/vase.step"), "a neck 0.2 mm wider")
+
+        # The same block built two ways is the same geometry, though its edges are numbered in another order.
+        self.generate("block", BLOCK.format(build="Box(10, 10, 10) - Cylinder(2, 10)"))
+        self.generate("pad", BLOCK.format(build="extrude(Pos(0, 0, -5) * (Rectangle(10, 10) - Circle(2)), 10)"))
+        self.assertEqual({}, flags("out/block.step", "out/pad.step"))
+        # The same faces around nothing: an open shell of the block is not the block.
+        self.generate("skin", BLOCK.format(build="(Box(10, 10, 10) - Cylinder(2, 10)).shell()"))
+        self.assertEqual({"geometry": True}, flags("out/block.step", "out/skin.step"))
 
     def test_unlabelled_parts_get_group_names_and_one_warning(self) -> None:
         result = self.generate("kit", UNLABELLED)
@@ -267,6 +352,21 @@ class DesignChecksTests(unittest.TestCase):
         self.assertIn("new face and edge numbering", self.run_tool("step", "plate.py").stderr)
         source.write_text(holed)
         self.assertNotIn("numbering", self.run_tool("step", "plate.py").stderr)
+
+        # A hole moved inside the plate keeps every number and the overall box; refs taken before it are told.
+        moved = holed.replace("- Cylinder(3, 10)", "- Pos(4, 0, 0) * Cylinder(3, 10)").replace("Cylinder\n", "Cylinder, Pos\n")
+        self.inspect_json("refs", "@cad[plate#f1]")
+        source.write_text(moved)
+        self.assertIn("kept its face and edge numbering but its geometry moved", self.run_tool("step", "plate.py").stderr)
+        self.inspect_json("refs", "@cad[plate#f1]")
+        self.assertNotIn("numbering", self.run_tool("step", "plate.py").stderr, "the same source again")
+
+    def test_a_rebuild_with_other_mesh_settings_says_so(self) -> None:
+        # A sphere's measured area follows the mesh, so the same shape meshed finer reads differently through its refs.
+        (self.root / "ball.py").write_text("from build123d import Sphere\n\ndef gen_step():\n    return Sphere(5)\n")
+        self.run_tool("step", "ball.py")
+        self.inspect_json("refs", "@cad[ball#f1]")
+        self.assertIn("meshed with other settings", self.run_tool("step", "ball.py", "--mesh-tolerance", "0.001").stderr)
 
 
 if __name__ == "__main__":

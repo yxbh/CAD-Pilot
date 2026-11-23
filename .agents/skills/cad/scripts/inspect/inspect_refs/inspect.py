@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -194,6 +194,7 @@ def _load_entry_context(
     *,
     profile: SelectorProfile,
     context_provider: EntryContextProvider | None = None,
+    from_step: bool = False,
 ) -> EntryContext:
     if context_provider is not None:
         context = context_provider(cad_path, profile)
@@ -201,15 +202,16 @@ def _load_entry_context(
             return context
 
     target = resolve_step_target(cad_path)
-    return _load_step_context(target, profile=profile)
+    return _load_step_context(target, profile=profile, from_step=from_step)
 
 
 def _load_step_context(
     target: ResolvedStepTarget,
     *,
     profile: SelectorProfile,
+    from_step: bool = False,
 ) -> EntryContext:
-    artifact = step_topology(target, require_selector=(profile != SelectorProfile.SUMMARY))
+    artifact = step_topology(target, require_selector=(profile != SelectorProfile.SUMMARY), from_step=from_step)
     if artifact.selector_bundle is None:
         manifest = lookup.without_open_boxes(artifact.manifest)
         selector_index = None
@@ -469,8 +471,12 @@ def load_entry_context_for_target(
     *,
     profile: SelectorProfile = SelectorProfile.REFS,
     context_provider: EntryContextProvider | None = None,
+    from_step: bool = False,
 ) -> EntryContext:
-    return _load_entry_context(cad_path_from_target(target), profile=profile, context_provider=context_provider)
+    """The entry a target names. ``from_step`` indexes the STEP itself, leaving out a sidecar beside it."""
+    return _load_entry_context(
+        cad_path_from_target(target), profile=profile, context_provider=context_provider, from_step=from_step
+    )
 
 
 def _parse_single_target_token(target: str) -> syntax.ParsedToken:
@@ -762,15 +768,23 @@ def diff_entry_targets(
     plane_limit: int = 12,
     context_provider: EntryContextProvider | None = None,
 ) -> dict[str, object]:
+    # Both files are indexed from their own contents, so a file compares the same with or without a sidecar.
     left_context = load_entry_context_for_target(
         left_target,
         profile=SelectorProfile.REFS,
         context_provider=context_provider,
+        from_step=True,
     )
     right_context = load_entry_context_for_target(
         right_target,
         profile=SelectorProfile.REFS,
         context_provider=context_provider,
+        from_step=True,
+    )
+    # Whether a file is a part or an assembly is what generation recorded beside it, which no STEP says of itself.
+    left_context, right_context = (
+        replace(context, kind=load_entry_context_for_target(target, profile=SelectorProfile.SUMMARY, context_provider=context_provider).kind)
+        for context, target in ((left_context, left_target), (right_context, right_target))
     )
 
     diff_payload = analysis.selector_manifest_diff(left_context.manifest, right_context.manifest)

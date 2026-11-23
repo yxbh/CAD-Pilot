@@ -22,7 +22,7 @@ python <cad>/scripts/print presets H2D 0.4 PETG
 
 ## The personal print profile
 
-Printer, process, build plate, filaments, colours and supports are stored once per user in `~/.cad-pilot/print-profile.json`, outside every repository. Every job uses it; a job's `profile` table overrides it for that project, except `bambu_studio`, which belongs to the machine.
+Printer, process, build plate, filaments, colours and supports are stored once per user in `~/.cad-pilot/print-profile.json`, outside every repository. Every job uses it; a job's `profile` table overrides it for that project, except `bambu_studio`, which belongs to the machine. The job's table is merged onto the saved profile key by key, so whatever the job leaves out still applies: leaving a filament out of the job's `filaments` does not remove it, and the saved support interface filament is still used. To print a job without the interface, set `{"support": {"interface_filament": null}}` in its `profile`.
 
 ```json
 {
@@ -61,7 +61,7 @@ When the file is missing, ask the user, one plain question at a time, which prin
 
 ## Print jobs
 
-A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file, with either separator, so a job written on Windows also works on macOS; a root or drive is refused. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`.
+A job file, conventionally `<name>.print.json` beside the project's print outputs, lists named plates and the part files on each. Paths are relative to the job file, with either separator, so a job written on Windows also works on macOS; a root or drive is refused. One job writes one 3MF, by default `<name>.3mf` beside the job, or its `output`. For a handoff, put all its parts in one job, so the user gets one 3MF, and name each plate for what it holds and when to print it, as `Fit test - print first` does below; slice it and read every plate's result before handing the file over. A calibration coupon keeps the project of its own that `coupon --calibrate` writes.
 
 ```json
 {
@@ -105,7 +105,7 @@ To measure a filament's compensation:
 
 - Bed contact: area and number of separate contact islands; undersides a little above the bed, which print on support or air, usually a bed face split into two heights.
 - Overhangs: area tilted past 45 degrees from vertical (a review trigger), and area past the slicer's support angle (needs support), by region.
-- Flat undersides: a bridge, held from below on opposite sides, with its span; an overhang, held on one side, with how far it reaches out; or an island, held nowhere. Each reports the material above it, so a thin wall laid on its side shows as a thin shelf.
+- Flat undersides: a bridge, held from below on opposite sides, with its span; an overhang, held on one side, with how far it reaches out; or an island, held nowhere. Each reports the material above it, so a thin wall laid on its side shows as a thin shelf. A bridge spanning at least 5 mm is flagged for review; `check --bridge-limit` sets another span for that command, and `project` always uses 5 mm.
 - Walls thinner than two line widths in sampled layer outlines, with their thickness and the heights they run through. Thin places are found on a raster, then measured across the outline itself on lines 5 degrees apart through points spaced along their middle, counting only lines that cross the material about square-on, so a line that cuts off the corner of a thicker wall does not count. A place is listed when any of those measures under two line widths, and its thickness is that of its thinnest part, taken as the second thinnest measurement so that one stray line does not set it: a straight wall reads within 0.1% of its thickness wherever the raster falls, walls that cross or turn a corner read as thick as the walls themselves, a tapered wall reads near its thin end, a thin rib on a thin wall reads as the rib, and a wall at least two line widths thick is not listed. A thin rib or spur on such a wall is listed when it reaches out at least about 3 mm (0.3 mm thick) to 1.5 mm (0.6 mm thick); a shorter one only sometimes, when the wall is within about a raster pitch of two line widths. A sharp tip, whose faces meet at under about 25 degrees, is listed near its point, where it is thinner than two line widths; blunter corners are not. A large place is measured at a bounded number of points at each raster depth, so a part of it less than about a raster pitch thinner than the rest can read as the rest. Where no line across a place is found, the raster's own estimate stands, which can read up to two raster pitches thin. Thin places shorter than 1 mm, such as chamfer and fillet edges, are counted rather than listed.
 - Holes the sampled layer outlines enclose: those narrower than the larger of 1 mm and 2.5 nozzle diameters, measured as the widest round pin that fits, with the heights they run through; and those that open to the outside at a neighbouring sampled height, with both heights. Small holes shallower than 1 mm, such as marking dimples, are counted rather than listed, and holes under about two raster pitches across are not seen.
 

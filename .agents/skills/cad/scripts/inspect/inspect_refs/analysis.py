@@ -521,6 +521,76 @@ def _stable_hash(payload: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+# What places and sizes each thing a model is made of, apart from its number: a solid's kind and volume say which
+# side of its faces holds material, which the faces of a closed surface do not.
+_GEOMETRY_FIELDS = {
+    "shapes": ("kind", "volume"),
+    "faces": ("surfaceType", "center", "normal", "bbox", "area"),
+    "edges": ("curveType", "center", "bbox", "length"),
+    "vertices": ("center", "bbox"),
+}
+
+
+def _without_negative_zero(value: Any) -> Any:
+    """``value`` with every -0.0 as 0.0: a coordinate rounded from just below zero is the one rounded from just above."""
+    if isinstance(value, float):
+        return value + 0.0
+    if isinstance(value, dict):
+        return {key: _without_negative_zero(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_without_negative_zero(item) for item in value]
+    return value
+
+
+def _geometry_hash(manifest: dict[str, Any], tables: dict[str, list[dict[str, Any]]]) -> str:
+    """A hash of what a model's solids are and where its faces, edges and vertices lie.
+
+    Each table is taken as a collection without order or numbers, so the hash is the same however the model's
+    faces and edges were numbered and whichever part they were filed under: the same shape built another way
+    numbers them in another order.
+    """
+    described: dict[str, object] = {"bbox": manifest.get("bbox")}
+    for name, rows in tables.items():
+        entities = ({field: row.get(field) for field in _GEOMETRY_FIELDS[name]} for row in rows)
+        described[name] = sorted(json.dumps(_without_negative_zero(entity), sort_keys=True) for entity in entities)
+    return _stable_hash(_without_negative_zero(described))
+
+
+def refs_renumbered(old_manifest: dict[str, Any], new_manifest: dict[str, Any]) -> bool:
+    """Whether some face, edge or vertex that did not change is found under another number in ``new_manifest``.
+
+    A face or edge with exactly the same geometry in both builds is the same one, so a different number for it is a
+    renumbering, whatever else moved. When nothing stayed where it was, there is nothing to tell by and this says False.
+    """
+    for name, columns in (("faces", "faceColumns"), ("edges", "edgeColumns"), ("vertices", "vertexColumns")):
+        numbers: list[dict[str, list[object]]] = []
+        for manifest in (old_manifest, new_manifest):
+            by_geometry: dict[str, list[object]] = {}
+            for row in _table_rows(manifest, name, columns):
+                key = json.dumps(_without_negative_zero([row.get(field) for field in _GEOMETRY_FIELDS[name]]))
+                by_geometry.setdefault(key, []).append(row.get("id"))
+            numbers.append(by_geometry)
+        old_numbers, new_numbers = numbers
+        if any(sorted(map(str, old_numbers[key])) != sorted(map(str, new_numbers[key])) for key in old_numbers.keys() & new_numbers.keys()):
+            return True
+    return False
+
+
+def refs_moved(old_manifest: dict[str, Any], new_manifest: dict[str, Any]) -> bool:
+    """Whether some face, edge or vertex number names other geometry in ``new_manifest`` than in ``old_manifest``.
+
+    Manifests that list no faces or edges, as an index's summary does not, have nothing to compare and say False.
+    """
+    for name, columns in (("faces", "faceColumns"), ("edges", "edgeColumns"), ("vertices", "vertexColumns")):
+        described = [
+            {row.get("id"): [row.get(field) for field in _GEOMETRY_FIELDS[name]] for row in _table_rows(manifest, name, columns)}
+            for manifest in (old_manifest, new_manifest)
+        ]
+        if any(described[0][ref] != described[1][ref] for ref in described[0].keys() & described[1].keys()):
+            return True
+    return False
+
+
 def selector_manifest_diff(
     old_manifest: dict[str, Any] | None,
     new_manifest: dict[str, Any],
@@ -561,70 +631,8 @@ def selector_manifest_diff(
         "edgeCount": new_manifest.get("stats", {}).get("edgeCount"),
         "vertexCount": new_manifest.get("stats", {}).get("vertexCount"),
     }
-    old_geometry = {
-        "bbox": old_manifest.get("bbox"),
-        "faces": [
-            {
-                "id": row.get("id"),
-                "surfaceType": row.get("surfaceType"),
-                "center": row.get("center"),
-                "normal": row.get("normal"),
-                "bbox": row.get("bbox"),
-                "area": row.get("area"),
-            }
-            for row in old_faces
-        ],
-        "edges": [
-            {
-                "id": row.get("id"),
-                "curveType": row.get("curveType"),
-                "center": row.get("center"),
-                "bbox": row.get("bbox"),
-                "length": row.get("length"),
-            }
-            for row in old_edges
-        ],
-        "vertices": [
-            {
-                "id": row.get("id"),
-                "center": row.get("center"),
-                "bbox": row.get("bbox"),
-            }
-            for row in old_vertices
-        ],
-    }
-    new_geometry = {
-        "bbox": new_manifest.get("bbox"),
-        "faces": [
-            {
-                "id": row.get("id"),
-                "surfaceType": row.get("surfaceType"),
-                "center": row.get("center"),
-                "normal": row.get("normal"),
-                "bbox": row.get("bbox"),
-                "area": row.get("area"),
-            }
-            for row in new_faces
-        ],
-        "edges": [
-            {
-                "id": row.get("id"),
-                "curveType": row.get("curveType"),
-                "center": row.get("center"),
-                "bbox": row.get("bbox"),
-                "length": row.get("length"),
-            }
-            for row in new_edges
-        ],
-        "vertices": [
-            {
-                "id": row.get("id"),
-                "center": row.get("center"),
-                "bbox": row.get("bbox"),
-            }
-            for row in new_vertices
-        ],
-    }
+    old_tables = {"shapes": _table_rows(old_manifest, "shapes", "shapeColumns"), "faces": old_faces, "edges": old_edges, "vertices": old_vertices}
+    new_tables = {"shapes": _table_rows(new_manifest, "shapes", "shapeColumns"), "faces": new_faces, "edges": new_edges, "vertices": new_vertices}
 
     count_delta = {
         "faceCount": int(new_manifest.get("stats", {}).get("faceCount") or 0)
@@ -640,7 +648,7 @@ def selector_manifest_diff(
     return {
         "hasPrevious": True,
         "topologyChanged": _stable_hash(old_topology) != _stable_hash(new_topology),
-        "geometryChanged": _stable_hash(old_geometry) != _stable_hash(new_geometry),
+        "geometryChanged": _geometry_hash(old_manifest, old_tables) != _geometry_hash(new_manifest, new_tables),
         "bboxChanged": old_manifest.get("bbox") != new_manifest.get("bbox"),
         "countDelta": count_delta,
     }

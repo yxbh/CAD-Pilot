@@ -100,6 +100,10 @@ def test_profile_reads_and_project_overrides_merge_key_by_key(tmp_path):
     assert profile.filaments["PLA"].colour == "#FFFFFF"
     assert profile.process_settings == {"resolution": "0.003", "slice_closing_radius": "0.01"}
     assert profile.support_interface == "PLA"
+    # A job that names one filament keeps the others, and only a null turns the saved support interface off.
+    assert set(load_profile({"filaments": {"PETG": {"colour": "#688197"}}, "support": {}}, path=path).filaments) == {"PETG", "PLA"}
+    without = load_profile({"support": {"interface_filament": None}}, path=path)
+    assert (without.support_interface, without.support_type) == (None, "tree(auto)")
 
 
 def test_missing_profile_says_what_to_ask(tmp_path):

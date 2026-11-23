@@ -19,7 +19,7 @@ Skip it, and say why and which geometry checks still ran, when no visible geomet
 | Hole or boss patterns, outlines, symmetry | the axis view facing the pattern, with `do set_projection projection=orthographic` |
 | The profile of a part revolved about Z, such as a pot's wall, floor and rim | `do set_view preset=front`, orthographic, with `do set_section enabled=true axis=y position=0 flipped=true` |
 | Internal cavities, bores, blind holes, wall and floor thickness | a section through the feature (`axis`, and `position` at its centre), viewed from the side the cut faces |
-| Lid seating, fits and interfaces between parts | an orthographic side view plus a section through the interface; `do isolate id=<occurrence>` to look at one part alone |
+| Lid seating, fits and interfaces between parts | an orthographic side view plus a section through the interface; `do isolate id=<part id>` (the `id` that `state --full` lists beside the part's label) to look at one part alone |
 | A reproduction of a photo | the axis view closest to the photo's viewpoint |
 | Assembly order | `do set_step step=<n>`, as the visual-review skill describes |
 

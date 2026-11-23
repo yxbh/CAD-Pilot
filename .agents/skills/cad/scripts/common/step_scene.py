@@ -1798,6 +1798,12 @@ def extract_selectors_from_scene(
         "stepHash": _scene_step_hash(scene),
         "bbox": _compact_bbox(overall_bbox, normalized_options.digits),
         "stats": stats,
+        # Face areas, centres and boxes are measured on this mesh, so two indexes compare only at equal settings.
+        "mesh": {
+            "linearDeflection": normalized_options.linear_deflection,
+            "angularDeflection": normalized_options.angular_deflection,
+            "relative": normalized_options.relative,
+        },
         "tables": {
             "occurrenceColumns": occurrence_columns,
             "shapeColumns": shape_columns,

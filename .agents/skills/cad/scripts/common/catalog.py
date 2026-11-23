@@ -331,7 +331,7 @@ def _read_step_source(
             base_path=resolved_step_path,
             default_path=None,
             expected_suffixes=(".stl",),
-            field_name="stl",
+            field_name="--stl",
         )
         if options.stl is not None
         else None
@@ -342,7 +342,7 @@ def _read_step_source(
             base_path=resolved_step_path,
             default_path=None,
             expected_suffixes=(".3mf",),
-            field_name="3mf",
+            field_name="--3mf",
         )
         if options.three_mf is not None
         else None
@@ -466,7 +466,10 @@ def _resolve_configured_artifact_path(
         value = raw_value.strip()
         pure = relative_path(value)
         if pure is None:
-            raise CadSourceError(f"{_relative_to_repo(base_path)} {field_name} must be relative")
+            raise CadSourceError(
+                f"{_relative_to_repo(base_path)} {field_name} takes a file path relative to that file's folder; "
+                f"got {value}"
+            )
         resolved = (base_path.parent.resolve() / Path(*pure.parts)).resolve()
     suffix = resolved.suffix.lower()
     if suffix not in expected_suffixes:

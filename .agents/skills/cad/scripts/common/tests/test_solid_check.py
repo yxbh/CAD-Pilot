@@ -147,7 +147,7 @@ class SolidCheckReportTests(unittest.TestCase):
         )
 
         consequence = "Slicers and later booleans may fail on it; the outputs were still written."
-        skip = "Pass --no-solid-check to skip the check."
+        skip = "Raise CAD_SOLID_CHECK_TIME_SCALE (1 by default) to give the check more time, or pass --no-solid-check to skip it."
         self.assertEqual(
             [
                 f"[scripts/step] warning: kit.py is inside out: its faces point inward, so its volume is negative. {consequence}",
