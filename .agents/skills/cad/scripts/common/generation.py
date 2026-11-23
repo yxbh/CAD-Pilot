@@ -718,7 +718,7 @@ def _report_selector_manifest_change(
         )
         return
     mark(spec.step_path, str(next_manifest.get("stepHash") or ""))
-    if bool(change.get("refsChanged")):
+    if bool(change.get("geometryChanged")):
         logger.info(
             f"notice: {spec.cad_ref} kept its face and edge numbering but its geometry moved; re-check facts from older refs."
         )

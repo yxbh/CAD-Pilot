@@ -72,6 +72,8 @@ VASE = textwrap.dedent(
     """
 )
 
+BLOCK = "from build123d import Box, Circle, Cylinder, Pos, Rectangle, extrude\n\ndef gen_step():\n    return {build}\n"
+
 UNLABELLED = textwrap.dedent(
     """\
     from build123d import Box, Compound, Pos
@@ -169,10 +171,7 @@ class DesignChecksTests(unittest.TestCase):
 
         same = self.run_tool("inspect", "diff", "out/cabinet.step", "out/cabinet.step", "--format", "text")
         self.assertEqual(
-            [
-                "topologyChanged=False, geometryChanged=False, refsChanged=False, bboxChanged=False, kindChanged=False",
-                "faceDelta=0 edgeDelta=0",
-            ],
+            ["topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False", "faceDelta=0 edgeDelta=0"],
             same.stdout.splitlines(),
         )
 
@@ -191,12 +190,15 @@ class DesignChecksTests(unittest.TestCase):
         self.assertEqual({}, flags("kept/vase.step", "out/vase.step"), "the same source generated again")
 
         self.generate("vase", VASE.replace("NECK = 5.0", "NECK = 5.2"))
-        self.assertEqual({"geometry": True, "refs": True}, flags("kept/vase.step", "out/vase.step"), "a neck 0.2 mm wider")
+        self.assertEqual({"geometry": True}, flags("kept/vase.step", "out/vase.step"), "a neck 0.2 mm wider")
 
-        # The same cube built two ways: the geometry is the same, and its edges are numbered in another order.
-        self.generate("cube", "from build123d import Box\n\ndef gen_step():\n    return Box(10, 10, 10)\n")
-        self.generate("pad", "from build123d import Pos, Rectangle, extrude\n\ndef gen_step():\n    return extrude(Pos(0, 0, -5) * Rectangle(10, 10), 10)\n")
-        self.assertEqual({"refs": True}, flags("out/cube.step", "out/pad.step"))
+        # The same block built two ways is the same geometry, though its edges are numbered in another order.
+        self.generate("block", BLOCK.format(build="Box(10, 10, 10) - Cylinder(2, 10)"))
+        self.generate("pad", BLOCK.format(build="extrude(Pos(0, 0, -5) * (Rectangle(10, 10) - Circle(2)), 10)"))
+        self.assertEqual({}, flags("out/block.step", "out/pad.step"))
+        # The same faces around nothing: an open shell of the block is not the block.
+        self.generate("skin", BLOCK.format(build="(Box(10, 10, 10) - Cylinder(2, 10)).shell()"))
+        self.assertEqual({"geometry": True}, flags("out/block.step", "out/skin.step"))
 
     def test_unlabelled_parts_get_group_names_and_one_warning(self) -> None:
         result = self.generate("kit", UNLABELLED)

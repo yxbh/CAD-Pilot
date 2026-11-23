@@ -521,8 +521,10 @@ def _stable_hash(payload: object) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-# What places and sizes a face, an edge or a vertex, apart from its number.
+# What places and sizes each thing a model is made of, apart from its number: a solid's kind and volume say which
+# side of its faces holds material, which the faces of a closed surface do not.
 _GEOMETRY_FIELDS = {
+    "shapes": ("kind", "volume"),
     "faces": ("surfaceType", "center", "normal", "bbox", "area"),
     "edges": ("curveType", "center", "bbox", "length"),
     "vertices": ("center", "bbox"),
@@ -540,20 +542,17 @@ def _without_negative_zero(value: Any) -> Any:
     return value
 
 
-def _geometry_hash(manifest: dict[str, Any], tables: dict[str, list[dict[str, Any]]], *, by_id: bool) -> str:
-    """A hash of where a model's faces, edges and vertices are.
+def _geometry_hash(manifest: dict[str, Any], tables: dict[str, list[dict[str, Any]]]) -> str:
+    """A hash of what a model's solids are and where its faces, edges and vertices lie.
 
-    ``by_id`` keeps each one under its own number, so the hash tells whether every ref still names the same
-    geometry. Without it they are taken as a set, so the hash is the same however they were numbered and whichever
-    part they were filed under: the same shape built another way numbers its faces and edges in another order.
+    Each table is taken as a collection without order or numbers, so the hash is the same however the model's
+    faces and edges were numbered and whichever part they were filed under: the same shape built another way
+    numbers them in another order.
     """
     described: dict[str, object] = {"bbox": manifest.get("bbox")}
     for name, rows in tables.items():
-        entities = [{field: row.get(field) for field in _GEOMETRY_FIELDS[name]} for row in rows]
-        if by_id:
-            described[name] = [{"id": row.get("id"), **entity} for row, entity in zip(rows, entities)]
-        else:
-            described[name] = sorted(json.dumps(_without_negative_zero(entity), sort_keys=True) for entity in entities)
+        entities = ({field: row.get(field) for field in _GEOMETRY_FIELDS[name]} for row in rows)
+        described[name] = sorted(json.dumps(_without_negative_zero(entity), sort_keys=True) for entity in entities)
     return _stable_hash(_without_negative_zero(described))
 
 
@@ -566,7 +565,6 @@ def selector_manifest_diff(
             "hasPrevious": False,
             "topologyChanged": False,
             "geometryChanged": False,
-            "refsChanged": False,
             "bboxChanged": False,
             "countDelta": {},
         }
@@ -598,8 +596,8 @@ def selector_manifest_diff(
         "edgeCount": new_manifest.get("stats", {}).get("edgeCount"),
         "vertexCount": new_manifest.get("stats", {}).get("vertexCount"),
     }
-    old_tables = {"faces": old_faces, "edges": old_edges, "vertices": old_vertices}
-    new_tables = {"faces": new_faces, "edges": new_edges, "vertices": new_vertices}
+    old_tables = {"shapes": _table_rows(old_manifest, "shapes", "shapeColumns"), "faces": old_faces, "edges": old_edges, "vertices": old_vertices}
+    new_tables = {"shapes": _table_rows(new_manifest, "shapes", "shapeColumns"), "faces": new_faces, "edges": new_edges, "vertices": new_vertices}
 
     count_delta = {
         "faceCount": int(new_manifest.get("stats", {}).get("faceCount") or 0)
@@ -615,10 +613,7 @@ def selector_manifest_diff(
     return {
         "hasPrevious": True,
         "topologyChanged": _stable_hash(old_topology) != _stable_hash(new_topology),
-        "geometryChanged": _geometry_hash(old_manifest, old_tables, by_id=False)
-        != _geometry_hash(new_manifest, new_tables, by_id=False),
-        "refsChanged": _geometry_hash(old_manifest, old_tables, by_id=True)
-        != _geometry_hash(new_manifest, new_tables, by_id=True),
+        "geometryChanged": _geometry_hash(old_manifest, old_tables) != _geometry_hash(new_manifest, new_tables),
         "bboxChanged": old_manifest.get("bbox") != new_manifest.get("bbox"),
         "countDelta": count_delta,
     }

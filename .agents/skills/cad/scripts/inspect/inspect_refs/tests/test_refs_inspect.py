@@ -732,27 +732,56 @@ class InspectRefsTests(unittest.TestCase):
             self.assertTrue(refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")["ok"])
             build.assert_called_once()
 
-    def test_diff_tells_moved_geometry_from_moved_numbers(self) -> None:
-        def manifest(*edges: tuple[str, list[float]]) -> dict[str, object]:
+    def test_diff_reports_the_kind_generation_recorded(self) -> None:
+        # The file's own index says "part" of every STEP; "assembly" is what scripts/step recorded in the sidecar.
+        own = {**_refs_manifest(self.cad_ref), "schemaVersion": STEP_TOPOLOGY_SCHEMA_VERSION, "entryKind": "part"}
+        recorded = {**own, "entryKind": "assembly"}
+
+        def manifest_of(glb_path: Path) -> dict[str, object]:
+            return recorded if glb_path == part_glb_path(self.step_path) else own
+
+        with self._mock_glb_topology(own, in_cache=True), mock.patch.object(
+            step_targets, "read_step_topology_manifest_from_glb", side_effect=manifest_of
+        ):
+            self._touch_glb()
+            result = refs_inspect.diff_entry_targets(f"@cad[{self.cad_ref}]", f"@cad[{self.cad_ref}]")
+
+        self.assertEqual(("assembly", "assembly", False), (result["left"]["kind"], result["right"]["summary"]["kind"], result["diff"]["kindChanged"]))
+
+    def test_diff_compares_geometry_whatever_its_numbers(self) -> None:
+        def manifest(*, edges=(), faces=(), shapes=()) -> dict[str, object]:
             return {
-                "bbox": {"min": [0.0, 0.0, 0.0], "max": [1.0, 0.0, 0.0]},
-                "stats": {"edgeCount": len(edges)},
-                "tables": {"edgeColumns": ["id", "curveType", "center", "length"]},
-                "edges": [[edge_id, "line", center, 1.0] for edge_id, center in edges],
+                "bbox": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0]},
+                "stats": {"edgeCount": len(edges), "faceCount": len(faces), "shapeCount": len(shapes)},
+                "tables": {
+                    "edgeColumns": ["id", "curveType", "center", "length"],
+                    "faceColumns": ["id", "surfaceType", "center", "area"],
+                    "shapeColumns": ["id", "kind", "volume"],
+                },
+                "edges": [[f"o1.e{number}", "line", center, 1.0] for number, center in enumerate(edges, start=1)],
+                "faces": [[f"o1.f{number}", "plane", [0.5, 0.5, 0.0], area] for number, area in enumerate(faces, start=1)],
+                "shapes": [[f"o1.s{number}", *shape] for number, shape in enumerate(shapes, start=1)],
             }
 
-        def changed(old: dict[str, object], new: dict[str, object]) -> tuple[object, ...]:
+        def changed(old: dict[str, object], new: dict[str, object]) -> tuple[object, object]:
             diff = analysis.selector_manifest_diff(old, new)
-            return diff["topologyChanged"], diff["geometryChanged"], diff["refsChanged"]
+            return diff["topologyChanged"], diff["geometryChanged"]
 
-        built = manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [1.0, 0.0, 0.0]))
-        self.assertEqual((False, False, False), changed(built, manifest(("o1.e1", [-0.0, 0.0, 0.0]), ("o1.e2", [1.0, -0.0, 0.0]))))
-        # The same edges numbered in another order: the geometry is the same and the refs are not.
-        self.assertEqual((False, False, True), changed(built, manifest(("o1.e1", [1.0, 0.0, 0.0]), ("o1.e2", [0.0, 0.0, 0.0]))))
-        self.assertEqual((False, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [1.0, 0.5, 0.0]))))
-        # One edge twice is not two different edges.
-        self.assertEqual((False, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [0.0, 0.0, 0.0]))))
-        self.assertEqual((True, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]))))
+        here, there, elsewhere = [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]
+        built = manifest(edges=[here, there])
+        self.assertEqual((False, False), changed(built, manifest(edges=[[-0.0, 0.0, 0.0], [1.0, -0.0, 0.0]])))
+        # The same edges numbered in another order are the same geometry.
+        self.assertEqual((False, False), changed(built, manifest(edges=[there, here])))
+        self.assertEqual((False, True), changed(built, manifest(edges=[here, elsewhere])))
+        self.assertEqual((True, True), changed(built, manifest(edges=[here])))
+        # How many times an edge occurs counts: two of one and one of the other is not one and two.
+        self.assertEqual((False, True), changed(manifest(edges=[here, here, there]), manifest(edges=[here, there, there])))
+        # A face that changed with no edge moving, as a surface that bulges the other way does.
+        self.assertEqual((False, True), changed(manifest(edges=[here], faces=[1.0]), manifest(edges=[here], faces=[1.2])))
+        # The same faces around a solid, around an open shell, and around more or less material.
+        solid = manifest(faces=[1.0], shapes=[("solid", 6.0)])
+        self.assertEqual((False, True), changed(solid, manifest(faces=[1.0], shapes=[("shell", None)])))
+        self.assertEqual((False, True), changed(solid, manifest(faces=[1.0], shapes=[("solid", 5.0)])))
 
     def test_diff_text_reports_the_count_deltas(self) -> None:
         with self._mock_glb_topology(_refs_manifest(self.cad_ref), in_cache=True):
@@ -760,7 +789,7 @@ class InspectRefsTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                "topologyChanged=False, geometryChanged=False, refsChanged=False, bboxChanged=False, kindChanged=False",
+                "topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False",
                 "faceDelta=0 edgeDelta=0",
             ],
             inspect_cli._format_diff_text(result, quiet=False, verbose=False).splitlines(),

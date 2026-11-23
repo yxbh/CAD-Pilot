@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -780,6 +780,11 @@ def diff_entry_targets(
         profile=SelectorProfile.REFS,
         context_provider=context_provider,
         from_step=True,
+    )
+    # Whether a file is a part or an assembly is what generation recorded beside it, which no STEP says of itself.
+    left_context, right_context = (
+        replace(context, kind=load_entry_context_for_target(target, profile=SelectorProfile.SUMMARY, context_provider=context_provider).kind)
+        for context, target in ((left_context, left_target), (right_context, right_target))
     )
 
     diff_payload = analysis.selector_manifest_diff(left_context.manifest, right_context.manifest)
