@@ -154,19 +154,26 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
 TOPOLOGY_CACHE = "topology"
 
 
-def step_topology(target: ResolvedStepTarget, *, require_selector: bool = False) -> StepTopologyArtifact:
+def step_topology(
+    target: ResolvedStepTarget, *, require_selector: bool = False, from_step: bool = False
+) -> StepTopologyArtifact:
     """The STEP's face and edge topology, for any STEP file.
 
     A current sidecar from ``scripts/step`` is used as it is. Any other STEP,
     or one whose sidecar is missing or stale, is read and indexed into the
     user cache under its content hash, so the next call is a file read.
     Nothing is written beside the STEP.
+
+    ``from_step`` leaves the sidecar out, so the answer depends on the STEP's
+    contents alone. A sidecar indexes the shape that wrote the STEP, and the
+    file read back is not that shape to the last detail: its edges come in
+    another order, and a spline's curve type and meshed area can differ.
     """
     stamp = _file_stamp(target.step_path)
     step_hash = sha256_file(target.step_path)
     sidecar = part_glb_path(target.step_path)
     cached = cache_path(TOPOLOGY_CACHE, f"{step_hash}.v{STEP_TOPOLOGY_SCHEMA_VERSION}.glb")
-    for glb_path in (sidecar, cached):
+    for glb_path in (cached,) if from_step else (sidecar, cached):
         artifact = _current_topology(target, glb_path, step_hash, require_selector=require_selector)
         if artifact is not None:
             if glb_path == cached:

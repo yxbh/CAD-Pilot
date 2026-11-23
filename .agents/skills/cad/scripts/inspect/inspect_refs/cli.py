@@ -499,7 +499,7 @@ def _format_diff_text(result: dict[str, object], *, quiet: bool, verbose: bool) 
     if not result.get("ok"):
         return _format_errors(result)
     diff = result.get("diff") if isinstance(result.get("diff"), dict) else {}
-    fields = ("topologyChanged", "geometryChanged", "bboxChanged", "kindChanged")
+    fields = ("topologyChanged", "geometryChanged", "refsChanged", "bboxChanged", "kindChanged")
     lines = [", ".join(f"{field}={diff.get(field)}" for field in fields)]
     if not quiet:
         counts = diff.get("countDelta") if isinstance(diff.get("countDelta"), dict) else {}

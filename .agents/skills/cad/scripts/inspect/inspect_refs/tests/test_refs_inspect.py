@@ -13,6 +13,7 @@ SCRIPTS_DIR = INSPECT_DIR.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(INSPECT_DIR))
 
+from inspect_refs import analysis
 from inspect_refs import cli as inspect_cli
 from inspect_refs import inspect as refs_inspect
 from common import cad_ref_syntax as refs_syntax
@@ -395,11 +396,20 @@ class InspectRefsTests(unittest.TestCase):
         current_hash: str | None = None,
         strip_selector_keys: tuple[str, ...] = (),
         schema_version: int = STEP_TOPOLOGY_SCHEMA_VERSION,
+        in_cache: bool = False,
     ):
+        """Stand in for the STEP's sidecar or, with ``in_cache``, for the index of the STEP itself in the user cache."""
         resolved_step_path = step_path or self.step_path
         topology_manifest = {**manifest, "schemaVersion": schema_version}
         selector_manifest = {key: value for key, value in topology_manifest.items() if key not in strip_selector_keys}
-        self._touch_glb(resolved_step_path)
+        if in_cache:
+            cached = step_targets.cache_path(
+                step_targets.TOPOLOGY_CACHE, f"{current_hash or topology_manifest.get('stepHash')}.v{STEP_TOPOLOGY_SCHEMA_VERSION}.glb"
+            )
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            cached.write_bytes(b"glb")
+        else:
+            self._touch_glb(resolved_step_path)
         stack = contextlib.ExitStack()
         with stack:
             stack.enter_context(mock.patch.object(step_targets, "find_step_path", return_value=resolved_step_path))
@@ -700,7 +710,7 @@ class InspectRefsTests(unittest.TestCase):
         self.assertEqual("plate faces=6 edges=12", inspect_cli._format_refs_text(result, quiet=False, verbose=False))
 
     def test_diff_planes_returns_entry_planes(self) -> None:
-        with self._mock_glb_topology(_refs_manifest(self.cad_ref)):
+        with self._mock_glb_topology(_refs_manifest(self.cad_ref), in_cache=True):
             result = refs_inspect.diff_entry_targets(
                 f"@cad[{self.cad_ref}]",
                 f"@cad[{self.cad_ref}]",
@@ -712,13 +722,45 @@ class InspectRefsTests(unittest.TestCase):
         self.assertEqual(1, len(result["diff"]["leftMajorPlanes"]))
         self.assertEqual(1, len(result["diff"]["rightMajorPlanes"]))
 
+    def test_diff_indexes_each_step_itself_and_leaves_its_sidecar_out(self) -> None:
+        # A current sidecar indexes the shape that wrote the STEP, not the file: diff reads the file.
+        with self._mock_glb_topology(_refs_manifest(self.cad_ref)), mock.patch.object(step_targets, "_build_topology") as build:
+            with self.assertRaisesRegex(step_targets.CadRefError, "Could not index"):
+                refs_inspect.diff_entry_targets(f"@cad[{self.cad_ref}]", f"@cad[{self.cad_ref}]")
+            self.assertEqual(Path(os.environ["CAD_PILOT_CACHE"]) / "topology", build.call_args.args[1].parent)
+            # Every other command still takes the sidecar as it is.
+            self.assertTrue(refs_inspect.inspect_cad_refs(f"@cad[{self.cad_ref}]")["ok"])
+            build.assert_called_once()
+
+    def test_diff_tells_moved_geometry_from_moved_numbers(self) -> None:
+        def manifest(*edges: tuple[str, list[float]]) -> dict[str, object]:
+            return {
+                "bbox": {"min": [0.0, 0.0, 0.0], "max": [1.0, 0.0, 0.0]},
+                "stats": {"edgeCount": len(edges)},
+                "tables": {"edgeColumns": ["id", "curveType", "center", "length"]},
+                "edges": [[edge_id, "line", center, 1.0] for edge_id, center in edges],
+            }
+
+        def changed(old: dict[str, object], new: dict[str, object]) -> tuple[object, ...]:
+            diff = analysis.selector_manifest_diff(old, new)
+            return diff["topologyChanged"], diff["geometryChanged"], diff["refsChanged"]
+
+        built = manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [1.0, 0.0, 0.0]))
+        self.assertEqual((False, False, False), changed(built, manifest(("o1.e1", [-0.0, 0.0, 0.0]), ("o1.e2", [1.0, -0.0, 0.0]))))
+        # The same edges numbered in another order: the geometry is the same and the refs are not.
+        self.assertEqual((False, False, True), changed(built, manifest(("o1.e1", [1.0, 0.0, 0.0]), ("o1.e2", [0.0, 0.0, 0.0]))))
+        self.assertEqual((False, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [1.0, 0.5, 0.0]))))
+        # One edge twice is not two different edges.
+        self.assertEqual((False, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]), ("o1.e2", [0.0, 0.0, 0.0]))))
+        self.assertEqual((True, True, True), changed(built, manifest(("o1.e1", [0.0, 0.0, 0.0]))))
+
     def test_diff_text_reports_the_count_deltas(self) -> None:
-        with self._mock_glb_topology(_refs_manifest(self.cad_ref)):
+        with self._mock_glb_topology(_refs_manifest(self.cad_ref), in_cache=True):
             result = refs_inspect.diff_entry_targets(f"@cad[{self.cad_ref}]", f"@cad[{self.cad_ref}]")
 
         self.assertEqual(
             [
-                "topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False",
+                "topologyChanged=False, geometryChanged=False, refsChanged=False, bboxChanged=False, kindChanged=False",
                 "faceDelta=0 edgeDelta=0",
             ],
             inspect_cli._format_diff_text(result, quiet=False, verbose=False).splitlines(),

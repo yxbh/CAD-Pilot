@@ -1808,10 +1808,30 @@ class IssuedRefsWarningTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.spec = types.SimpleNamespace(cad_ref="plate", step_path=Path(temp.name) / "plate.step")
 
-    def report(self, previous_manifest, step_hash: str) -> mock.Mock:
+    def report(self, previous_manifest, step_hash: str, **next_manifest: object) -> mock.Mock:
         logger = mock.Mock()
-        cad_generation._report_selector_manifest_change(self.spec, previous_manifest, {"stepHash": step_hash}, logger=logger)
+        cad_generation._report_selector_manifest_change(
+            self.spec, previous_manifest, {"stepHash": step_hash, **next_manifest}, logger=logger
+        )
         return logger
+
+    def test_refs_whose_numbers_now_name_other_geometry_get_a_notice(self) -> None:
+        def edges(*centers: list[float]) -> dict[str, object]:
+            return {
+                "tables": {"edgeColumns": ["id", "center"]},
+                "edges": [[f"o1.e{number}", center] for number, center in enumerate(centers, start=1)],
+            }
+
+        issued_refs.mark(self.spec.step_path, "old-hash")
+        previous = {"stepHash": "old-hash", **edges([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])}
+        # The same two edges with their numbers exchanged: the shape is the same, but e1 is now the other edge.
+        logger = self.report(previous, "new-hash", **edges([1.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+        logger.warning.assert_not_called()
+        self.assertIn("kept its face and edge numbering but its geometry moved", logger.info.call_args.args[0])
+        self.assertEqual("new-hash", issued_refs.issued_step_hash(self.spec.step_path))
+
+        unmoved = {"stepHash": "new-hash", **edges([1.0, 0.0, 0.0], [0.0, 0.0, 0.0])}
+        self.report(unmoved, "newer-hash", **edges([1.0, -0.0, 0.0], [0.0, 0.0, 0.0])).info.assert_not_called()
 
     def test_refs_from_a_build_whose_topology_cannot_be_read_are_reported_once(self) -> None:
         # A sidecar from older tools, or none at all, leaves nothing to compare the new numbering with.

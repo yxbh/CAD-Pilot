@@ -61,6 +61,17 @@ CABINET = textwrap.dedent(
     """
 )
 
+VASE = textwrap.dedent(
+    """\
+    from build123d import Circle, Pos, Rectangle, loft
+
+    NECK = 5.0
+
+    def gen_step():
+        return loft([Rectangle(20, 12), Pos(0, 0, 15) * Circle(NECK)])
+    """
+)
+
 UNLABELLED = textwrap.dedent(
     """\
     from build123d import Box, Compound, Pos
@@ -158,9 +169,34 @@ class DesignChecksTests(unittest.TestCase):
 
         same = self.run_tool("inspect", "diff", "out/cabinet.step", "out/cabinet.step", "--format", "text")
         self.assertEqual(
-            ["topologyChanged=False, geometryChanged=False, bboxChanged=False, kindChanged=False", "faceDelta=0 edgeDelta=0"],
+            [
+                "topologyChanged=False, geometryChanged=False, refsChanged=False, bboxChanged=False, kindChanged=False",
+                "faceDelta=0 edgeDelta=0",
+            ],
             same.stdout.splitlines(),
         )
+
+    def test_diff_compares_the_step_files_whatever_sidecars_lie_beside_them(self) -> None:
+        def flags(left: str, right: str) -> dict[str, bool]:
+            diff = self.inspect_json("diff", left, right)["diff"]
+            return {name[: -len("Changed")]: changed for name, changed in diff.items() if name.endswith("Changed") and changed}
+
+        # A spline surface: its STEP, read back, is not the modelled shape to the last digit, as the sidecar is.
+        self.generate("vase", VASE)
+        (self.root / "kept").mkdir()
+        shutil.copy2(self.root / "out/vase.step", self.root / "kept/vase.step")
+        self.assertFalse((self.root / "kept/.vase.step.glb").exists())
+        self.assertEqual({}, flags("kept/vase.step", "out/vase.step"), "a copy without its sidecar")
+        self.generate("vase", VASE)
+        self.assertEqual({}, flags("kept/vase.step", "out/vase.step"), "the same source generated again")
+
+        self.generate("vase", VASE.replace("NECK = 5.0", "NECK = 5.2"))
+        self.assertEqual({"geometry": True, "refs": True}, flags("kept/vase.step", "out/vase.step"), "a neck 0.2 mm wider")
+
+        # The same cube built two ways: the geometry is the same, and its edges are numbered in another order.
+        self.generate("cube", "from build123d import Box\n\ndef gen_step():\n    return Box(10, 10, 10)\n")
+        self.generate("pad", "from build123d import Pos, Rectangle, extrude\n\ndef gen_step():\n    return extrude(Pos(0, 0, -5) * Rectangle(10, 10), 10)\n")
+        self.assertEqual({"refs": True}, flags("out/cube.step", "out/pad.step"))
 
     def test_unlabelled_parts_get_group_names_and_one_warning(self) -> None:
         result = self.generate("kit", UNLABELLED)
