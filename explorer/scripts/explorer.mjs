@@ -229,7 +229,7 @@ export function checkedInput(name, input) {
 }
 
 // viewTyped: --view was given on this command line, where it may have been meant as render's camera.
-// cameraHint: also say how to turn the camera, which a view action already does by itself.
+// cameraHint: also say how to turn the camera, which set_view already does by itself.
 async function viewer(location, { viewTyped = false, cameraHint = true } = {}) {
   const running = await runningViewer(location);
   if (!running) {
@@ -297,7 +297,7 @@ export async function run(argv, { cwd = process.cwd(), inspect, open = openViewe
   const action = command === "do" ? args[0] : undefined;
   if (command === "do" && !actionNames().includes(action)) throw new PrototypeError("unknown_action", `Unknown view action "${action ?? ""}". Run "actions" to list them.`);
   const actionArguments = command === "do" ? checkedInput(action, actionInput(args.slice(1))) : undefined;
-  const { record } = await viewer(location, { viewTyped, cameraHint: command !== "do" });
+  const { record } = await viewer(location, { viewTyped, cameraHint: action !== "set_view" });
   const detail = flags.full ? "full" : "summary";
   if (command === "state") return call(record, `api/state?detail=${detail}`);
   if (command === "capture" || action === "capture_image") {

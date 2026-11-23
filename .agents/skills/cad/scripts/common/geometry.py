@@ -421,9 +421,10 @@ def self_intersections(shape: Shape) -> tuple[GeometryIssue, ...]:
     This can be expensive. Codes are OCCT's ``BOPAlgo_SelfIntersect``; affected
     entities are owned copies. The crossings found are returned even when the
     kernel also reports another fault, such as ``BOPAlgo_NotValid`` beside the
-    crossings of a folded sweep, which ``topology_errors`` locates. With no
-    crossing found, another fault leaves the check inconclusive, and that, or
-    a failed check, raises an exception.
+    crossings of a folded sweep, so they need not be every fault: the folded
+    wall itself is found by ``topology_errors``. With no crossing found, another
+    fault leaves the check inconclusive, and that, an aborted check or a
+    failed one raises an exception.
     """
     from OCP.BOPAlgo import BOPAlgo_CheckStatus
 
@@ -443,8 +444,9 @@ def self_intersections(shape: Shape) -> tuple[GeometryIssue, ...]:
             entities = _items(result.GetFaultyShapes1()) + _items(result.GetFaultyShapes2())
             issues.append(GeometryIssue(status.name, tuple(_cast(s) for s in entities or [private])))
         inconclusive = (BOPAlgo_CheckStatus.BOPAlgo_CheckUnknown, BOPAlgo_CheckStatus.BOPAlgo_OperationAborted)
-        if other and (not issues or any(status in inconclusive for status in other)):
-            raise GeometryError(f"self-intersection check was inconclusive: {other[0].name}")
+        aborted = [status for status in other if status in inconclusive]
+        if aborted or (other and not issues):
+            raise GeometryError(f"self-intersection check was inconclusive: {(aborted or other)[0].name}")
         if not checker.IsValid() and not issues:
             raise GeometryError("self-intersection check failed without diagnostics")
         return tuple(issues)

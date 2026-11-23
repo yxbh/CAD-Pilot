@@ -14,6 +14,7 @@ from common.geometry import (
     self_intersections,
     topology_errors,
 )
+from common.geometry import _argument_faults
 
 
 def _open_solid():
@@ -287,6 +288,7 @@ class GeometryDiagnosticsTests(unittest.TestCase):
             with BuildSketch(path ^ 0):
                 Rectangle(6, 3)
             sweep(path=path)
+        self.assertIn("BOPAlgo_NotValid", _argument_faults(folded.part.wrapped), "the case this test is for")
         issues = self_intersections(folded.part)
         self.assertTrue(issues)
         self.assertTrue(all(i.code == "BOPAlgo_SelfIntersect" and i.entities for i in issues))
@@ -304,6 +306,36 @@ class GeometryDiagnosticsTests(unittest.TestCase):
         with mock.patch("OCP.BRepAlgoAPI.BRepAlgoAPI_Check", return_value=checker):
             with self.assertRaisesRegex(GeometryError, "without diagnostics"):
                 self_intersections(self.box)
+
+    def test_crossings_are_returned_beside_another_fault_but_an_abort_raises(self):
+        from OCP.BOPAlgo import BOPAlgo_CheckStatus as Status
+
+        def result(status):
+            found = mock.Mock()
+            found.GetCheckStatus.return_value = status
+            found.GetFaultyShapes1.return_value = _Results([])
+            found.GetFaultyShapes2.return_value = _Results([])
+            return found
+
+        checker = mock.Mock()
+        checker.HasErrors.return_value = False
+        checker.IsValid.return_value = False
+        crossing, invalid = Status.BOPAlgo_SelfIntersect, Status.BOPAlgo_NotValid
+        cases = [
+            ((crossing, invalid), None),
+            ((invalid,), "inconclusive: BOPAlgo_NotValid"),
+            ((crossing, invalid, Status.BOPAlgo_OperationAborted), "inconclusive: BOPAlgo_OperationAborted"),
+            ((crossing, Status.BOPAlgo_CheckUnknown), "inconclusive: BOPAlgo_CheckUnknown"),
+        ]
+        for statuses, error in cases:
+            checker.Result.return_value = _Results([result(status) for status in statuses])
+            with self.subTest(statuses=[status.name for status in statuses]):
+                with mock.patch("OCP.BRepAlgoAPI.BRepAlgoAPI_Check", return_value=checker):
+                    if error is None:
+                        self.assertEqual(["BOPAlgo_SelfIntersect"], [issue.code for issue in self_intersections(self.box)])
+                    else:
+                        with self.assertRaisesRegex(GeometryError, error):
+                            self_intersections(self.box)
 
     def test_self_intersection_check_runs_the_kernel_once_in_parallel(self):
         # BRepAlgoAPI_Check(shape, bTestSE, bTestSI) performs the check serially
