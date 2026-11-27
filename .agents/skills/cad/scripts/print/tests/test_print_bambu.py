@@ -180,6 +180,12 @@ def test_project_has_named_plates_supports_and_slices(tmp_path):
     assert settings["filament_settings_id"] == ["Bambu PETG Basic @BBL H2D 0.4 nozzle", "Bambu PLA Basic @BBL H2D"]
     assert settings["support_interface_filament"] == "2" and settings["support_top_z_distance"] == "0"
     assert (settings["enable_support"], settings["support_type"], settings["resolution"]) == ("1", "tree(auto)", "0.003")
+    # Bambu Studio drops a process value the project does not list as changed. The closing radius and
+    # the support layer height are in no preset file, only in the app's defaults.
+    changed = settings["different_settings_to_system"][0].split(";")
+    assert settings["slice_closing_radius"] == "0.01" and settings["independent_support_layer_height"] == "0"
+    assert {"resolution", "slice_closing_radius", "independent_support_layer_height", "support_top_z_distance"} <= set(changed)
+    assert "support_type" not in changed
     assert "BambuStudio-" in model
     assert plan.plates[0].tower is not None and plan.plates[1].tower is None
 

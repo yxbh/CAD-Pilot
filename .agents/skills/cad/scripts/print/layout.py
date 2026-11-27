@@ -127,3 +127,18 @@ def _centred(placed: list[Placement], area: Rect, keep_out: list[Rect], gap: flo
         if all(area.contains(p.rect) and not any(p.rect.overlaps(k.grown(gap)) for k in keep_out) for p in moved):
             return moved
     return placed
+
+
+def outline_clear(outline: list[tuple[float, float]], rect: Rect) -> bool:
+    """Whether a convex counter-clockwise outline and a rectangle stay apart: some side of either
+    has the other wholly beyond it."""
+    xs, ys = [x for x, _ in outline], [y for _, y in outline]
+    if max(xs) <= rect.x0 + 1e-9 or min(xs) >= rect.x1 - 1e-9 or max(ys) <= rect.y0 + 1e-9 or min(ys) >= rect.y1 - 1e-9:
+        return True
+    corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)]
+    for (px, py), (qx, qy) in zip(outline, outline[1:] + outline[:1]):
+        # The outward normal of a counter-clockwise side.
+        nx, ny = qy - py, px - qx
+        if min(nx * (x - px) + ny * (y - py) for x, y in corners) >= -1e-9:
+            return True
+    return False

@@ -14,8 +14,8 @@ from .profile import COLOUR, PROJECT_KEYS
 
 
 JOB_KEYS = {"name", "output", "profile", "plates", "parts"}
-PLATE_KEYS = {"name", "parts"}
-PART_KEYS = {"file", "name", "rotate", "copies", "filament", "colour", "support", "turn"}
+PLATE_KEYS = {"name", "parts", "tower"}
+PART_KEYS = {"file", "name", "rotate", "copies", "filament", "colour", "support", "turn", "at"}
 JOB_SUFFIX = ".print.json"
 
 
@@ -33,12 +33,16 @@ class PartSpec:
     colour: str | None = None
     support: bool = True
     turn: bool = True
+    # Where the job puts the part instead of packing it: its footprint's low corner on the bed, mm.
+    at: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
 class PlateSpec:
     name: str
     parts: tuple[PartSpec, ...]
+    # The low corner of the plate's prime tower on the bed, mm; None for the default spot.
+    tower: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,14 @@ class Job:
     @property
     def parts(self) -> list[PartSpec]:
         return [part for plate in self.plates for part in plate.parts]
+
+
+def _point(value: object, where: str, what: str) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != 2 or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value):
+        raise JobError(f"{where} must be [x, y], {what}, in millimetres on the bed")
+    return float(value[0]), float(value[1])
 
 
 def _part(data: object, base: Path, where: str) -> PartSpec:
@@ -78,6 +90,9 @@ def _part(data: object, base: Path, where: str) -> PartSpec:
     for flag in ("support", "turn"):
         if not isinstance(data.get(flag, True), bool):
             raise JobError(f"{where} {flag} must be true or false")
+    at = _point(data.get("at"), f"{where} at", "the low corner of the part's footprint")
+    if at is not None and copies > 1:
+        raise JobError(f"{where} at places one part; list each copy as its own part")
     filament = data.get("filament")
     if filament is not None and not isinstance(filament, str):
         raise JobError(f"{where} filament must name a filament of the print profile")
@@ -96,6 +111,7 @@ def _part(data: object, base: Path, where: str) -> PartSpec:
         colour=colour.upper() if colour else None,
         support=data.get("support", True),
         turn=data.get("turn", True),
+        at=at,
     )
 
 
@@ -123,6 +139,8 @@ def parse_job(data: Mapping, *, base: Path, default_output: Path) -> Job:
         raise JobError("print job output must be a .3mf path relative to the job file, with either separator")
     if "parts" in data:
         plates = (PlateSpec(name, _parts(data["parts"], base, "parts")),)
+        if any(part.at is not None for part in plates[0].parts):
+            raise JobError("a part's at needs a named plate: list the job's plates instead of its parts")
     else:
         raw = data["plates"]
         if not isinstance(raw, list) or not raw:
@@ -134,11 +152,12 @@ def parse_job(data: Mapping, *, base: Path, default_output: Path) -> Job:
                 raise JobError(f"{where} must be an object with a name and parts")
             extra = sorted(set(plate) - PLATE_KEYS)
             if extra:
-                raise JobError(f"{where}: unknown key(s) {', '.join(extra)}; expected name, parts")
+                raise JobError(f"{where}: unknown key(s) {', '.join(extra)}; expected {', '.join(sorted(PLATE_KEYS))}")
             plate_name = plate.get("name", f"Plate {index + 1}")
             if not isinstance(plate_name, str) or not plate_name.strip():
                 raise JobError(f"{where} name must be a non-empty string")
-            plates.append(PlateSpec(" ".join(plate_name.split()), _parts(plate.get("parts"), base, f"{where}.parts")))
+            tower = _point(plate.get("tower"), f"{where} tower", "the low corner of the plate's prime tower")
+            plates.append(PlateSpec(" ".join(plate_name.split()), _parts(plate.get("parts"), base, f"{where}.parts"), tower))
         plates = tuple(plates)
     return Job(
         name=" ".join(name.split()),
