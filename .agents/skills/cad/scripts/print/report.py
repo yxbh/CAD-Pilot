@@ -75,6 +75,17 @@ def compensation_lines(plan: ProjectPlan) -> list[str]:
     return lines + warnings
 
 
+def plate_lines(plan: ProjectPlan) -> list[str]:
+    """Each plate's parts, and the warnings its own placements drew."""
+    lines = []
+    for number, plate in enumerate(plan.plates, start=1):
+        names = ", ".join(plan.instance_name(i) + (" (turned 90°)" if i.turned else "") for i in plate.instances)
+        tower = "; prime tower kept clear" if plate.tower else ""
+        lines.append(f"  plate {number} \"{plate.name}\": {names}{tower}")
+        lines += [f"    ! {warning}" for warning in plate.warnings]
+    return lines
+
+
 def plan_lines(plan: ProjectPlan) -> list[str]:
     profile = plan.profile
     lines = [
@@ -88,10 +99,7 @@ def plan_lines(plan: ProjectPlan) -> list[str]:
         roles = ["parts"] if any(p.slot is slot for p in plan.parts) else []
         roles += ["support interface"] if interface == str(slot.number) else []
         lines.append(f"  filament {slot.number}: {_short(slot.preset)} ({slot.material}) {slot.colour} for {' and '.join(roles)}")
-    for number, plate in enumerate(plan.plates, start=1):
-        names = ", ".join(plan.instance_name(i) + (" (turned 90°)" if i.turned else "") for i in plate.instances)
-        tower = "; prime tower kept clear" if plate.tower else ""
-        lines.append(f"  plate {number} \"{plate.name}\": {names}{tower}")
+    lines += plate_lines(plan)
     lines.append(f"  first layer: elephant-foot compensation {plan.settings.get('elefant_foot_compensation', '0')} mm, from the process")
     lines += compensation_lines(plan)
     lines.append("Parts as printed:")
@@ -149,6 +157,7 @@ def plan_dict(plan: ProjectPlan, path: Path) -> dict:
                 "plate": number,
                 "name": plate.name,
                 "prime_tower": plate.tower is not None,
+                "warnings": plate.warnings,
                 "objects": [
                     {
                         "name": plan.instance_name(i),

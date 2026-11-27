@@ -7,10 +7,12 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from scipy.spatial import ConvexHull
+
 from .bambu import BED_TEMPERATURE_KEYS, BambuStudio, Presets, setting
 from .compensation import Compensation, conditions, part_compensation
 from .job import Job, PartSpec
-from .layout import Footprint, Rect, pack
+from .layout import Footprint, Placement, Rect, outline_clear, pack
 from .meshes import PrintMesh, load_mesh
 from .orientation import CheckSettings, OrientationReport, check_orientation
 from .profile import PrintProfile
@@ -74,9 +76,14 @@ class Instance:
 
 @dataclass
 class PlatePlan:
+    """A plate's parts, its prime tower when it prints one, the spot a tower takes on it either
+    way, and warnings about the placements the job made itself."""
+
     name: str
     instances: list[Instance]
     tower: Rect | None
+    tower_spot: Rect
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +188,13 @@ def _max_height(settings: dict) -> float:
     return min(heights)
 
 
+def _outline(mesh: PrintMesh) -> list[tuple[float, float]]:
+    """The convex outline of an oriented part seen from above, counter-clockwise, in coordinates
+    measured from its footprint's low corner."""
+    points = mesh.vertices[:, :2]
+    return [(float(x), float(y)) for x, y in points[ConvexHull(points).vertices]]
+
+
 def _too_big(plan_parts: list[PartPlan], item: Footprint, area: Rect, beside_tower: bool) -> PlanError:
     return PlanError(
         f"{plan_parts[item.key[0]].spec.name} ({item.width:.1f} x {item.depth:.1f} mm as printed) does not fit the plate: "
@@ -190,8 +204,23 @@ def _too_big(plan_parts: list[PartPlan], item: Footprint, area: Rect, beside_tow
 
 
 def _pack_plates(
-    plan_parts: list[PartPlan], job: Job, area: Rect, keep_out: list[Rect], tower: Rect, tower_keep_out: Rect, interface: Slot | None
+    plan_parts: list[PartPlan],
+    job: Job,
+    area: Rect,
+    keep_out: list[Rect],
+    tower: Rect,
+    tower_keep_out: Rect,
+    interface: Slot | None,
+    bed: Rect,
+    reach: Rect,
 ) -> list[PlatePlan]:
+    """Each plate's parts laid out in ``area``. A part with ``at`` goes where the job puts it,
+    anywhere on the ``bed``, and the rest are packed clear of its rectangle; a plate's own
+    ``tower`` replaces the default spot, inside the ``reach`` of every nozzle. What the layout would
+    have kept such a part or tower clear of is a warning on the plate, not a refusal: the job's
+    placement is taken as given, and a convex outline says only that a part may be in the way."""
+    brim = tower.x0 - tower_keep_out.x0
+
     def needs_tower(indices: set[int]) -> bool:
         slots = {plan_parts[i].slot.number for i in indices}
         if interface is not None and any(plan_parts[i].uses_interface for i in indices):
@@ -199,36 +228,78 @@ def _pack_plates(
         return len(slots) > 1
 
     footprints: list[list[Footprint]] = []
+    at: dict[int, tuple[float, float] | None] = {}
     index = 0
     for plate in job.plates:
         items = []
         for spec in plate.parts:
+            at[index] = spec.at
             width, depth, _ = (float(v) for v in plan_parts[index].mesh.size)
             items += [Footprint((index, copy), width, depth, spec.turn) for copy in range(1, spec.copies + 1)]
             index += 1
         footprints.append(items)
     plates: list[PlatePlan] = []
-    for plate, remaining in zip(job.plates, footprints):
-        while remaining:
-            reserve = needs_tower({item.key[0] for item in remaining})
-            blocked = keep_out + ([tower_keep_out] if reserve else [])
+    for plate, items in zip(job.plates, footprints):
+        spot, spot_keep_out = tower, tower_keep_out
+        warnings: list[str] = []
+        if plate.tower is not None:
+            where = f"plate {plate.name!r}: tower [{plate.tower[0]:g}, {plate.tower[1]:g}] puts the {tower.width:g} mm prime tower"
+            spot = Rect(plate.tower[0], plate.tower[1], plate.tower[0] + tower.width, plate.tower[1] + tower.depth)
+            spot_keep_out = spot.grown(brim)
+            if not reach.contains(spot):
+                raise PlanError(f"{where} outside X {reach.x0:g}..{reach.x1:g} and Y {reach.y0:g}..{reach.y1:g} mm, the area every nozzle reaches")
+            if any(spot.overlaps(rect) for rect in keep_out):
+                raise PlanError(f"{where} on an area of the bed the printer excludes")
+            if not bed.contains(spot_keep_out) or any(spot_keep_out.overlaps(rect) for rect in keep_out):
+                warnings.append(f"the prime tower's {brim:g} mm brim leaves the bed or overlaps an area the printer excludes")
+        beside_tower = needs_tower({item.key[0] for item in items})
+        fixed: list[Placement] = []
+        for item in items:
+            name, corner = plan_parts[item.key[0]].spec.name, at[item.key[0]]
+            if corner is None:
+                continue
+            rect = Rect(corner[0], corner[1], corner[0] + item.width, corner[1] + item.depth)
+            if not bed.contains(rect):
+                raise PlanError(
+                    f"{name} ({item.width:.1f} x {item.depth:.1f} mm as printed) at [{corner[0]:g}, {corner[1]:g}] spans "
+                    f"X {rect.x0:.1f}..{rect.x1:.1f} and Y {rect.y0:.1f}..{rect.y1:.1f} mm; "
+                    f"the bed is X {bed.x0:g}..{bed.x1:g} and Y {bed.y0:g}..{bed.y1:g} mm"
+                )
+            outline = [(x + rect.x0, y + rect.y0) for x, y in _outline(plan_parts[item.key[0]].mesh)]
+            if not reach.contains(rect):
+                warnings.append(f"{name} is partly outside the area every nozzle reaches")
+            if beside_tower and not outline_clear(outline, spot):
+                warnings.append(f"{name}'s outline overlaps the prime tower's reserved {spot.width:g} mm square; the printed tower is usually narrower")
+            elif beside_tower and not outline_clear(outline, spot_keep_out):
+                warnings.append(f"{name} is within {brim:g} mm of the prime tower's reserved square, where the tower's brim can reach")
+            if not all(outline_clear(outline, rect) for rect in keep_out):
+                warnings.append(f"{name} overlaps an area of the bed the printer excludes")
+            warnings += [f"{name} and {plan_parts[other.key[0]].spec.name} are placed over each other's rectangle" for other in fixed if other.rect.overlaps(rect)]
+            fixed.append(Placement(item.key, rect, False))
+        remaining = [item for item in items if at[item.key[0]] is None]
+        while True:
+            reserve = needs_tower({item.key[0] for item in remaining} | {p.key[0] for p in fixed})
+            blocked = keep_out + ([spot_keep_out] if reserve else []) + [p.rect for p in fixed]
             placed, remaining = pack(remaining, area, blocked, PART_GAP_MM)
-            if not placed:
+            if remaining and not placed and not fixed:
                 # Even the largest part does not fit an empty plate.
                 raise _too_big(plan_parts, remaining[0], area, reserve)
             if remaining and not job.auto_plates:
                 for item in remaining:
                     alone = needs_tower({item.key[0]})
-                    if not pack([item], area, keep_out + ([tower_keep_out] if alone else []), PART_GAP_MM)[0]:
+                    if not pack([item], area, keep_out + ([spot_keep_out] if alone else []), PART_GAP_MM)[0]:
                         raise _too_big(plan_parts, item, area, alone)
                 names = ", ".join(sorted({plan_parts[item.key[0]].spec.name for item in remaining}))
                 raise PlanError(
                     f"plate {plate.name!r} is full: {names} do not fit beside the rest. Move them to another named plate."
                 )
             name = plate.name if not plates or not job.auto_plates else f"{plate.name} {len(plates) + 1}"
-            instances = [Instance(p.key[0], p.key[1], p.rect, p.turned) for p in placed]
+            instances = [Instance(p.key[0], p.key[1], p.rect, p.turned) for p in [*fixed, *placed]]
             used = {i.part for i in instances}
-            plates.append(PlatePlan(name, sorted(instances, key=lambda i: (i.part, i.copy)), tower if needs_tower(used) else None))
+            plates.append(PlatePlan(name, sorted(instances, key=lambda i: (i.part, i.copy)), spot if needs_tower(used) else None, spot, warnings))
+            fixed, warnings = [], []
+            if not remaining:
+                break
     if job.auto_plates and len(plates) > 1:
         plates[0].name = f"{plates[0].name} 1"
     if len(plates) > MAX_PLATES:
@@ -236,7 +307,8 @@ def _pack_plates(
     return plates
 
 
-def _project_settings(resolved: dict, profile: PrintProfile, slots: list[Slot], interface: Slot | None, system_process: dict, plate_count: int, tower: Rect) -> dict:
+def _project_settings(resolved: dict, profile: PrintProfile, slots: list[Slot], interface: Slot | None, system_process: dict, towers: list[Rect]) -> dict:
+    """The project's settings; ``towers`` holds the spot a prime tower takes on each plate."""
     settings = dict(resolved)
     overrides: dict[str, object] = {"enable_support": "1", "support_type": profile.support_type, **profile.process_settings}
     if interface is not None:
@@ -258,9 +330,13 @@ def _project_settings(resolved: dict, profile: PrintProfile, slots: list[Slot], 
     # Bambu Studio's own projects list one nozzle of the chosen flow type per extruder.
     if not settings.get("extruder_nozzle_stats"):
         settings["extruder_nozzle_stats"] = [f"{volume}#1" for volume in settings.get("nozzle_volume_type", ["Standard"])]
-    settings["wipe_tower_x"] = [f"{tower.x0:g}"] * plate_count
-    settings["wipe_tower_y"] = [f"{tower.y0:g}"] * plate_count
-    changed = sorted(key for key, value in overrides.items() if key in system_process and system_process[key] != value)
+    settings["wipe_tower_x"] = [f"{tower.x0:g}" for tower in towers]
+    settings["wipe_tower_y"] = [f"{tower.y0:g}" for tower in towers]
+    # Bambu Studio keeps a project's process value only when the key is listed here, and takes its
+    # preset's or its own default for the rest. A preset file leaves out the settings it keeps at the
+    # app's default (the gap closing radius among them), so those are compared with the resolved value.
+    defaults = {**resolved, **system_process}
+    changed = sorted(key for key, value in overrides.items() if key in defaults and defaults[key] != value)
     # One entry each for the process, every filament, then the printer.
     settings["different_settings_to_system"] = [";".join(changed), *[""] * len(slots), ""]
     return settings
@@ -317,13 +393,16 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibr
                 if part.spec.support and not part.uses_interface:
                     # Support the check did not expect, or under the interface's own material, stays in
                     # the part's filament with the process's gaps: no second filament, no unplanned tower.
-                    part.object_settings.update({key: setting(process[key]) for key in ZERO_GAP_INTERFACE if key in process})
                     part.object_settings["support_interface_filament"] = "0"
     for part in parts:
         if not part.spec.support:
             part.object_settings["enable_support"] = "0"
 
     resolved = studio.resolved_settings(profile.printer, profile.process, [slot.preset for slot in slots])
+    gaps = {**resolved, **process}
+    for part in parts:
+        if part.object_settings.get("support_interface_filament") == "0":
+            part.object_settings.update({key: setting(gaps[key]) for key in ZERO_GAP_INTERFACE if key in gaps})
     temperatures = resolved.get(BED_TEMPERATURE_KEYS[profile.bed_type], [])
     for slot in slots:
         value = temperatures[slot.number - 1] if slot.number - 1 < len(temperatures) else None
@@ -340,8 +419,8 @@ def plan_project(job: Job, profile: PrintProfile, studio: BambuStudio, *, calibr
             raise PlanError(f"{part.spec.name} is {height:.1f} mm tall in this orientation; the printer takes {max_height:g} mm")
     keep_out = _keep_outs(resolved)
     tower, tower_keep_out = _tower(resolved, reach, keep_out)
-    plates = _pack_plates(parts, job, area, keep_out, tower, tower_keep_out, interface)
-    settings = _project_settings(resolved, profile, slots, interface, system_process, len(plates), tower)
+    plates = _pack_plates(parts, job, area, keep_out, tower, tower_keep_out, interface, bed, reach)
+    settings = _project_settings(resolved, profile, slots, interface, system_process, [plate.tower_spot for plate in plates])
     # Each object carries its filament's compensation; Bambu Studio applies per-object values over the project's.
     for part in parts:
         now = conditions(settings, part.slot.preset)
