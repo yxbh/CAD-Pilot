@@ -89,7 +89,7 @@ Keep new tests cheap:
 - Wait on a condition (state, a locator, a file), never a fixed sleep, and bound work by what it does, such as CPU time or call counts, rather than wall time that other suites share.
 - Test a behaviour at the cheapest level that shows it; keep a browser scenario for what only a real page can show.
 
-Print checks that need Bambu Studio skip when it is not installed. Previous passing runs do not establish the state of a new environment, and a clean dependency audit is not a security certification. The workbench slices only as a check; it does not control printers, verify physical fit or certify printability.
+Print checks that need Bambu Studio, and the photo render that needs Blender, skip when those are not installed. Previous passing runs do not establish the state of a new environment, and a clean dependency audit is not a security certification. The workbench slices only as a check; it does not control printers, verify physical fit or certify printability.
 
 ## Local data
 
