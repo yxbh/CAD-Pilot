@@ -41,7 +41,8 @@ def locate_blender() -> Path:
         on_path = shutil.which("blender")
         if on_path:
             candidates.append(Path(on_path))
-        candidates.append(Path("/Applications/Blender.app/Contents/MacOS/Blender"))
+        if sys.platform == "darwin":
+            candidates.append(Path("/Applications/Blender.app/Contents/MacOS/Blender"))
         for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432")):
             if root:
                 candidates += sorted(Path(root).glob("Blender Foundation/Blender*/blender.exe"), key=_version, reverse=True)
@@ -151,6 +152,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if key in changes:
                 changes[key] = check(changes[key])
         scene = replace(scene, **changes)
+        # A scene's own mistakes are reported before Blender is looked for.
+        for spec in scene.parts:
+            if not spec.file.is_file():
+                raise SceneError(f"Part file not found: {spec.file}")
         blender = locate_blender()
         render(scene, blender)
     except (BlenderError, MeshError, SceneError) as error:

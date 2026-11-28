@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -110,15 +111,24 @@ def test_blender_is_found_where_it_is_configured_or_reported_missing(tmp_path, m
         locate_blender()
 
 
+def _stand_in(folder: Path) -> Path:
+    """A program in Blender's place that says it failed and writes no picture, on any system."""
+    if os.name == "nt":
+        program = folder / "blender.cmd"
+        program.write_text("@echo Error: no picture today\r\n@exit /b 0\r\n")
+    else:
+        program = folder / "blender"
+        program.write_text("#!/bin/sh\necho Error: no picture today\nexit 0\n")
+        program.chmod(0o755)
+    return program
+
+
 def test_a_scene_file_names_its_picture_and_the_command_line_overrides_it(tmp_path, monkeypatch, capsys):
     _box(tmp_path / "block.stl")
     (tmp_path / "cover.photo.json").write_text(json.dumps({"parts": [{"file": "block.stl"}]}))
     assert load_scene(tmp_path / "cover.photo.json").output == tmp_path / "cover.png"
     # A stand-in for Blender that renders nothing: the run is reported as failed, and nothing is written.
-    stand_in = tmp_path / "blender"
-    stand_in.write_text("#!/bin/sh\necho Error: no picture today\nexit 0\n")
-    stand_in.chmod(0o755)
-    monkeypatch.setenv(BLENDER_ENV, str(stand_in))
+    monkeypatch.setenv(BLENDER_ENV, str(_stand_in(tmp_path)))
     assert main([str(tmp_path / "cover.photo.json"), "-o", str(tmp_path / "drafts" / "small.png"), "--size", "320x240", "--samples", "4", "--view", "40:20"]) == 2
     assert "error: Blender did not render the picture:\nError: no picture today" in capsys.readouterr().err
     assert not (tmp_path / "drafts" / "small.png").exists() and not (tmp_path / "cover.png").exists()
@@ -176,7 +186,9 @@ def test_a_scene_renders_to_a_picture_of_the_part_in_its_colour(tmp_path, capsys
     assert corners.min() > 90 and (corners.max(axis=1) - corners.min(axis=1)).max() < 25
 
 
-def test_a_missing_part_is_an_error_not_a_crash(tmp_path, capsys):
+def test_a_missing_part_is_an_error_not_a_crash(tmp_path, capsys, monkeypatch):
+    # Reported whether or not Blender is installed.
+    monkeypatch.setenv(BLENDER_ENV, str(tmp_path / "nowhere"))
     (tmp_path / "s.photo.json").write_text(json.dumps({"parts": [{"file": "gone.stl"}]}))
     assert main([str(tmp_path / "s.photo.json")]) == 2
     assert "error: Part file not found" in capsys.readouterr().err
