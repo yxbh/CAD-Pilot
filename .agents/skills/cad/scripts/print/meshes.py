@@ -76,16 +76,21 @@ class PrintMesh:
     def oriented(self, rotate_xyz: tuple[float, float, float]) -> "PrintMesh":
         """Turned about the fixed X, then Y, then Z axes by these degrees, and moved so its lowest
         point sits on the bed and its footprint starts at the origin."""
-        rx, ry, rz = np.radians(rotate_xyz)
-        cx, sx, cy, sy, cz, sz = np.cos(rx), np.sin(rx), np.cos(ry), np.sin(ry), np.cos(rz), np.sin(rz)
-        x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
-        y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
-        z = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
-        # Rounding keeps quarter turns exact, so a face turned onto the bed stays flat.
-        turn = np.round(z @ y @ x, 12)
+        turn = rotation(rotate_xyz)
         turned = self.vertices @ turn.T
         low = turned.min(axis=0)
         return PrintMesh(turned - low, self.faces, turn @ self.rotation, turn @ self.offset - low, self.bodies)
+
+
+def rotation(rotate_xyz: tuple[float, float, float]) -> np.ndarray:
+    """The matrix a ``rotate`` means: turns about the fixed X, then Y, then Z axes, in degrees."""
+    rx, ry, rz = np.radians(rotate_xyz)
+    cx, sx, cy, sy, cz, sz = np.cos(rx), np.sin(rx), np.cos(ry), np.sin(ry), np.cos(rz), np.sin(rz)
+    x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    z = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    # Rounding keeps quarter turns exact, so a face turned onto the bed stays flat.
+    return np.round(z @ y @ x, 12)
 
 
 def _winding(triangles: np.ndarray, point: np.ndarray) -> float:

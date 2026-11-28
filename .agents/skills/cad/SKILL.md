@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Model, generate, inspect and validate CAD parts and assemblies as build123d Python and STEP files with CAD-Pilot's tools, in any design project. Use for designing or changing a physical part, enclosure, bracket, fixture, mold or assembly from a description, photo, drawing or 3D scan; writing build123d source; generating STEP/STP, STL, 3MF or DXF; measuring, mating, clearance and hygiene checks on a STEP, including one from elsewhere; @cad references; and 3D-print handoff to Bambu Studio (project 3MFs, slicing checks, print orientation, fit coupons, hole and contour compensation).
+description: Model, generate, inspect and validate CAD parts and assemblies as build123d Python and STEP files with CAD-Pilot's tools, in any design project. Use for designing or changing a physical part, enclosure, bracket, fixture, mold or assembly from a description, photo, drawing or 3D scan; writing build123d source; generating STEP/STP, STL, 3MF or DXF; measuring, mating, clearance and hygiene checks on a STEP, including one from elsewhere; @cad references; 3D-print handoff to Bambu Studio (project 3MFs, slicing checks, print orientation, fit coupons, hole and contour compensation); and pictures of parts as the filament prints they will be (layer lines, filament colours).
 ---
 
 # CAD generation, inspection, and validation
@@ -24,9 +24,10 @@ python <cad>/scripts/step ...
 python <cad>/scripts/inspect ...
 python <cad>/scripts/dxf ...
 python <cad>/scripts/print ...
+python <cad>/scripts/photo ...
 ```
 
-Use the design project's own Python environment when it has one with build123d (for a uv project, `uv run python <cad>/scripts/step ...`), so generators find the project's dependencies; otherwise use the workbench's `.venv` (`bin/python`, or `Scripts\python.exe` on Windows), created by `uv sync` in the workbench. Run `scripts/print` with the workbench's interpreter in any case: it needs mesh libraries that a design environment may lack. Relative targets resolve from the current folder. Choose the STEP location with `-o`, as a path relative to the design root; STL and 3MF sidecar paths are relative to the STEP's folder. Keep a STEP and its generator with the same basename, side by side unless the project's layout says otherwise. `--help` on each tool lists every flag; the references show workflows, not every option.
+Use the design project's own Python environment when it has one with build123d (for a uv project, `uv run python <cad>/scripts/step ...`), so generators find the project's dependencies; otherwise use the workbench's `.venv` (`bin/python`, or `Scripts\python.exe` on Windows), created by `uv sync` in the workbench. Run `scripts/print` and `scripts/photo` with the workbench's interpreter in any case: they need mesh libraries that a design environment may lack. Relative targets resolve from the current folder. Choose the STEP location with `-o`, as a path relative to the design root; STL and 3MF sidecar paths are relative to the STEP's folder. Keep a STEP and its generator with the same basename, side by side unless the project's layout says otherwise. `--help` on each tool lists every flag; the references show workflows, not every option.
 
 ## Conventions and unknowns
 
@@ -73,5 +74,6 @@ Do not ask the user for JSON or a template. Convert their prose, photos or drawi
 - `references/self-review.md`: capturing and looking at a changed model, and reporting visual review.
 - `references/supported-exports.md` and `references/dxf.md`: STL/3MF sidecars and DXF output.
 - `references/print.md`: the print profile, print jobs, Bambu Studio projects, orientation and slice checks, fit and calibration coupons, hole and contour compensation.
+- `references/photo.md`: pictures of parts as the FDM prints they will be (`scripts/photo`, in Blender): the scene file, filament colours and what the picture does and does not show.
 
 Final responses list the generated files, the CAD Explorer URL when a model was shown, the checks that ran, provisional assumptions, open questions and untested requirements.
